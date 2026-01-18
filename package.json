@@ -59,7 +59,13 @@
     ],
     "win": {
       "target": "nsis",
-      "icon": "resources/logo.png"
+      "icon": "resources/logo.png",
+      "extraResources": [
+        {
+          "from": "bin/parser.exe",
+          "to": "parser.exe"
+        }
+      ]
     },
     "mac": {
       "target": "dmg",
