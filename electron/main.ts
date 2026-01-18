@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, shell, clipboard, protocol } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, shell, clipboard, protocol, Menu } from 'electron'
 import { spawn, ChildProcess, exec } from 'child_process'
 import * as path from 'path'
 import * as fs from 'fs'
@@ -20,6 +20,7 @@ function createWindow() {
     width: 1200,
     height: 800,
     icon: iconPath,
+    autoHideMenuBar: !isDev, // Hide menu bar in production, show in dev
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -27,6 +28,11 @@ function createWindow() {
     },
     backgroundColor: '#1e2124',
   })
+
+  // Remove menu bar completely in production builds
+  if (!isDev) {
+    Menu.setApplicationMenu(null)
+  }
 
   if (isDev) {
     mainWindow.loadURL('http://localhost:5173')
@@ -1175,12 +1181,84 @@ ipcMain.handle('settings:getAll', async () => {
   return getAllSettings()
 })
 
+// GitHub API response type for releases
+interface GitHubRelease {
+  tag_name: string
+  html_url: string
+}
+
+// Helper function to check for updates on GitHub
+async function checkForUpdates(currentVersion: string): Promise<{ available: boolean; version: string | null; releaseUrl: string | null }> {
+  try {
+    // GitHub repository - update this if your repo is different
+    const repoOwner = 'weeklyvillain'
+    const repoName = 'cs2-demo-analyzer'
+    const apiUrl = `https://api.github.com/repos/${repoOwner}/${repoName}/releases/latest`
+    
+    const response = await fetch(apiUrl, {
+      headers: {
+        'Accept': 'application/vnd.github.v3+json',
+        'User-Agent': 'CS2-Demo-Analyzer',
+      },
+    })
+    
+    if (!response.ok) {
+      console.log(`[Update] GitHub API returned ${response.status}: ${response.statusText}`)
+      return { available: false, version: null, releaseUrl: null }
+    }
+    
+    const release = await response.json() as GitHubRelease
+    const latestVersion = release.tag_name?.replace(/^v/, '') || null
+    
+    if (!latestVersion) {
+      return { available: false, version: null, releaseUrl: null }
+    }
+    
+    // Compare versions (simple string comparison, should work for semver)
+    const compareVersions = (v1: string, v2: string): number => {
+      const parts1 = v1.split('.').map(Number)
+      const parts2 = v2.split('.').map(Number)
+      
+      for (let i = 0; i < Math.max(parts1.length, parts2.length); i++) {
+        const part1 = parts1[i] || 0
+        const part2 = parts2[i] || 0
+        if (part1 > part2) return 1
+        if (part1 < part2) return -1
+      }
+      return 0
+    }
+    
+    const isNewer = compareVersions(latestVersion, currentVersion) > 0
+    
+    return {
+      available: isNewer,
+      version: isNewer ? latestVersion : null,
+      releaseUrl: isNewer ? release.html_url : null,
+    }
+  } catch (error) {
+    console.error('[Update] Error checking for updates:', error)
+    return { available: false, version: null, releaseUrl: null }
+  }
+}
+
 // App info handler
 ipcMain.handle('app:getInfo', async () => {
   const packageJson = require('../package.json')
   
   // Get app version
   const version = app.getVersion() || packageJson.version || '1.0.0'
+  
+  // Check for updates (only in production, skip in dev)
+  let updateAvailable = false
+  let updateVersion: string | null = null
+  let updateReleaseUrl: string | null = null
+  
+  if (!isDev) {
+    const updateCheck = await checkForUpdates(version)
+    updateAvailable = updateCheck.available
+    updateVersion = updateCheck.version
+    updateReleaseUrl = updateCheck.releaseUrl
+  }
   
   // Get storage info
   const appDataPath = app.getPath('userData')
@@ -1252,10 +1330,15 @@ ipcMain.handle('app:getInfo', async () => {
         formatted: formatBytes(totalStorageBytes),
       },
     },
-    // TODO: Add update check in the future
-    updateAvailable: false,
-    updateVersion: null,
+    updateAvailable,
+    updateVersion,
+    updateReleaseUrl,
   }
+})
+
+// IPC handler to open external URLs
+ipcMain.handle('app:openExternal', async (_, url: string) => {
+  await shell.openExternal(url)
 })
 
 // Helper function to check if CS2 is running

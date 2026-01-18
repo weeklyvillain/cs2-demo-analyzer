@@ -40,7 +40,9 @@ export interface ElectronAPI {
     }
     updateAvailable: boolean
     updateVersion: string | null
+    updateReleaseUrl: string | null
   }>
+  openExternal: (url: string) => Promise<void>
   onParserMessage: (callback: (message: string) => void) => void
   onParserLog: (callback: (log: string) => void) => void
   onParserExit: (callback: (data: { code: number | null; signal: string | null }) => void) => void

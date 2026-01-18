@@ -44,6 +44,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // App Info
   getAppInfo: () => ipcRenderer.invoke('app:getInfo'),
+  openExternal: (url: string) => ipcRenderer.invoke('app:openExternal', url),
   
   // Radar images (to avoid CORS issues with custom protocols)
   getRadarImage: (mapName: string) => ipcRenderer.invoke('radar:getImage', mapName),
