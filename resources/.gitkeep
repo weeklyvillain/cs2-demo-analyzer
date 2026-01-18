@@ -1,0 +1,5 @@
+# Place Go parser binaries here for packaging:
+# - parser.exe (Windows)
+# - parser-mac (macOS)
+# - parser-linux (Linux)
+
