@@ -147,7 +147,9 @@ function getParserPath(): string {
     return devPath
   } else {
     // Prod: use resources path
-    const resourcesPath = process.resourcesPath || app.getAppPath()
+    // process.resourcesPath already points to the resources directory in production
+    // For example: C:\Users\Filip\AppData\Local\Programs\CS2 Demo Analyzer\resources
+    const resourcesPath = process.resourcesPath || path.join(app.getAppPath(), '..', 'resources')
     const platform = process.platform
     let binaryName = 'parser'
     
@@ -159,7 +161,8 @@ function getParserPath(): string {
       binaryName = 'parser-linux'
     }
     
-    return path.join(resourcesPath, 'resources', binaryName)
+    // resourcesPath already points to the resources directory, so don't append 'resources' again
+    return path.join(resourcesPath, binaryName)
   }
 }
 
