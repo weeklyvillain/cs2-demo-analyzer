@@ -46,8 +46,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getAppInfo: () => ipcRenderer.invoke('app:getInfo'),
   openExternal: (url: string) => ipcRenderer.invoke('app:openExternal', url),
   
+  // File operations
+  showFileInFolder: (filePath: string) => ipcRenderer.invoke('file:showInFolder', filePath),
+  
   // Radar images (to avoid CORS issues with custom protocols)
   getRadarImage: (mapName: string) => ipcRenderer.invoke('radar:getImage', mapName),
+
+  // Voice Extraction
+  extractVoice: (options: { demoPath: string; outputPath?: string; mode?: 'split-compact' | 'split-full' | 'single-full'; steamIds?: string[] }) => 
+    ipcRenderer.invoke('voice:extract', options),
+  getVoiceAudio: (filePath: string) => ipcRenderer.invoke('voice:getAudio', filePath),
+  cleanupVoiceFiles: (outputPath: string) => ipcRenderer.invoke('voice:cleanup', outputPath),
 
   // Listeners
   onParserMessage: (callback: (message: string) => void) => {
@@ -74,6 +83,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   onMatchesTrimmed: (callback: (data: { deleted: number; details: Array<{ matchId: string; reason: string }> }) => void) => {
     ipcRenderer.on('matches:trimmed', (_, data) => callback(data))
+  },
+
+  // Voice extraction listeners
+  onVoiceExtractionLog: (callback: (log: string) => void) => {
+    ipcRenderer.on('voice:extractionLog', (_, log) => callback(log))
   },
 })
 

@@ -43,12 +43,17 @@ export interface ElectronAPI {
     updateReleaseUrl: string | null
   }>
   openExternal: (url: string) => Promise<void>
+  showFileInFolder: (filePath: string) => Promise<void>
+  extractVoice: (options: { demoPath: string; outputPath?: string; mode?: 'split-compact' | 'split-full' | 'single-full'; steamIds?: string[] }) => Promise<{ success: boolean; outputPath: string; files: string[]; filePaths?: string[] }>
+  getVoiceAudio: (filePath: string) => Promise<{ success: boolean; data?: string; error?: string }>
+  cleanupVoiceFiles: (outputPath: string) => Promise<{ success: boolean; error?: string }>
   onParserMessage: (callback: (message: string) => void) => void
   onParserLog: (callback: (log: string) => void) => void
   onParserExit: (callback: (data: { code: number | null; signal: string | null }) => void) => void
   onParserError: (callback: (error: string) => void) => void
   onMatchesCleanup: (callback: (data: { deleted: number; details: Array<{ matchId: string; reason: string }> }) => void) => void
   onMatchesTrimmed: (callback: (data: { deleted: number; details: Array<{ matchId: string; reason: string }> }) => void) => void
+  onVoiceExtractionLog: (callback: (log: string) => void) => void
   removeAllListeners: (channel: string) => void
 }
 

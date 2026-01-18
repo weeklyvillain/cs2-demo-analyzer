@@ -41,10 +41,12 @@
     "wait-on": "^7.2.0"
   },
   "dependencies": {
+    "@wavesurfer/react": "^1.0.12",
     "lucide-react": "^0.562.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "sql.js": "^1.10.3"
+    "sql.js": "^1.10.3",
+    "wavesurfer.js": "^7.12.1"
   },
   "build": {
     "appId": "com.csgriefer.app",
@@ -60,10 +62,12 @@
     "win": {
       "target": "nsis",
       "icon": "resources/logo.png",
+      "publisherName": "WeeklyVillain",
       "extraResources": [
         {
-          "from": "bin/parser.exe",
-          "to": "parser.exe"
+          "from": "bin/**/*",
+          "to": "bin",
+          "filter": ["**/*"]
         }
       ]
     },

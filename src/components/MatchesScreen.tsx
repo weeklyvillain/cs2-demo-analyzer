@@ -3,9 +3,10 @@ import Viewer2D from './Viewer2D'
 import Modal from './Modal'
 import PlayerModal from './PlayerModal'
 import ParsingModal from './ParsingModal'
+import VoicePlaybackModal from './VoicePlaybackModal'
 import Toast from './Toast'
 import { formatDisconnectReason } from '../utils/disconnectReason'
-import { Clock, Skull, Zap, WifiOff, ChevronDown, ChevronUp, Copy, Check, ArrowUp, ArrowDown, Trash2, X, Plus, Loader2 } from 'lucide-react'
+import { Clock, Skull, Zap, WifiOff, ChevronDown, ChevronUp, Copy, Check, ArrowUp, ArrowDown, Trash2, X, Plus, Loader2, Mic } from 'lucide-react'
 
 interface Match {
   id: string
@@ -125,6 +126,9 @@ function MatchesScreen() {
   const [demoToParse, setDemoToParse] = useState<string | null>(null)
   const [demosToParse, setDemosToParse] = useState<string[]>([])
   const [isDragging, setIsDragging] = useState(false)
+  const [showVoiceModal, setShowVoiceModal] = useState(false)
+  const [voicePlayerSteamId, setVoicePlayerSteamId] = useState<string>('')
+  const [voicePlayerName, setVoicePlayerName] = useState<string>('')
 
   const fetchMatches = async () => {
     if (!window.electronAPI) {
@@ -391,9 +395,37 @@ function MatchesScreen() {
     })
   }, [matches, sortField, sortDirection, matchStats])
 
+  // Merge all players with their scores to show all players in the tab
+  const allPlayersWithScores = useMemo(() => {
+    // Create a map of scores by steamId for quick lookup
+    const scoresMap = new Map(scores.map(score => [score.steamId, score]))
+    
+    // Merge allPlayers with scores, creating entries for players without scores
+    const merged = allPlayers.map(player => {
+      const score = scoresMap.get(player.steamId)
+      if (score) {
+        return score // Player has scores, use them
+      }
+      // Player doesn't have scores, create a default entry
+      return {
+        matchId: selectedMatch || '',
+        steamId: player.steamId,
+        name: player.name || player.steamId,
+        teamKills: 0,
+        teamDamage: 0,
+        teamFlashSeconds: 0,
+        afkSeconds: 0,
+        bodyBlockSeconds: 0,
+        griefScore: 0,
+      } as PlayerScore
+    })
+    
+    return merged
+  }, [allPlayers, scores, selectedMatch])
+
   // Sort players based on current sort settings
   const sortedScores = useMemo(() => {
-    return [...scores].sort((a, b) => {
+    return [...allPlayersWithScores].sort((a, b) => {
       let comparison = 0
       
       if (playerSortField === 'name') {
@@ -412,7 +444,7 @@ function MatchesScreen() {
       
       return playerSortDirection === 'asc' ? comparison : -comparison
     })
-  }, [scores, playerSortField, playerSortDirection])
+  }, [allPlayersWithScores, playerSortField, playerSortDirection])
 
   // Handle player table column sorting
   const handlePlayerSort = (field: 'name' | 'teamKills' | 'teamDamage' | 'teamFlashSeconds' | 'afkSeconds') => {
@@ -605,6 +637,22 @@ function MatchesScreen() {
     const duration = (endTick - startTick) / tickRate
     return `${duration.toFixed(1)}s`
   }
+
+  // Handle voice extraction for a player - just open modal
+  const handleExtractVoice = (player: PlayerScore, e?: React.MouseEvent) => {
+    e?.stopPropagation() // Prevent row click
+    
+    if (!demoPath || !selectedMatch) {
+      setToast({ message: 'Demo file path is required to extract voice', type: 'error' })
+      return
+    }
+
+    // Set player info for modal (modal will handle extraction)
+    setVoicePlayerSteamId(player.steamId)
+    setVoicePlayerName(player.name)
+    setShowVoiceModal(true)
+  }
+
 
   // Filter and group events by type
   const filteredEvents = playerEvents.filter((event) => {
@@ -1769,8 +1817,8 @@ function MatchesScreen() {
                   )
                 })()
               ) : activeTab === 'players' ? (
-                scores.length === 0 ? (
-                  <div className="text-center text-gray-400 py-8">No player scores available</div>
+                allPlayersWithScores.length === 0 ? (
+                  <div className="text-center text-gray-400 py-8">No players available</div>
                 ) : (
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm">
@@ -1841,20 +1889,56 @@ function MatchesScreen() {
                               )}
                             </div>
                           </th>
+                          <th className="pb-2 text-left">Actions</th>
                         </tr>
                       </thead>
                       <tbody>
                       {sortedScores.map((score) => (
                         <tr
                           key={score.steamId}
-                          className="border-b border-border/50 hover:bg-surface/50 cursor-pointer transition-colors"
-                          onClick={() => handlePlayerClick(score)}
+                          className="border-b border-border/50 hover:bg-surface/50 transition-colors"
                         >
-                          <td className="py-2">{score.name || score.steamId}</td>
-                          <td className="py-2">{score.teamKills}</td>
-                          <td className="py-2">{score.teamDamage.toFixed(1)}</td>
-                          <td className="py-2">{score.teamFlashSeconds.toFixed(1)}s</td>
-                          <td className="py-2">{score.afkSeconds.toFixed(1)}s</td>
+                          <td 
+                            className="py-2 cursor-pointer"
+                            onClick={() => handlePlayerClick(score)}
+                          >
+                            {score.name || score.steamId}
+                          </td>
+                          <td 
+                            className="py-2 cursor-pointer"
+                            onClick={() => handlePlayerClick(score)}
+                          >
+                            {score.teamKills}
+                          </td>
+                          <td 
+                            className="py-2 cursor-pointer"
+                            onClick={() => handlePlayerClick(score)}
+                          >
+                            {score.teamDamage.toFixed(1)}
+                          </td>
+                          <td 
+                            className="py-2 cursor-pointer"
+                            onClick={() => handlePlayerClick(score)}
+                          >
+                            {score.teamFlashSeconds.toFixed(1)}s
+                          </td>
+                          <td 
+                            className="py-2 cursor-pointer"
+                            onClick={() => handlePlayerClick(score)}
+                          >
+                            {score.afkSeconds.toFixed(1)}s
+                          </td>
+                          <td className="py-2">
+                            <button
+                              onClick={(e) => handleExtractVoice(score, e)}
+                              disabled={!demoPath}
+                              className="px-3 py-1.5 bg-accent hover:bg-accent/90 disabled:bg-gray-600 disabled:cursor-not-allowed text-white text-xs rounded transition-colors flex items-center gap-1.5"
+                              title={!demoPath ? 'Demo file path required' : `Extract voice for ${score.name}`}
+                            >
+                              <Mic size={14} />
+                              Extract Voice
+                            </button>
+                          </td>
                         </tr>
                       ))}
                       </tbody>
@@ -2152,6 +2236,17 @@ function MatchesScreen() {
             demoQueue={demosToParse}
           />
         )}
+
+        {/* Voice Playback Modal */}
+        <VoicePlaybackModal
+          isOpen={showVoiceModal}
+          onClose={() => {
+            setShowVoiceModal(false)
+          }}
+          demoPath={demoPath}
+          playerSteamId={voicePlayerSteamId}
+          playerName={voicePlayerName}
+        />
       </>
     </div>
   )

@@ -61,6 +61,26 @@ app.whenReady().then(async () => {
     callback({ path: radarPath })
   })
   
+  // IPC handler to get audio file as base64 (to avoid CORS/file protocol issues)
+  ipcMain.handle('voice:getAudio', async (_, filePath: string) => {
+    try {
+      if (!fs.existsSync(filePath)) {
+        return { success: false, error: 'Audio file not found' }
+      }
+      
+      const audioBuffer = fs.readFileSync(filePath)
+      const base64 = audioBuffer.toString('base64')
+      // Determine MIME type from file extension
+      const ext = path.extname(filePath).toLowerCase()
+      const mimeType = ext === '.wav' ? 'audio/wav' : ext === '.mp3' ? 'audio/mpeg' : 'audio/wav'
+      
+      return { success: true, data: `data:${mimeType};base64,${base64}` }
+    } catch (error) {
+      console.error('Error loading audio file:', error)
+      return { success: false, error: String(error) }
+    }
+  })
+
   // IPC handler to get radar image as base64 (to avoid CORS issues)
   ipcMain.handle('radar:getImage', async (_, mapName: string) => {
     try {
@@ -162,6 +182,32 @@ function getParserPath(): string {
     }
     
     // resourcesPath already points to the resources directory, so don't append 'resources' again
+    return path.join(resourcesPath, binaryName)
+  }
+}
+
+// Helper to get voice extractor executable path
+function getVoiceExtractorPath(): string {
+  if (isDev) {
+    // Dev: check for voice extractor in bin or resources
+    const projectRoot = path.resolve(__dirname, '..')
+    const defaultPath = path.join(projectRoot, 'bin', 'csgove')
+    const devPath = process.env.VOICE_EXTRACTOR_PATH || defaultPath
+    // Add .exe on Windows
+    if (process.platform === 'win32') {
+      return devPath + '.exe'
+    }
+    return devPath
+  } else {
+    // Prod: use resources path
+    const resourcesPath = process.resourcesPath || path.join(app.getAppPath(), '..', 'resources')
+    const platform = process.platform
+    let binaryName = 'csgove'
+    
+    if (platform === 'win32') {
+      binaryName = 'csgove.exe'
+    }
+    
     return path.join(resourcesPath, binaryName)
   }
 }
@@ -1344,6 +1390,14 @@ ipcMain.handle('app:openExternal', async (_, url: string) => {
   await shell.openExternal(url)
 })
 
+// IPC handler to show file in folder
+ipcMain.handle('file:showInFolder', async (_, filePath: string) => {
+  if (!fs.existsSync(filePath)) {
+    throw new Error(`File not found: ${filePath}`)
+  }
+  shell.showItemInFolder(filePath)
+})
+
 // Helper function to check if CS2 is running
 function isCS2Running(): Promise<boolean> {
   return new Promise((resolve) => {
@@ -1653,3 +1707,148 @@ ipcMain.handle('cs2:copyCommands', async (_, demoPath: string, startTick?: numbe
   return { success: true, commands: commandsToCopy }
 })
 
+// Voice extraction IPC handler
+ipcMain.handle('voice:extract', async (_, options: { demoPath: string; outputPath?: string; mode?: 'split-compact' | 'split-full' | 'single-full'; steamIds?: string[] }) => {
+  const { demoPath, mode = 'split-compact', steamIds = [] } = options
+  
+  // Validate demo file exists
+  if (!fs.existsSync(demoPath)) {
+    throw new Error(`Demo file not found: ${demoPath}`)
+  }
+  
+  // Use provided outputPath or create temp directory
+  let outputPath = options.outputPath
+  if (!outputPath) {
+    const tempDir = app.getPath('temp')
+    const outputDir = `cs2-voice-${Date.now()}`
+    outputPath = path.join(tempDir, outputDir)
+  }
+  
+  // Create output directory if it doesn't exist
+  if (!fs.existsSync(outputPath)) {
+    fs.mkdirSync(outputPath, { recursive: true })
+  }
+  
+  // Get voice extractor path
+  const extractorPath = getVoiceExtractorPath()
+  
+  if (!fs.existsSync(extractorPath)) {
+    throw new Error(`Voice extractor not found at: ${extractorPath}. Please install csgo-voice-extractor.`)
+  }
+  
+  // Build command arguments
+  const args: string[] = [
+    '-exit-on-first-error',
+    `-mode=${mode}`,
+    `-output="${outputPath}"`,
+  ]
+  
+  // Add Steam IDs if specified
+  if (steamIds.length > 0) {
+    args.push(`-steam-ids="${steamIds.join(',')}"`)
+  }
+  
+  // Add demo path (must be last)
+  args.push(`"${demoPath}"`)
+  
+  // Set library path for Linux/Mac
+  const libraryPathVarName = process.platform === 'darwin' ? 'DYLD_LIBRARY_PATH' : 'LD_LIBRARY_PATH'
+  const extractorDir = path.dirname(extractorPath)
+  
+  return new Promise<{ success: boolean; outputPath: string; files: string[]; filePaths: string[] }>((resolve, reject) => {
+    console.log(`[Voice Extraction] Starting extractor: ${extractorPath}`)
+    console.log(`[Voice Extraction] Args: ${args.join(' ')}`)
+    
+    const extractorProcess = spawn(extractorPath, args, {
+      cwd: extractorDir,
+      env: {
+        ...process.env,
+        [libraryPathVarName]: extractorDir,
+      },
+      shell: true,
+      windowsHide: true,
+    })
+    
+    let stdout = ''
+    let stderr = ''
+    
+    extractorProcess.stdout?.on('data', (data) => {
+      const output = data.toString()
+      stdout += output
+      console.log(`[Voice Extraction] ${output}`)
+      
+      // Notify renderer process of progress
+      if (mainWindow) {
+        mainWindow.webContents.send('voice:extractionLog', output)
+      }
+    })
+    
+    extractorProcess.stderr?.on('data', (data) => {
+      const error = data.toString()
+      stderr += error
+      console.error(`[Voice Extraction Error] ${error}`)
+      
+      // Notify renderer process of errors
+      if (mainWindow) {
+        mainWindow.webContents.send('voice:extractionLog', error)
+      }
+    })
+    
+    extractorProcess.on('exit', (code) => {
+      if (code === 0) {
+        // List extracted files with full paths
+        const files = fs.readdirSync(outputPath)
+          .filter(file => file.endsWith('.wav'))
+          .map(file => ({
+            name: file,
+            path: path.join(outputPath, file),
+          }))
+        console.log(`[Voice Extraction] Completed successfully. Extracted ${files.length} file(s).`)
+        resolve({ success: true, outputPath, files: files.map(f => f.name), filePaths: files.map(f => f.path) })
+      } else {
+        console.error(`[Voice Extraction] Process exited with code ${code}`)
+        console.error(`[Voice Extraction] stderr: ${stderr}`)
+        reject(new Error(`Voice extraction failed with exit code ${code}. ${stderr || stdout}`))
+      }
+    })
+    
+    extractorProcess.on('error', (error) => {
+      console.error(`[Voice Extraction] Process error:`, error)
+      reject(new Error(`Failed to start voice extractor: ${error.message}`))
+    })
+  })
+})
+
+// Voice extraction cleanup IPC handler - delete temp directory
+ipcMain.handle('voice:cleanup', async (_, outputPath: string) => {
+  if (!outputPath) {
+    return { success: false, error: 'No output path provided' }
+  }
+
+  try {
+    // Only delete if path is in temp directory (safety check)
+    const tempDir = app.getPath('temp')
+    const normalizedOutputPath = path.normalize(outputPath)
+    const normalizedTempDir = path.normalize(tempDir)
+
+    if (!normalizedOutputPath.startsWith(normalizedTempDir)) {
+      console.warn(`[Voice Cleanup] Refusing to delete path outside temp directory: ${outputPath}`)
+      return { success: false, error: 'Path is not in temp directory' }
+    }
+
+    // Check if directory exists
+    if (!fs.existsSync(outputPath)) {
+      console.log(`[Voice Cleanup] Directory does not exist: ${outputPath}`)
+      return { success: true }
+    }
+
+    // Delete directory and all contents
+    fs.rmSync(outputPath, { recursive: true, force: true })
+    console.log(`[Voice Cleanup] Deleted temp directory: ${outputPath}`)
+    return { success: true }
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+    console.error(`[Voice Cleanup] Failed to delete directory ${outputPath}:`, errorMessage)
+    return { success: false, error: errorMessage }
+  }
+})
