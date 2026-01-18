@@ -47,8 +47,9 @@ jobs:
       - name: Check if version bump is needed
         id: check_version
         run: |
+          $ErrorActionPreference = 'Continue'
           $latestTag = git describe --tags --abbrev=0 --match "v*" 2>$null
-          if ($latestTag) {
+          if ($LASTEXITCODE -eq 0 -and $latestTag) {
             $tagVersion = $latestTag -replace '^v', ''
             $currentVersion = "${{ steps.get_version.outputs.current_version }}"
             
@@ -113,5 +114,5 @@ jobs:
       - name: Push version commit and tag
         if: steps.check_version.outputs.needs_bump == 'true'
         run: |
-          git push origin main
+          git push origin master
           git push origin --tags
