@@ -48,8 +48,14 @@ jobs:
         id: check_version
         run: |
           $ErrorActionPreference = 'Continue'
-          $latestTag = git describe --tags --abbrev=0 --match "v*" 2>$null
-          if ($LASTEXITCODE -eq 0 -and $latestTag) {
+          $latestTag = $null
+          try {
+            $latestTag = git describe --tags --abbrev=0 --match "v*" 2>$null
+          } catch {
+            $latestTag = $null
+          }
+          
+          if ($latestTag -and $LASTEXITCODE -eq 0) {
             $tagVersion = $latestTag -replace '^v', ''
             $currentVersion = "${{ steps.get_version.outputs.current_version }}"
             
@@ -64,6 +70,7 @@ jobs:
             Write-Host "No tags found, will bump version"
             echo "needs_bump=true" >> $env:GITHUB_OUTPUT
           }
+          exit 0
 
       - name: Bump version (patch)
         if: steps.check_version.outputs.needs_bump == 'true'
