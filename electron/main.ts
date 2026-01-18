@@ -166,7 +166,7 @@ function getParserPath(): string {
     }
     return devPath
   } else {
-    // Prod: use resources path
+    // Prod: use resources/bin path (files are in resources/bin/)
     // process.resourcesPath already points to the resources directory in production
     // For example: C:\Users\Filip\AppData\Local\Programs\CS2 Demo Analyzer\resources
     const resourcesPath = process.resourcesPath || path.join(app.getAppPath(), '..', 'resources')
@@ -181,8 +181,8 @@ function getParserPath(): string {
       binaryName = 'parser-linux'
     }
     
-    // resourcesPath already points to the resources directory, so don't append 'resources' again
-    return path.join(resourcesPath, binaryName)
+    // Files are now in resources/bin/ directory
+    return path.join(resourcesPath, 'bin', binaryName)
   }
 }
 
@@ -199,7 +199,7 @@ function getVoiceExtractorPath(): string {
     }
     return devPath
   } else {
-    // Prod: use resources path
+    // Prod: use resources/bin path (files are in resources/bin/)
     const resourcesPath = process.resourcesPath || path.join(app.getAppPath(), '..', 'resources')
     const platform = process.platform
     let binaryName = 'csgove'
@@ -208,7 +208,7 @@ function getVoiceExtractorPath(): string {
       binaryName = 'csgove.exe'
     }
     
-    return path.join(resourcesPath, binaryName)
+    return path.join(resourcesPath, 'bin', binaryName)
   }
 }
 
@@ -1736,20 +1736,20 @@ ipcMain.handle('voice:extract', async (_, options: { demoPath: string; outputPat
     throw new Error(`Voice extractor not found at: ${extractorPath}. Please install csgo-voice-extractor.`)
   }
   
-  // Build command arguments
+  // Build command arguments (no quotes needed - spawn handles this automatically)
   const args: string[] = [
     '-exit-on-first-error',
     `-mode=${mode}`,
-    `-output="${outputPath}"`,
+    `-output=${outputPath}`,
   ]
   
   // Add Steam IDs if specified
   if (steamIds.length > 0) {
-    args.push(`-steam-ids="${steamIds.join(',')}"`)
+    args.push(`-steam-ids=${steamIds.join(',')}`)
   }
   
   // Add demo path (must be last)
-  args.push(`"${demoPath}"`)
+  args.push(demoPath)
   
   // Set library path for Linux/Mac
   const libraryPathVarName = process.platform === 'darwin' ? 'DYLD_LIBRARY_PATH' : 'LD_LIBRARY_PATH'
@@ -1759,15 +1759,39 @@ ipcMain.handle('voice:extract', async (_, options: { demoPath: string; outputPat
     console.log(`[Voice Extraction] Starting extractor: ${extractorPath}`)
     console.log(`[Voice Extraction] Args: ${args.join(' ')}`)
     
-    const extractorProcess = spawn(extractorPath, args, {
-      cwd: extractorDir,
-      env: {
-        ...process.env,
-        [libraryPathVarName]: extractorDir,
-      },
-      shell: true,
-      windowsHide: true,
-    })
+    // On Windows, handle paths with spaces properly
+    // Quote all paths/args that contain spaces
+    const quoteIfNeeded = (arg: string) => {
+      return arg.includes(' ') && !arg.startsWith('"') ? `"${arg}"` : arg
+    }
+    
+    let extractorProcess: ChildProcess
+    
+    if (process.platform === 'win32') {
+      // On Windows with shell: true, build full command string to handle spaces
+      const quotedExtractorPath = quoteIfNeeded(extractorPath)
+      const quotedArgs = args.map(quoteIfNeeded).join(' ')
+      const fullCommand = `${quotedExtractorPath} ${quotedArgs}`
+      
+      extractorProcess = exec(fullCommand, {
+        cwd: extractorDir,
+        env: {
+          ...process.env,
+          [libraryPathVarName]: extractorDir,
+        },
+        windowsHide: true,
+      }) as ChildProcess
+    } else {
+      // On Unix, spawn works fine with array args
+      extractorProcess = spawn(extractorPath, args, {
+        cwd: extractorDir,
+        env: {
+          ...process.env,
+          [libraryPathVarName]: extractorDir,
+        },
+        shell: false,
+      })
+    }
     
     let stdout = ''
     let stderr = ''
