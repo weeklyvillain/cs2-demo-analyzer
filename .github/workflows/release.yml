@@ -74,6 +74,7 @@ jobs:
 
       - name: Bump version (patch)
         if: steps.check_version.outputs.needs_bump == 'true'
+        id: bump_version
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -81,6 +82,21 @@ jobs:
           $newVersion = (Get-Content package.json | ConvertFrom-Json).version
           Write-Host "New version: $newVersion"
           echo "new_version=$newVersion" >> $env:GITHUB_OUTPUT
+          echo "tag_name=v$newVersion" >> $env:GITHUB_OUTPUT
+
+      - name: Get version from package.json
+        id: version
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          $tagName = "v$version"
+          echo "version=$version" >> $env:GITHUB_OUTPUT
+          echo "tag_name=$tagName" >> $env:GITHUB_OUTPUT
+
+      - name: Push version commit and tag
+        if: steps.check_version.outputs.needs_bump == 'true'
+        run: |
+          git push origin master
+          git push origin --tags
 
       - name: Build Go parser
         run: |
@@ -93,18 +109,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Get version from package.json
-        id: version
-        run: |
-          $version = (Get-Content package.json | ConvertFrom-Json).version
-          echo "version=$version" >> $env:GITHUB_OUTPUT
-
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          name: Release v${{ steps.version.outputs.version }}
+          tag_name: ${{ steps.version.outputs.tag_name }}
+          name: Release ${{ steps.version.outputs.tag_name }}
           body: |
-            ## Changes in v${{ steps.version.outputs.version }}
+            ## Changes in ${{ steps.version.outputs.tag_name }}
             
             Auto-generated release from commit: ${{ github.sha }}
             
@@ -117,9 +128,3 @@ jobs:
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Push version commit and tag
-        if: steps.check_version.outputs.needs_bump == 'true'
-        run: |
-          git push origin master
-          git push origin --tags
