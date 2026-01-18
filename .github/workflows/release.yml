@@ -1,0 +1,117 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - 'README.md'
+      - '**.md'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Get current version
+        id: get_version
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          Write-Host "Current version: $version"
+          echo "current_version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Check if version bump is needed
+        id: check_version
+        run: |
+          $latestTag = git describe --tags --abbrev=0 --match "v*" 2>$null
+          if ($latestTag) {
+            $tagVersion = $latestTag -replace '^v', ''
+            $currentVersion = "${{ steps.get_version.outputs.current_version }}"
+            
+            if ($tagVersion -eq $currentVersion) {
+              Write-Host "Version needs to be bumped (tag: $latestTag, current: $currentVersion)"
+              echo "needs_bump=true" >> $env:GITHUB_OUTPUT
+            } else {
+              Write-Host "Version already bumped (tag: $latestTag, current: $currentVersion)"
+              echo "needs_bump=false" >> $env:GITHUB_OUTPUT
+            }
+          } else {
+            Write-Host "No tags found, will bump version"
+            echo "needs_bump=true" >> $env:GITHUB_OUTPUT
+          }
+
+      - name: Bump version (patch)
+        if: steps.check_version.outputs.needs_bump == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          npm version patch -m "chore: bump version to %s [skip ci]"
+          $newVersion = (Get-Content package.json | ConvertFrom-Json).version
+          Write-Host "New version: $newVersion"
+          echo "new_version=$newVersion" >> $env:GITHUB_OUTPUT
+
+      - name: Build Go parser
+        run: |
+          cd cmd/parser
+          go build -o ../../bin/parser.exe .
+          cd ../..
+
+      - name: Package Windows installer
+        run: npm run package:win
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get version from package.json
+        id: version
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          echo "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: Release v${{ steps.version.outputs.version }}
+          body: |
+            ## Changes in v${{ steps.version.outputs.version }}
+            
+            Auto-generated release from commit: ${{ github.sha }}
+            
+            ### Installation
+            Download and run the installer from the assets below.
+          files: |
+            release/*.exe
+            release/*.exe.blockmap
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push version commit and tag
+        if: steps.check_version.outputs.needs_bump == 'true'
+        run: |
+          git push origin main
+          git push origin --tags
