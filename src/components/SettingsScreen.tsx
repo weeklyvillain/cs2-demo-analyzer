@@ -14,6 +14,7 @@ interface Settings {
   default_flash_threshold: string
   default_sort_field: string
   default_sort_direction: string
+  voice_skip_time: string
 }
 
 function SettingsScreen() {
@@ -30,6 +31,7 @@ function SettingsScreen() {
     default_flash_threshold: '1.5',
     default_sort_field: 'date',
     default_sort_direction: 'desc',
+    voice_skip_time: '10',
   })
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -92,6 +94,7 @@ function SettingsScreen() {
         default_flash_threshold: allSettings.default_flash_threshold || '1.5',
         default_sort_field: allSettings.default_sort_field || 'date',
         default_sort_direction: allSettings.default_sort_direction || 'desc',
+        voice_skip_time: allSettings.voice_skip_time || '10',
       })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load settings')
@@ -466,6 +469,28 @@ function SettingsScreen() {
               </div>
               <p className="text-xs text-gray-500 mt-1">
                 Default sorting for matches list
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">
+                Voice Playback Skip Time (seconds)
+              </label>
+              <input
+                type="number"
+                step="0.5"
+                value={settings.voice_skip_time}
+                onChange={async (e) => {
+                  const value = e.target.value
+                  setSettings((prev) => ({ ...prev, voice_skip_time: value }))
+                  await handleSaveSingleSetting('voice_skip_time', value)
+                }}
+                className="w-full px-3 py-2 bg-surface border border-border rounded text-white text-sm"
+                min="0.5"
+                max="60"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Time to skip forward/backward in voice playback (default: 10s)
               </p>
             </div>
           </div>

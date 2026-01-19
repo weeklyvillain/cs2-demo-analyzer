@@ -1902,7 +1902,21 @@ function MatchesScreen() {
                             className="py-2 cursor-pointer"
                             onClick={() => handlePlayerClick(score)}
                           >
-                            {score.name || score.steamId}
+                            {score.name || (
+                              <button
+                                onClick={async (e) => {
+                                  e.stopPropagation()
+                                  if (window.electronAPI?.openExternal) {
+                                    await window.electronAPI.openExternal(`https://steamcommunity.com/profiles/${score.steamId}`)
+                                  } else {
+                                    window.open(`https://steamcommunity.com/profiles/${score.steamId}`, '_blank')
+                                  }
+                                }}
+                                className="text-accent hover:text-accent/80 underline bg-transparent border-none cursor-pointer p-0"
+                              >
+                                {score.steamId}
+                              </button>
+                            )}
                           </td>
                           <td 
                             className="py-2 cursor-pointer"
@@ -2106,9 +2120,24 @@ function MatchesScreen() {
                                           </div>
                                           <div className="flex-1 min-w-0">
                                             <div className="flex items-center gap-2 mb-1">
-                                              <span className="font-medium text-green-400">
-                                                {msg.name || msg.steamid}
-                                              </span>
+                                              {msg.name ? (
+                                                <span className="font-medium text-green-400">
+                                                  {msg.name}
+                                                </span>
+                                              ) : (
+                                                <button
+                                                  onClick={async () => {
+                                                    if (window.electronAPI?.openExternal) {
+                                                      await window.electronAPI.openExternal(`https://steamcommunity.com/profiles/${msg.steamid}`)
+                                                    } else {
+                                                      window.open(`https://steamcommunity.com/profiles/${msg.steamid}`, '_blank')
+                                                    }
+                                                  }}
+                                                  className="font-medium text-green-400 hover:text-green-300 underline bg-transparent border-none cursor-pointer p-0"
+                                                >
+                                                  {msg.steamid}
+                                                </button>
+                                              )}
                                               {msg.team && (
                                                 <span className={`text-xs text-gray-500 px-1.5 py-0.5 rounded ${
                                                   msg.team === 'T' 

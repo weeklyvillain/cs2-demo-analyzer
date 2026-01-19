@@ -83,7 +83,21 @@ export default function PlayerModal({
         <div className="px-6 py-4 border-b border-border flex items-center justify-between flex-shrink-0">
           <div>
             <h3 className="text-xl font-bold text-white">{player.name || player.steamId}</h3>
-            <p className="text-sm text-gray-400 mt-1">Steam ID: {player.steamId}</p>
+            <p className="text-sm text-gray-400 mt-1">
+              Steam ID:{' '}
+              <button
+                onClick={async () => {
+                  if (window.electronAPI?.openExternal) {
+                    await window.electronAPI.openExternal(`https://steamcommunity.com/profiles/${player.steamId}`)
+                  } else {
+                    window.open(`https://steamcommunity.com/profiles/${player.steamId}`, '_blank')
+                  }
+                }}
+                className="text-accent hover:text-accent/80 underline bg-transparent border-none cursor-pointer p-0"
+              >
+                {player.steamId}
+              </button>
+            </p>
           </div>
           <button
             onClick={onClose}

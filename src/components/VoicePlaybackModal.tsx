@@ -38,6 +38,7 @@ export default function VoicePlaybackModal({
   const [duration, setDuration] = useState(0)
   const [volume, setVolume] = useState(1)
   const [playbackRate, setPlaybackRate] = useState(1)
+  const [skipTime, setSkipTime] = useState(10) // Default 10 seconds (will be loaded from settings)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
   const gainNodeRef = useRef<GainNode | null>(null)
@@ -48,6 +49,25 @@ export default function VoicePlaybackModal({
 
   // Create object URL for selected audio file
   const [audioUrl, setAudioUrl] = useState<string | null>(null)
+
+  // Load skip time from settings when modal opens
+  useEffect(() => {
+    if (!isOpen || !window.electronAPI) return
+    
+    const loadSkipTime = async () => {
+      try {
+        const skipTimeSetting = await window.electronAPI.getSetting('voice_skip_time', '10')
+        const skipTimeValue = parseFloat(skipTimeSetting)
+        if (!isNaN(skipTimeValue) && skipTimeValue > 0) {
+          setSkipTime(skipTimeValue)
+        }
+      } catch (error) {
+        console.error('Failed to load voice skip time setting:', error)
+      }
+    }
+    
+    loadSkipTime()
+  }, [isOpen])
 
   // Reset state and start extraction when modal opens
   const extractionStartedRef = useRef(false)
@@ -304,6 +324,24 @@ export default function VoicePlaybackModal({
     }
   }
 
+  // Handle skip backward
+  const handleSkipBackward = () => {
+    if (audioRef.current) {
+      const newTime = Math.max(0, currentTime - skipTime)
+      audioRef.current.currentTime = newTime
+      setCurrentTime(newTime)
+    }
+  }
+
+  // Handle skip forward
+  const handleSkipForward = () => {
+    if (audioRef.current && duration > 0) {
+      const newTime = Math.min(duration, currentTime + skipTime)
+      audioRef.current.currentTime = newTime
+      setCurrentTime(newTime)
+    }
+  }
+
   // Handle volume change (0 to 2.0 = 0% to 200%)
   const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newVolume = parseFloat(e.target.value)
@@ -494,11 +532,27 @@ export default function VoicePlaybackModal({
                         </span>
                         <div className="flex items-center gap-2">
                           <button
+                            onClick={handleSkipBackward}
+                            className="px-3 py-1.5 bg-secondary hover:bg-surface text-white rounded text-sm font-medium transition-colors"
+                            aria-label={`Skip backward ${skipTime}s`}
+                            title={`Skip backward ${skipTime}s`}
+                          >
+                            -{skipTime}s
+                          </button>
+                          <button
                             onClick={togglePlayback}
                             className="p-2 bg-accent hover:bg-accent/90 text-white rounded transition-colors"
                             aria-label={isPlaying ? 'Pause' : 'Play'}
                           >
                             {isPlaying ? <Pause size={20} /> : <Play size={20} />}
+                          </button>
+                          <button
+                            onClick={handleSkipForward}
+                            className="px-3 py-1.5 bg-secondary hover:bg-surface text-white rounded text-sm font-medium transition-colors"
+                            aria-label={`Skip forward ${skipTime}s`}
+                            title={`Skip forward ${skipTime}s`}
+                          >
+                            +{skipTime}s
                           </button>
                           <button
                             onClick={handleDownload}
@@ -566,7 +620,23 @@ export default function VoicePlaybackModal({
                   <div className="text-xs text-gray-400 space-y-1">
                     <div>File: {selectedFile.name}</div>
                     {selectedFile.playerName && <div>Player: {selectedFile.playerName}</div>}
-                    {selectedFile.steamId && <div>Steam ID: {selectedFile.steamId}</div>}
+                    {selectedFile.steamId && (
+                      <div>
+                        Steam ID:{' '}
+                        <button
+                          onClick={async () => {
+                            if (window.electronAPI?.openExternal) {
+                              await window.electronAPI.openExternal(`https://steamcommunity.com/profiles/${selectedFile.steamId}`)
+                            } else {
+                              window.open(`https://steamcommunity.com/profiles/${selectedFile.steamId}`, '_blank')
+                            }
+                          }}
+                          className="text-accent hover:text-accent/80 underline bg-transparent border-none cursor-pointer p-0"
+                        >
+                          {selectedFile.steamId}
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
               </>
