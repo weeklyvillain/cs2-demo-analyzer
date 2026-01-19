@@ -105,6 +105,7 @@ function MatchesScreen() {
   })
   const [afkMinSeconds, setAfkMinSeconds] = useState<number>(10)
   const [flashMinSeconds, setFlashMinSeconds] = useState<number>(1.5)
+  const [afkSortBy, setAfkSortBy] = useState<'round' | 'duration'>('round')
   const [demoPath, setDemoPath] = useState<string | null>(null)
   const [tickRate, setTickRate] = useState<number>(64) // Default tick rate
   const [chatMessages, setChatMessages] = useState<Array<{ matchId: string; roundIndex: number; tick: number; steamid: string; name: string; team: string | null; message: string; isTeamChat: boolean }>>([])
@@ -588,6 +589,58 @@ function MatchesScreen() {
       setSelectedMatch(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete demo')
+    }
+  }
+
+  // Copy chat message to clipboard
+  const handleCopyChatMessage = async (message: string) => {
+    try {
+      await navigator.clipboard.writeText(message)
+      setToast({ message: 'Chat message copied to clipboard!', type: 'success' })
+    } catch (err) {
+      console.error('Failed to copy chat message:', err)
+      setToast({ message: 'Failed to copy chat message', type: 'error' })
+    }
+  }
+
+  // Copy all chat messages for a player to clipboard
+  const handleCopyPlayerChat = async () => {
+    if (chatMessages.length === 0) return
+    
+    try {
+      const timeSeconds = (tick: number) => {
+        const totalSeconds = tick / 64
+        const minutes = Math.floor(totalSeconds / 60)
+        const seconds = Math.floor(totalSeconds % 60)
+        return `${minutes}:${seconds.toString().padStart(2, '0')}`
+      }
+      
+      // Filter out server messages
+      const filteredMessages = chatMessages.filter(msg => {
+        const playerName = msg.name || msg.steamid
+        return playerName !== '*server*'
+      })
+      
+      if (filteredMessages.length === 0) {
+        setToast({ message: 'No chat messages to copy (all filtered)', type: 'info' })
+        return
+      }
+      
+      const chatText = filteredMessages.map(msg => {
+        const timeStr = timeSeconds(msg.tick)
+        const playerName = msg.name || msg.steamid
+        const teamTag = msg.team ? `[${msg.team}] ` : ''
+        return `[Round ${msg.roundIndex + 1}] [${timeStr}] ${teamTag}${playerName}: ${msg.message}`
+      }).join('\n')
+      
+      await navigator.clipboard.writeText(chatText)
+      const playerName = chatFilterSteamId 
+        ? scores.find(s => s.steamId === chatFilterSteamId)?.name || chatFilterSteamId
+        : 'All Players'
+      setToast({ message: `Chat for ${playerName} copied to clipboard!`, type: 'success' })
+    } catch (err) {
+      console.error('Failed to copy player chat:', err)
+      setToast({ message: 'Failed to copy chat', type: 'error' })
     }
   }
 
@@ -1447,20 +1500,33 @@ function MatchesScreen() {
                               AFK Players at Round Start
                               {expandedSections.afk ? <ChevronDown size={18} className="text-gray-500" /> : <ChevronUp size={18} className="text-gray-500" />}
                             </button>
-                            <div className="flex items-center gap-2">
-                              <label className="text-xs text-gray-400">Min duration:</label>
-                              <input
-                                type="number"
-                                min="0"
-                                step="0.5"
-                                value={effectiveAfkThreshold}
-                                onChange={(e) => setAfkMinSeconds(parseFloat(e.target.value) || 0)}
-                                className="w-20 px-2 py-1 bg-secondary border border-border rounded text-white text-xs"
-                              />
-                              <span className="text-xs text-gray-500">s</span>
-                              <span className="text-xs text-gray-500">
-                                ({filteredAfkDetections.length}/{afkDetections.length})
-                              </span>
+                            <div className="flex items-center gap-4">
+                              <div className="flex items-center gap-2">
+                                <label className="text-xs text-gray-400">Sort by:</label>
+                                <select
+                                  value={afkSortBy}
+                                  onChange={(e) => setAfkSortBy(e.target.value as 'round' | 'duration')}
+                                  className="px-2 py-1 bg-secondary border border-border rounded text-white text-xs"
+                                >
+                                  <option value="round">Round</option>
+                                  <option value="duration">Duration</option>
+                                </select>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <label className="text-xs text-gray-400">Min duration:</label>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="0.5"
+                                  value={effectiveAfkThreshold}
+                                  onChange={(e) => setAfkMinSeconds(parseFloat(e.target.value) || 0)}
+                                  className="w-20 px-2 py-1 bg-secondary border border-border rounded text-white text-xs"
+                                />
+                                <span className="text-xs text-gray-500">s</span>
+                                <span className="text-xs text-gray-500">
+                                  ({filteredAfkDetections.length}/{afkDetections.length})
+                                </span>
+                              </div>
                             </div>
                           </div>
                           {expandedSections.afk && (() => {
@@ -1480,11 +1546,16 @@ function MatchesScreen() {
                             // Convert to array and sort alphabetically by player name
                             const sortedPlayers = Array.from(groupedByPlayer.entries())
                               .map(([playerId, afks]) => {
-                                // Sort AFK periods by duration (longest first)
+                                // Sort AFK periods based on user selection
                                 const sortedAfks = afks.sort((a, b) => {
-                                  const durationA = a.meta?.seconds || a.meta?.afkDuration || (a.endTick && a.startTick ? (a.endTick - a.startTick) / 64 : 0)
-                                  const durationB = b.meta?.seconds || b.meta?.afkDuration || (b.endTick && b.startTick ? (b.endTick - b.startTick) / 64 : 0)
-                                  return durationB - durationA // Descending order (longest first)
+                                  if (afkSortBy === 'round') {
+                                    return a.roundIndex - b.roundIndex
+                                  } else if (afkSortBy === 'duration') {
+                                    const durationA = a.meta?.seconds || a.meta?.afkDuration || (a.endTick && a.startTick ? (a.endTick - a.startTick) / tickRate : 0)
+                                    const durationB = b.meta?.seconds || b.meta?.afkDuration || (b.endTick && b.startTick ? (b.endTick - b.startTick) / tickRate : 0)
+                                    return durationB - durationA // Descending order (longest first)
+                                  }
+                                  return 0
                                 })
                                 return {
                                   playerId,
@@ -1562,17 +1633,21 @@ function MatchesScreen() {
                       {/* Disconnects */}
                       {disconnects.length > 0 && (
                         <div className="bg-surface border border-border rounded-lg p-4">
-                          <button
-                            onClick={() => toggleSection('disconnects')}
-                            className="flex items-center gap-2 text-lg font-semibold mb-3 text-white hover:text-gray-400 transition-colors"
-                          >
-                            <WifiOff size={18} />
-                            Disconnects
-                            {expandedSections.disconnects ? <ChevronDown size={18} className="text-gray-500" /> : <ChevronUp size={18} className="text-gray-500" />}
-                          </button>
+                          <div className="flex items-center justify-between mb-3">
+                            <button
+                              onClick={() => toggleSection('disconnects')}
+                              className="flex items-center gap-2 text-lg font-semibold text-white hover:text-gray-400 transition-colors"
+                            >
+                              <WifiOff size={18} />
+                              Disconnects
+                              {expandedSections.disconnects ? <ChevronDown size={18} className="text-gray-500" /> : <ChevronUp size={18} className="text-gray-500" />}
+                            </button>
+                          </div>
                           {expandedSections.disconnects && (
                             <div className="flex flex-wrap gap-4">
-                              {disconnects.map((dc, idx) => {
+                              {disconnects
+                                .sort((a, b) => a.roundIndex - b.roundIndex)
+                                .map((dc, idx) => {
                                 const disconnectTime = dc.meta?.disconnect_time ? formatTime(dc.meta.disconnect_time) : 'N/A'
                                 const reconnected = dc.meta?.reconnected === true
                                 const reconnectTime = dc.meta?.reconnect_time ? formatTime(dc.meta.reconnect_time) : null
@@ -1641,17 +1716,21 @@ function MatchesScreen() {
                       {/* Team Kills */}
                       {teamKills.length > 0 && (
                         <div className="bg-surface border border-border rounded-lg p-4">
-                          <button
-                            onClick={() => toggleSection('teamKills')}
-                            className="flex items-center gap-2 text-lg font-semibold mb-3 text-white hover:text-red-400 transition-colors"
-                          >
-                            <Skull size={18} />
-                            Team Kills
-                            {expandedSections.teamKills ? <ChevronDown size={18} className="text-gray-500" /> : <ChevronUp size={18} className="text-gray-500" />}
-                          </button>
+                          <div className="flex items-center justify-between mb-3">
+                            <button
+                              onClick={() => toggleSection('teamKills')}
+                              className="flex items-center gap-2 text-lg font-semibold text-white hover:text-red-400 transition-colors"
+                            >
+                              <Skull size={18} />
+                              Team Kills
+                              {expandedSections.teamKills ? <ChevronDown size={18} className="text-gray-500" /> : <ChevronUp size={18} className="text-gray-500" />}
+                            </button>
+                          </div>
                           {expandedSections.teamKills && (
                             <div className="flex flex-wrap gap-4">
-                              {teamKills.map((kill, idx) => (
+                              {teamKills
+                                .sort((a, b) => a.roundIndex - b.roundIndex)
+                                .map((kill, idx) => (
                                 <div key={idx} className="bg-secondary border border-border rounded p-3 min-w-[300px]">
                                   <div className="flex items-center justify-between mb-2">
                                     <span className="font-medium text-white">{getPlayerName(kill.actorSteamId)}</span>
@@ -1686,18 +1765,20 @@ function MatchesScreen() {
                       {/* Team Damage */}
                       {teamDamage.length > 0 && (
                         <div className="bg-surface border border-border rounded-lg p-4">
-                          <button
-                            onClick={() => toggleSection('teamDamage')}
-                            className="flex items-center gap-2 text-lg font-semibold mb-3 text-white hover:text-accent transition-colors"
-                          >
-                            <Zap size={18} />
-                            Team Damage
-                            {expandedSections.teamDamage ? <ChevronDown size={18} className="text-gray-500" /> : <ChevronUp size={18} className="text-gray-500" />}
-                          </button>
+                          <div className="flex items-center justify-between mb-3">
+                            <button
+                              onClick={() => toggleSection('teamDamage')}
+                              className="flex items-center gap-2 text-lg font-semibold text-white hover:text-accent transition-colors"
+                            >
+                              <Zap size={18} />
+                              Team Damage
+                              {expandedSections.teamDamage ? <ChevronDown size={18} className="text-gray-500" /> : <ChevronUp size={18} className="text-gray-500" />}
+                            </button>
+                          </div>
                           {expandedSections.teamDamage && (
                             <div className="flex flex-wrap gap-4">
                               {teamDamage
-                                .sort((a, b) => (b.meta?.total_damage || 0) - (a.meta?.total_damage || 0))
+                                .sort((a, b) => a.roundIndex - b.roundIndex)
                                 .map((damage, idx) => {
                                   // Handle weapon display - can be string or array
                                   let weaponDisplay = ''
@@ -1777,7 +1858,7 @@ function MatchesScreen() {
                               {filteredTeamFlashes.length > 0 ? (
                                 <div className="flex flex-wrap gap-4">
                                   {filteredTeamFlashes
-                                    .sort((a, b) => (b.meta?.blind_duration || 0) - (a.meta?.blind_duration || 0))
+                                    .sort((a, b) => a.roundIndex - b.roundIndex)
                                     .map((flash, idx) => (
                                       <div key={idx} className="bg-secondary border border-border rounded p-3 min-w-[300px]">
                                         <div className="flex items-center justify-between mb-2">
@@ -2076,6 +2157,16 @@ function MatchesScreen() {
                       </select>
                       
                       <div className="flex items-center gap-2 ml-auto">
+                        {chatMessages.length > 0 && (
+                          <button
+                            onClick={handleCopyPlayerChat}
+                            className="px-3 py-1.5 bg-secondary hover:bg-secondary/80 border border-border rounded text-white text-sm flex items-center gap-2 transition-colors"
+                            title="Copy all chat messages"
+                          >
+                            <Copy size={14} />
+                            Copy All
+                          </button>
+                        )}
                         <span className="text-sm text-gray-400">All Chat Only</span>
                       </div>
                     </div>
@@ -2109,8 +2200,10 @@ function MatchesScreen() {
                                     const seconds = Math.floor(timeSeconds % 60)
                                     const timeStr = `${minutes}:${seconds.toString().padStart(2, '0')}`
                                     
+                                    const fullMessage = `${msg.name || msg.steamid}: ${msg.message}`
+                                    
                                     return (
-                                      <div key={`all-${idx}`} className="p-3 hover:bg-secondary/50 transition-colors">
+                                      <div key={`all-${idx}`} className="p-3 hover:bg-secondary/50 transition-colors group">
                                         <div className="flex items-start gap-3">
                                           <div className="flex-shrink-0">
                                             <div className="text-xs font-mono text-gray-500">
@@ -2147,6 +2240,13 @@ function MatchesScreen() {
                                                   {msg.team}
                                                 </span>
                                               )}
+                                              <button
+                                                onClick={() => handleCopyChatMessage(fullMessage)}
+                                                className="ml-auto p-1 hover:bg-accent/20 rounded transition-colors opacity-0 group-hover:opacity-100"
+                                                title="Copy message"
+                                              >
+                                                <Copy size={14} className="text-gray-400 hover:text-accent" />
+                                              </button>
                                             </div>
                                             <div className="text-sm text-gray-300 break-words">{msg.message}</div>
                                           </div>
@@ -2218,6 +2318,8 @@ function MatchesScreen() {
             flashMinSeconds={flashMinSeconds}
             setAfkMinSeconds={setAfkMinSeconds}
             setFlashMinSeconds={setFlashMinSeconds}
+            afkSortBy={afkSortBy}
+            setAfkSortBy={setAfkSortBy}
             filteredEvents={filteredEvents}
             eventsByType={eventsByType}
           />

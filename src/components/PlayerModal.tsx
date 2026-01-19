@@ -44,6 +44,8 @@ interface PlayerModalProps {
   flashMinSeconds: number
   setAfkMinSeconds: (value: number) => void
   setFlashMinSeconds: (value: number) => void
+  afkSortBy: 'round' | 'duration'
+  setAfkSortBy: (value: 'round' | 'duration') => void
   filteredEvents: PlayerEvent[]
   eventsByType: Record<string, PlayerEvent[]>
 }
@@ -67,6 +69,8 @@ export default function PlayerModal({
   flashMinSeconds,
   setAfkMinSeconds,
   setFlashMinSeconds,
+  afkSortBy,
+  setAfkSortBy,
   filteredEvents,
   eventsByType,
 }: PlayerModalProps) {
@@ -213,7 +217,18 @@ export default function PlayerModal({
                     {!isCollapsed && (
                       <div className="px-4 pb-4">
                         {eventType === 'AFK_STILLNESS' && (
-                          <div className="mb-3 flex items-center justify-end">
+                          <div className="mb-3 flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <label className="text-xs text-gray-400">Sort by:</label>
+                              <select
+                                value={afkSortBy}
+                                onChange={(e) => setAfkSortBy(e.target.value as 'round' | 'duration')}
+                                className="px-2 py-1 bg-secondary border border-border rounded text-white text-xs"
+                              >
+                                <option value="round">Round</option>
+                                <option value="duration">Duration</option>
+                              </select>
+                            </div>
                             <div className="flex items-center gap-2">
                               <label className="text-xs text-gray-400">Min duration:</label>
                               <input
@@ -245,7 +260,22 @@ export default function PlayerModal({
                           </div>
                         )}
                         <div className="flex flex-wrap gap-4">
-                          {events.map((event, idx) => (
+                          {(() => {
+                            // Sort events - for AFK_STILLNESS, use user-selected sort
+                            let sortedEvents = events
+                            if (eventType === 'AFK_STILLNESS') {
+                              sortedEvents = [...events].sort((a, b) => {
+                                if (afkSortBy === 'round') {
+                                  return a.roundIndex - b.roundIndex
+                                } else if (afkSortBy === 'duration') {
+                                  const durationA = a.meta?.seconds || (a.endTick && a.startTick ? (a.endTick - a.startTick) / tickRate : 0)
+                                  const durationB = b.meta?.seconds || (b.endTick && b.startTick ? (b.endTick - b.startTick) / tickRate : 0)
+                                  return durationB - durationA // Descending (longest first)
+                                }
+                                return 0
+                              })
+                            }
+                            return sortedEvents.map((event, idx) => (
                             <div
                               key={idx}
                               className="bg-secondary border border-border rounded p-3 min-w-[300px] flex-1"
@@ -321,7 +351,8 @@ export default function PlayerModal({
                                 </div>
                               )}
                             </div>
-                          ))}
+                            ))
+                          })()}
                         </div>
                       </div>
                     )}
