@@ -1,4 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, shell, clipboard, protocol, Menu } from 'electron'
+import { autoUpdater } from 'electron-updater'
 import { spawn, ChildProcess, exec } from 'child_process'
 import * as path from 'path'
 import * as fs from 'fs'
@@ -127,6 +128,45 @@ app.whenReady().then(async () => {
         details: deleted,
       })
     }
+  }
+  
+  // Initialize auto-updater (only in production)
+  if (!isDev) {
+    autoUpdater.checkForUpdatesAndNotify()
+    
+    // Configure auto-updater
+    autoUpdater.autoDownload = true
+    autoUpdater.autoInstallOnAppQuit = true
+    
+    // Listen for update events
+    autoUpdater.on('update-available', (info) => {
+      console.log('[AutoUpdater] Update available:', info.version)
+      if (mainWindow) {
+        mainWindow.webContents.send('update:available', {
+          version: info.version,
+        })
+      }
+    })
+    
+    autoUpdater.on('update-downloaded', (info) => {
+      console.log('[AutoUpdater] Update downloaded:', info.version)
+      if (mainWindow) {
+        mainWindow.webContents.send('update:downloaded', {
+          version: info.version,
+        })
+      }
+    })
+    
+    autoUpdater.on('error', (error) => {
+      console.error('[AutoUpdater] Error:', error)
+    })
+    
+    // Check for updates periodically (every 6 hours)
+    setInterval(() => {
+      if (!isDev) {
+        autoUpdater.checkForUpdatesAndNotify()
+      }
+    }, 6 * 60 * 60 * 1000)
   }
   
   createWindow()
@@ -1389,6 +1429,38 @@ ipcMain.handle('app:getInfo', async () => {
 ipcMain.handle('app:openExternal', async (_, url: string) => {
   await shell.openExternal(url)
 })
+
+// Auto-updater IPC handlers (only in production)
+if (!isDev) {
+  ipcMain.handle('update:check', async () => {
+    try {
+      const result = await autoUpdater.checkForUpdates()
+      return {
+        updateInfo: result?.updateInfo ? {
+          version: result.updateInfo.version,
+          releaseDate: result.updateInfo.releaseDate,
+        } : null,
+      }
+    } catch (error) {
+      console.error('[AutoUpdater] Error checking for updates:', error)
+      return { error: String(error) }
+    }
+  })
+  
+  ipcMain.handle('update:download', async () => {
+    try {
+      await autoUpdater.downloadUpdate()
+      return { success: true }
+    } catch (error) {
+      console.error('[AutoUpdater] Error downloading update:', error)
+      return { success: false, error: String(error) }
+    }
+  })
+  
+  ipcMain.handle('update:install', () => {
+    autoUpdater.quitAndInstall(false, true)
+  })
+}
 
 // IPC handler to show file in folder
 ipcMain.handle('file:showInFolder', async (_, filePath: string) => {

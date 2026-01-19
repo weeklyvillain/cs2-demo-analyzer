@@ -54,6 +54,9 @@ export interface ElectronAPI {
   onMatchesCleanup: (callback: (data: { deleted: number; details: Array<{ matchId: string; reason: string }> }) => void) => void
   onMatchesTrimmed: (callback: (data: { deleted: number; details: Array<{ matchId: string; reason: string }> }) => void) => void
   onVoiceExtractionLog: (callback: (log: string) => void) => void
+  onUpdateAvailable: (callback: (data: { version: string }) => void) => void
+  onUpdateDownloaded: (callback: (data: { version: string }) => void) => void
+  installUpdate: () => Promise<void>
   removeAllListeners: (channel: string) => void
 }
 

@@ -89,5 +89,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onVoiceExtractionLog: (callback: (log: string) => void) => {
     ipcRenderer.on('voice:extractionLog', (_, log) => callback(log))
   },
+
+  // Auto-updater listeners
+  onUpdateAvailable: (callback: (data: { version: string }) => void) => {
+    ipcRenderer.on('update:available', (_, data) => callback(data))
+  },
+  onUpdateDownloaded: (callback: (data: { version: string }) => void) => {
+    ipcRenderer.on('update:downloaded', (_, data) => callback(data))
+  },
+
+  // Auto-updater actions
+  installUpdate: () => ipcRenderer.invoke('update:install'),
 })
 

@@ -16,6 +16,7 @@ function App() {
   const [updateVersion, setUpdateVersion] = useState<string | null>(null)
   const [updateReleaseUrl, setUpdateReleaseUrl] = useState<string | null>(null)
   const [currentVersion, setCurrentVersion] = useState<string>('1.0.0')
+  const [updateDownloaded, setUpdateDownloaded] = useState(false)
 
   useEffect(() => {
     // Check if electronAPI is available and app is ready
@@ -51,6 +52,29 @@ function App() {
     }
 
     checkReady()
+
+    // Listen for auto-updater events
+    if (window.electronAPI) {
+      // Listen for update available (auto-updater found an update)
+      window.electronAPI.onUpdateAvailable?.((data: { version: string }) => {
+        setUpdateAvailable(true)
+        setUpdateVersion(data.version)
+      })
+
+      // Listen for update downloaded (auto-updater finished downloading)
+      window.electronAPI.onUpdateDownloaded?.((data: { version: string }) => {
+        setUpdateDownloaded(true)
+        setUpdateVersion(data.version)
+      })
+    }
+
+    return () => {
+      // Cleanup listeners
+      if (window.electronAPI?.removeAllListeners) {
+        window.electronAPI.removeAllListeners('update:available')
+        window.electronAPI.removeAllListeners('update:downloaded')
+      }
+    }
   }, [])
 
   // Redirect from dbviewer if it's disabled
@@ -84,6 +108,16 @@ function App() {
     setUpdateAvailable(false)
   }
 
+  const handleInstallUpdate = () => {
+    if (window.electronAPI?.installUpdate) {
+      window.electronAPI.installUpdate()
+    }
+  }
+
+  const handleRestartLater = () => {
+    setUpdateDownloaded(false)
+  }
+
   return (
     <div className="flex h-screen bg-primary text-white overflow-hidden">
       <Sidebar currentScreen={currentScreen} onNavigate={setCurrentScreen} />
@@ -93,9 +127,53 @@ function App() {
         {currentScreen === 'dbviewer' && <DBViewerScreen />}
       </main>
 
-      {/* Update Available Modal */}
+      {/* Update Downloaded - Ready to Install Modal */}
       <Modal
-        isOpen={updateAvailable}
+        isOpen={updateDownloaded}
+        onClose={handleRestartLater}
+        title="Update Ready to Install"
+        size="md"
+        footer={
+          <div className="flex items-center justify-end gap-3">
+            <button
+              onClick={handleRestartLater}
+              className="px-4 py-2 text-gray-300 hover:text-white transition-colors"
+            >
+              Restart Later
+            </button>
+            <button
+              onClick={handleInstallUpdate}
+              className="px-4 py-2 bg-accent hover:bg-accent/90 text-white rounded transition-colors flex items-center gap-2"
+            >
+              <Download size={16} />
+              Restart & Install
+            </button>
+          </div>
+        }
+      >
+        <div className="space-y-4">
+          <p className="text-gray-300">
+            Update v{updateVersion} has been downloaded and is ready to install!
+          </p>
+          <div className="bg-surface/50 border border-border rounded p-3">
+            <div className="flex items-center justify-between">
+              <span className="text-gray-400 text-sm">Current Version:</span>
+              <span className="text-white font-mono text-sm">v{currentVersion}</span>
+            </div>
+            <div className="flex items-center justify-between mt-2">
+              <span className="text-accent text-sm font-medium">New Version:</span>
+              <span className="text-accent font-mono text-sm font-semibold">v{updateVersion}</span>
+            </div>
+          </div>
+          <p className="text-gray-400 text-sm">
+            The application will restart automatically to install the update. Save any work before restarting.
+          </p>
+        </div>
+      </Modal>
+
+      {/* Update Available (Downloading) Modal */}
+      <Modal
+        isOpen={updateAvailable && !updateDownloaded}
         onClose={handleDismissUpdate}
         title="Update Available"
         size="md"
@@ -132,7 +210,7 @@ function App() {
             </div>
           </div>
           <p className="text-gray-400 text-sm">
-            Download the latest version to get new features and bug fixes.
+            The update will download automatically in the background. You'll be notified when it's ready to install.
           </p>
         </div>
       </Modal>
