@@ -4,6 +4,7 @@ import Sidebar from './components/Sidebar'
 import MatchesScreen from './components/MatchesScreen'
 import SettingsScreen from './components/SettingsScreen'
 import DBViewerScreen from './components/DBViewerScreen'
+import WhatsNewModal from './components/WhatsNewModal'
 
 type Screen = 'matches' | 'settings' | 'dbviewer'
 
@@ -11,6 +12,8 @@ function App() {
   const [currentScreen, setCurrentScreen] = useState<Screen>('matches')
   const [isLoading, setIsLoading] = useState(true)
   const [enableDbViewer, setEnableDbViewer] = useState(false)
+  const [showWhatsNew, setShowWhatsNew] = useState(false)
+  const [appVersion, setAppVersion] = useState<string>('')
 
   useEffect(() => {
     // Check if electronAPI is available and app is ready
@@ -20,6 +23,14 @@ function App() {
         const dbViewerEnabled = await window.electronAPI.getSetting('enable_db_viewer', 'false')
         setEnableDbViewer(dbViewerEnabled === 'true')
         
+        // Check if we should show What's New
+        const shouldShow = await window.electronAPI.shouldShowWhatsNew()
+        if (shouldShow) {
+          // Get current app version
+          const info = await window.electronAPI.getAppInfo()
+          setAppVersion(info.version || '')
+          setShowWhatsNew(true)
+        }
         
         // Small delay to ensure everything is initialized
         setTimeout(() => {
@@ -54,6 +65,14 @@ function App() {
     )
   }
 
+  const handleWhatsNewClose = async () => {
+    setShowWhatsNew(false)
+    // Update last seen version to current version
+    if (window.electronAPI && appVersion) {
+      await window.electronAPI.setLastSeenVersion(appVersion)
+    }
+  }
+
   return (
     <div className="flex h-screen bg-primary text-white overflow-hidden">
       <Sidebar currentScreen={currentScreen} onNavigate={setCurrentScreen} />
@@ -62,6 +81,9 @@ function App() {
         {currentScreen === 'settings' && <SettingsScreen />}
         {currentScreen === 'dbviewer' && <DBViewerScreen />}
       </main>
+      {showWhatsNew && appVersion && (
+        <WhatsNewModal version={appVersion} onClose={handleWhatsNewClose} />
+      )}
     </div>
   )
 }

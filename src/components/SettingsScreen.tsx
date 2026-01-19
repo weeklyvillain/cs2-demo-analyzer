@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import Modal from './Modal'
+import WhatsNewModal from './WhatsNewModal'
 
 interface Settings {
   cs2_path: string
@@ -41,6 +42,7 @@ function SettingsScreen() {
   const [success, setSuccess] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [showWhatsNew, setShowWhatsNew] = useState(false)
   const [appInfo, setAppInfo] = useState<{
     version: string
     platform: string
@@ -639,6 +641,16 @@ function SettingsScreen() {
                   <span className="text-sm text-gray-400">Version</span>
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-medium text-white">{appInfo.version}</span>
+                    <button
+                      onClick={() => setShowWhatsNew(true)}
+                      className="px-3 py-1 bg-surface hover:bg-surface/80 text-white text-xs rounded transition-colors flex items-center gap-1"
+                      title="View What's New"
+                    >
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      What's New
+                    </button>
                     {appInfo.updateAvailable && appInfo.updateVersion && (
                       <button
                         onClick={async () => {
@@ -706,6 +718,14 @@ function SettingsScreen() {
           </div>
         )}
       </div>
+      
+      {/* What's New Modal */}
+      {showWhatsNew && appInfo && (
+        <WhatsNewModal 
+          version={appInfo.version} 
+          onClose={() => setShowWhatsNew(false)} 
+        />
+      )}
     </div>
   )
 }

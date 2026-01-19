@@ -1540,10 +1540,145 @@ ipcMain.handle('settings:getAll', async () => {
   return getAllSettings()
 })
 
+// Helper function to parse release notes from GitHub release body
+function parseReleaseNotes(body: string): string[] {
+  if (!body) return ['Bug fixes and improvements']
+  
+  // Split by common markdown list patterns
+  const lines = body.split('\n')
+  const items: string[] = []
+  
+  for (const line of lines) {
+    // Match markdown list items: - item, * item, or numbered lists
+    const match = line.match(/^[\s]*[-*]\s+(.+)$/) || line.match(/^[\s]*\d+\.\s+(.+)$/)
+    if (match && match[1]) {
+      const item = match[1].trim()
+      // Skip empty items and headers
+      if (item && !item.startsWith('#') && item.length > 0) {
+        items.push(item)
+      }
+    }
+  }
+  
+  // If no list items found, try to split by double newlines (paragraphs)
+  if (items.length === 0) {
+    const paragraphs = body.split(/\n\s*\n/).filter(p => p.trim().length > 0)
+    if (paragraphs.length > 0) {
+      return paragraphs.slice(0, 10) // Limit to 10 items
+    }
+  }
+  
+  return items.length > 0 ? items : ['Bug fixes and improvements']
+}
+
+// Helper function to get release notes for a specific version
+async function getReleaseNotes(version: string): Promise<{ title: string; items: string[] } | null> {
+  try {
+    const repoOwner = 'weeklyvillain'
+    const repoName = 'cs2-demo-analyzer'
+    
+    // Try to fetch the specific release by tag
+    const apiUrl = `https://api.github.com/repos/${repoOwner}/${repoName}/releases/tags/v${version}`
+    
+    const response = await fetch(apiUrl, {
+      headers: {
+        'Accept': 'application/vnd.github.v3+json',
+        'User-Agent': 'CS2-Demo-Analyzer',
+      },
+    })
+    
+    if (!response.ok) {
+      // If specific release not found, try latest
+      const latestUrl = `https://api.github.com/repos/${repoOwner}/${repoName}/releases/latest`
+      const latestResponse = await fetch(latestUrl, {
+        headers: {
+          'Accept': 'application/vnd.github.v3+json',
+          'User-Agent': 'CS2-Demo-Analyzer',
+        },
+      })
+      
+      if (!latestResponse.ok) {
+        return null
+      }
+      
+      const latestRelease = await latestResponse.json() as GitHubRelease
+      const latestVersion = latestRelease.tag_name?.replace(/^v/, '') || ''
+      
+      // Only return if it matches the requested version
+      if (latestVersion === version) {
+        const items = parseReleaseNotes(latestRelease.body || '')
+        return {
+          title: latestRelease.name || `What's New in Version ${version}`,
+          items,
+        }
+      }
+      
+      return null
+    }
+    
+    const release = await response.json() as GitHubRelease
+    const items = parseReleaseNotes(release.body || '')
+    
+    return {
+      title: release.name || `What's New in Version ${version}`,
+      items,
+    }
+  } catch (error) {
+    console.error('[Release Notes] Error fetching release notes:', error)
+    return null
+  }
+}
+
+// What's New / Version tracking
+ipcMain.handle('app:getLastSeenVersion', async () => {
+  return getSetting('last_seen_version', '')
+})
+
+ipcMain.handle('app:setLastSeenVersion', async (_, version: string) => {
+  setSetting('last_seen_version', version)
+})
+
+ipcMain.handle('app:shouldShowWhatsNew', async () => {
+  const currentVersion = app.getVersion()
+  const lastSeenVersion = getSetting('last_seen_version', '')
+  
+  // If no last seen version, don't show (first install)
+  if (!lastSeenVersion) {
+    // Set current version as last seen
+    setSetting('last_seen_version', currentVersion)
+    return false
+  }
+  
+  // Compare versions (simple string comparison should work for semver)
+  const compareVersions = (v1: string, v2: string): number => {
+    const parts1 = v1.split('.').map(Number)
+    const parts2 = v2.split('.').map(Number)
+    
+    for (let i = 0; i < Math.max(parts1.length, parts2.length); i++) {
+      const part1 = parts1[i] || 0
+      const part2 = parts2[i] || 0
+      if (part1 > part2) return 1
+      if (part1 < part2) return -1
+    }
+    return 0
+  }
+  
+  // Show if current version is newer than last seen
+  const isNewer = compareVersions(currentVersion, lastSeenVersion) > 0
+  return isNewer
+})
+
+// Get release notes for a version
+ipcMain.handle('app:getReleaseNotes', async (_, version: string) => {
+  return await getReleaseNotes(version)
+})
+
 // GitHub API response type for releases
 interface GitHubRelease {
   tag_name: string
   html_url: string
+  body: string
+  name: string | null
 }
 
 // Helper function to check for updates on GitHub

@@ -42,6 +42,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setSetting: (key: string, value: string) => ipcRenderer.invoke('settings:set', key, value),
   getAllSettings: () => ipcRenderer.invoke('settings:getAll'),
   
+  // What's New
+  getLastSeenVersion: () => ipcRenderer.invoke('app:getLastSeenVersion'),
+  setLastSeenVersion: (version: string) => ipcRenderer.invoke('app:setLastSeenVersion', version),
+  shouldShowWhatsNew: () => ipcRenderer.invoke('app:shouldShowWhatsNew'),
+  getReleaseNotes: (version: string) => ipcRenderer.invoke('app:getReleaseNotes', version),
+  
   // App Info
   getAppInfo: () => ipcRenderer.invoke('app:getInfo'),
   openExternal: (url: string) => ipcRenderer.invoke('app:openExternal', url),
