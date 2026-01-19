@@ -1676,6 +1676,13 @@ if (!isDev) {
   })
 }
 
+// App restart handler (available in both dev and production)
+ipcMain.handle('app:restart', () => {
+  console.log('[App] Restarting application...')
+  app.relaunch()
+  app.quit()
+})
+
 // IPC handler to show file in folder
 ipcMain.handle('file:showInFolder', async (_, filePath: string) => {
   if (!fs.existsSync(filePath)) {

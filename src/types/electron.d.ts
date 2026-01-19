@@ -43,6 +43,7 @@ export interface ElectronAPI {
     updateReleaseUrl: string | null
   }>
   openExternal: (url: string) => Promise<void>
+  restartApp: () => Promise<void>
   showFileInFolder: (filePath: string) => Promise<void>
   extractVoice: (options: { demoPath: string; outputPath?: string; mode?: 'split-compact' | 'split-full' | 'single-full'; steamIds?: string[] }) => Promise<{ success: boolean; outputPath: string; files: string[]; filePaths?: string[] }>
   getVoiceAudio: (filePath: string) => Promise<{ success: boolean; data?: string; error?: string }>

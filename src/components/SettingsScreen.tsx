@@ -616,19 +616,27 @@ function SettingsScreen() {
               <div className="space-y-3">
                 <div className="flex items-center justify-between py-2 border-b border-border/50">
                   <span className="text-sm text-gray-400">Version</span>
-                  <span className="text-sm font-medium text-white">{appInfo.version}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium text-white">{appInfo.version}</span>
+                    {appInfo.updateAvailable && appInfo.updateVersion && (
+                      <button
+                        onClick={async () => {
+                          if (window.electronAPI?.restartApp) {
+                            await window.electronAPI.restartApp()
+                          }
+                        }}
+                        className="px-3 py-1 bg-accent hover:bg-accent/90 text-white text-xs rounded transition-colors flex items-center gap-1"
+                        title={`Restart to install update v${appInfo.updateVersion}`}
+                      >
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                        Restart to Update
+                      </button>
+                    )}
+                  </div>
                 </div>
                 
-                {appInfo.updateAvailable && (
-                  <div className="p-3 bg-blue-900/20 border border-blue-500/50 rounded text-sm">
-                    <div className="flex items-center gap-2 text-blue-400">
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                      <span>Update available: v{appInfo.updateVersion}</span>
-                    </div>
-                  </div>
-                )}
                 
                 <div className="flex items-center justify-between py-2 border-b border-border/50">
                   <span className="text-sm text-gray-400">Platform</span>

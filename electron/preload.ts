@@ -45,6 +45,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // App Info
   getAppInfo: () => ipcRenderer.invoke('app:getInfo'),
   openExternal: (url: string) => ipcRenderer.invoke('app:openExternal', url),
+  restartApp: () => ipcRenderer.invoke('app:restart'),
   
   // File operations
   showFileInFolder: (filePath: string) => ipcRenderer.invoke('file:showInFolder', filePath),
