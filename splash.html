@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CS2 Demo Analyzer - Updating</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+        background: linear-gradient(135deg, #1e2124 0%, #2c2f33 100%);
+        color: #ffffff;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 100vh;
+        overflow: hidden;
+      }
+      
+      .container {
+        text-align: center;
+        max-width: 400px;
+        padding: 40px;
+      }
+      
+      .logo {
+        width: 120px;
+        height: 120px;
+        margin: 0 auto 30px;
+        border-radius: 20px;
+        background: #5865f2;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 48px;
+        font-weight: bold;
+        box-shadow: 0 8px 32px rgba(88, 101, 242, 0.3);
+      }
+      
+      h1 {
+        font-size: 28px;
+        font-weight: 600;
+        margin-bottom: 10px;
+        color: #ffffff;
+      }
+      
+      .status {
+        font-size: 16px;
+        color: #b9bbbe;
+        margin-bottom: 30px;
+        min-height: 24px;
+      }
+      
+      .progress-container {
+        width: 100%;
+        height: 8px;
+        background: #2c2f33;
+        border-radius: 4px;
+        overflow: hidden;
+        margin-bottom: 10px;
+      }
+      
+      .progress-bar {
+        height: 100%;
+        background: linear-gradient(90deg, #5865f2 0%, #7289da 100%);
+        border-radius: 4px;
+        transition: width 0.3s ease;
+        width: 0%;
+      }
+      
+      .progress-text {
+        font-size: 14px;
+        color: #72767d;
+        margin-top: 5px;
+      }
+      
+      .version {
+        position: absolute;
+        bottom: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        font-size: 12px;
+        color: #72767d;
+      }
+      
+      .error {
+        color: #ed4245;
+        margin-top: 20px;
+        font-size: 14px;
+        display: none;
+      }
+      
+      .error.show {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="logo">CS2</div>
+      <h1>CS2 Demo Analyzer</h1>
+      <div class="status" id="status">Checking for updates...</div>
+      <div class="progress-container" id="progressContainer" style="display: none;">
+        <div class="progress-bar" id="progressBar"></div>
+      </div>
+      <div class="progress-text" id="progressText"></div>
+      <div class="error" id="error"></div>
+    </div>
+    <div class="version" id="version"></div>
+    
+    <script>
+      const statusEl = document.getElementById('status')
+      const progressContainer = document.getElementById('progressContainer')
+      const progressBar = document.getElementById('progressBar')
+      const progressText = document.getElementById('progressText')
+      const errorEl = document.getElementById('error')
+      const versionEl = document.getElementById('version')
+      
+      // Wait for electronAPI to be available
+      function waitForElectronAPI(callback, maxAttempts = 50) {
+        if (window.electronAPI) {
+          callback()
+        } else if (maxAttempts > 0) {
+          setTimeout(() => waitForElectronAPI(callback, maxAttempts - 1), 100)
+        } else {
+          console.error('electronAPI not available')
+          statusEl.textContent = 'Error: Unable to connect to application'
+        }
+      }
+      
+      waitForElectronAPI(() => {
+        // Get version from window
+        if (window.electronAPI?.getVersion) {
+          window.electronAPI.getVersion().then(version => {
+            versionEl.textContent = `Version ${version}`
+          }).catch(err => {
+            console.error('Error getting version:', err)
+            versionEl.textContent = 'Version unknown'
+          })
+        }
+        
+        // Listen for update events
+        if (window.electronAPI?.onUpdateStatus) {
+          window.electronAPI.onUpdateStatus((status, data) => {
+          switch(status) {
+            case 'checking':
+              statusEl.textContent = 'Checking for updates...'
+              progressContainer.style.display = 'none'
+              errorEl.classList.remove('show')
+              break
+              
+            case 'available':
+              statusEl.textContent = `Update available: ${data.version}`
+              progressContainer.style.display = 'block'
+              progressBar.style.width = '0%'
+              progressText.textContent = 'Preparing download...'
+              errorEl.classList.remove('show')
+              break
+              
+            case 'not-available':
+              statusEl.textContent = 'Starting application...'
+              progressContainer.style.display = 'none'
+              errorEl.classList.remove('show')
+              // Close splash and open main window after a brief delay
+              setTimeout(() => {
+                if (window.electronAPI?.closeSplash) {
+                  window.electronAPI.closeSplash()
+                }
+              }, 1000)
+              break
+              
+            case 'progress':
+              const percent = Math.round(data.percent || 0)
+              statusEl.textContent = `Downloading update: ${data.version || ''}`
+              progressBar.style.width = `${percent}%`
+              progressText.textContent = `${percent}%`
+              errorEl.classList.remove('show')
+              break
+              
+            case 'downloaded':
+              statusEl.textContent = `Update downloaded: ${data.version}`
+              progressBar.style.width = '100%'
+              progressText.textContent = '100%'
+              errorEl.classList.remove('show')
+              // Auto-restart after a brief delay
+              setTimeout(() => {
+                statusEl.textContent = 'Installing update and restarting...'
+                if (window.electronAPI?.installUpdate) {
+                  window.electronAPI.installUpdate()
+                }
+              }, 1500)
+              break
+              
+            case 'error':
+              statusEl.textContent = 'Update check failed'
+              progressContainer.style.display = 'none'
+              errorEl.textContent = data.message || 'An error occurred while checking for updates.'
+              errorEl.classList.add('show')
+              // Continue to main window after a delay
+              setTimeout(() => {
+                statusEl.textContent = 'Starting application...'
+                setTimeout(() => {
+                  if (window.electronAPI?.closeSplash) {
+                    window.electronAPI.closeSplash()
+                  }
+                }, 1000)
+              }, 3000)
+              break
+          }
+          })
+        } else {
+          console.error('onUpdateStatus not available')
+        }
+      })
+    </script>
+  </body>
+</html>

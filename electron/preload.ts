@@ -100,5 +100,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Auto-updater actions
   installUpdate: () => ipcRenderer.invoke('update:install'),
+  
+  // Splash window methods
+  getVersion: () => ipcRenderer.invoke('splash:getVersion'),
+  closeSplash: () => ipcRenderer.invoke('splash:close'),
+  onUpdateStatus: (callback: (status: string, data?: any) => void) => {
+    ipcRenderer.on('update:status', (_, data) => callback(data.status, data))
+  },
 })
 

@@ -9,9 +9,124 @@ import * as matchesService from './matchesService'
 import { isCS2PluginInstalled, getPluginInstallPath, isGameInfoModified } from './cs2-plugin'
 
 let mainWindow: BrowserWindow | null = null
+let splashWindow: BrowserWindow | null = null
 let parserProcess: ChildProcess | null = null
+let startupCleanupDeleted: Array<{ matchId: string; reason: string }> = []
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
+
+function createSplashWindow() {
+  const iconPath = path.join(__dirname, '../resources/logo.png')
+  
+  splashWindow = new BrowserWindow({
+    width: 500,
+    height: 400,
+    icon: iconPath,
+    frame: false,
+    transparent: false,
+    resizable: false,
+    alwaysOnTop: false,
+    show: false, // Don't show until ready
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      webSecurity: false, // Allow loading local files
+    },
+    backgroundColor: '#1e2124',
+  })
+  
+  // Show window when ready
+  splashWindow.once('ready-to-show', () => {
+    if (splashWindow) {
+      splashWindow.show()
+    }
+  })
+
+  // Load splash screen
+  // In dev, __dirname is dist-electron, so go up two levels
+  // In production, splash.html is in the app directory (not in app.asar)
+  let splashPath: string
+  if (isDev) {
+    splashPath = path.join(__dirname, '../../splash.html')
+  } else {
+    // In production, files outside app.asar are in the app directory
+    // Try multiple possible locations
+    const appPath = app.getAppPath()
+    const possiblePaths = [
+      path.join(appPath, 'splash.html'), // If not in asar
+      path.join(path.dirname(appPath), 'splash.html'), // Next to app.asar
+      path.join(__dirname, '../splash.html'), // Relative to main.js
+    ]
+    
+    splashPath = possiblePaths.find(p => fs.existsSync(p)) || possiblePaths[0]
+    console.log('[Splash] Loading from:', splashPath)
+    console.log('[Splash] App path:', appPath)
+    console.log('[Splash] __dirname:', __dirname)
+  }
+  
+  if (!fs.existsSync(splashPath)) {
+    console.error('[Splash] File not found at:', splashPath)
+    // Fallback: create a simple HTML content
+    splashWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <style>
+            body { 
+              font-family: Arial, sans-serif; 
+              background: #1e2124; 
+              color: white; 
+              display: flex; 
+              align-items: center; 
+              justify-content: center; 
+              height: 100vh; 
+              margin: 0;
+            }
+            .container { text-align: center; }
+            h1 { margin: 20px 0; }
+            .status { margin: 10px 0; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <h1>CS2 Demo Analyzer</h1>
+            <div class="status" id="status">Checking for updates...</div>
+          </div>
+          <script>
+            const statusEl = document.getElementById('status');
+            // Wait for electronAPI to be available
+            function waitForElectronAPI(callback, maxAttempts = 50) {
+              if (window.electronAPI) {
+                callback();
+              } else if (maxAttempts > 0) {
+                setTimeout(() => waitForElectronAPI(callback, maxAttempts - 1), 100);
+              }
+            }
+            waitForElectronAPI(() => {
+              if (window.electronAPI?.onUpdateStatus) {
+                window.electronAPI.onUpdateStatus((status, data) => {
+                  if (status === 'checking') statusEl.textContent = 'Checking for updates...';
+                  else if (status === 'available') statusEl.textContent = 'Update available: ' + (data?.version || '');
+                  else if (status === 'not-available') statusEl.textContent = 'Starting application...';
+                  else if (status === 'progress') statusEl.textContent = 'Downloading: ' + Math.round(data?.percent || 0) + '%';
+                  else if (status === 'downloaded') statusEl.textContent = 'Update downloaded. Restarting...';
+                  else if (status === 'error') statusEl.textContent = 'Error: ' + (data?.message || 'Unknown error');
+                });
+              }
+            });
+          </script>
+        </body>
+      </html>
+    `)}`)
+  } else {
+    splashWindow.loadFile(splashPath)
+  }
+
+  splashWindow.on('closed', () => {
+    splashWindow = null
+  })
+}
 
 function createWindow() {
   // Get icon path - use logo.png from resources
@@ -22,6 +137,7 @@ function createWindow() {
     height: 800,
     icon: iconPath,
     autoHideMenuBar: !isDev, // Hide menu bar in production, show in dev
+    show: false, // Don't show until ready
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -41,6 +157,45 @@ function createWindow() {
   } else {
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
   }
+
+  // Show window when ready
+  mainWindow.once('ready-to-show', () => {
+    if (mainWindow) {
+      mainWindow.show()
+      // Close splash if it exists
+      if (splashWindow && !splashWindow.isDestroyed()) {
+        splashWindow.close()
+        splashWindow = null
+      }
+      // Notify main window about cleanup if there were deleted databases
+      if (startupCleanupDeleted.length > 0) {
+        mainWindow.webContents.send('matches:cleanup', {
+          deleted: startupCleanupDeleted.length,
+          details: startupCleanupDeleted,
+        })
+      }
+    }
+  })
+
+  // Enable DevTools in production with F12 or Ctrl+Shift+I
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (!isDev) {
+      // F12 to toggle DevTools
+      if (input.key === 'F12') {
+        if (mainWindow) {
+          mainWindow.webContents.toggleDevTools()
+        }
+        event.preventDefault()
+      }
+      // Ctrl+Shift+I to toggle DevTools
+      if (input.key === 'I' && input.control && input.shift) {
+        if (mainWindow) {
+          mainWindow.webContents.toggleDevTools()
+        }
+        event.preventDefault()
+      }
+    }
+  })
 
   mainWindow.on('closed', () => {
     mainWindow = null
@@ -118,58 +273,104 @@ app.whenReady().then(async () => {
   matchesService.ensureMatchesDir()
   
   // Perform startup integrity check
-  const deleted = await matchesService.performStartupIntegrityCheck()
-  if (deleted.length > 0) {
-    console.log(`[Startup] Cleaned up ${deleted.length} orphan/corrupt databases`)
-    // Notify renderer if window is ready
-    if (mainWindow) {
-      mainWindow.webContents.send('matches:cleanup', {
-        deleted: deleted.length,
-        details: deleted,
-      })
-    }
+  startupCleanupDeleted = await matchesService.performStartupIntegrityCheck()
+  if (startupCleanupDeleted.length > 0) {
+    console.log(`[Startup] Cleaned up ${startupCleanupDeleted.length} orphan/corrupt databases`)
   }
   
-  // Initialize auto-updater (only in production)
+  // In production, show splash screen first and check for updates
+  // In dev, just create the main window
   if (!isDev) {
-    autoUpdater.checkForUpdatesAndNotify()
+    createSplashWindow()
+    initializeAutoUpdater()
+  } else {
+    createWindow()
+  }
+  
+  // Initialize auto-updater for production (runs before main window)
+  function initializeAutoUpdater() {
+    if (!splashWindow) return
     
-    // Configure auto-updater
+    console.log('[AutoUpdater] Initializing auto-updater...')
+    console.log('[AutoUpdater] App version:', app.getVersion())
+    console.log('[AutoUpdater] Is packaged:', app.isPackaged)
+    
+    // Configure auto-updater BEFORE checking for updates
     autoUpdater.autoDownload = true
-    autoUpdater.autoInstallOnAppQuit = true
+    autoUpdater.autoInstallOnAppQuit = false // We'll handle restart manually
+    
+    // Enable logging for electron-updater
+    autoUpdater.logger = {
+      info: (message: string) => console.log('[AutoUpdater]', message),
+      warn: (message: string) => console.warn('[AutoUpdater]', message),
+      error: (message: string) => console.error('[AutoUpdater]', message),
+      debug: (message: string) => console.log('[AutoUpdater] DEBUG:', message),
+    }
+    
+    // Store the update version for progress updates
+    let updateVersion: string | null = null
+    
+    // Helper to send status to splash window
+    const sendStatus = (status: string, data?: any) => {
+      if (splashWindow && !splashWindow.isDestroyed()) {
+        splashWindow.webContents.send('update:status', { status, ...data })
+      }
+    }
     
     // Listen for update events
+    autoUpdater.on('checking-for-update', () => {
+      console.log('[AutoUpdater] Checking for updates...')
+      sendStatus('checking')
+    })
+    
     autoUpdater.on('update-available', (info: UpdateInfo) => {
       console.log('[AutoUpdater] Update available:', info.version)
-      if (mainWindow) {
-        mainWindow.webContents.send('update:available', {
-          version: info.version,
-        })
-      }
+      console.log('[AutoUpdater] Downloading automatically...')
+      updateVersion = info.version
+      sendStatus('available', { version: info.version })
+    })
+    
+    autoUpdater.on('update-not-available', (info: UpdateInfo) => {
+      console.log('[AutoUpdater] Update not available. Current version is latest:', info.version)
+      sendStatus('not-available')
+      // Open main window after a brief delay
+      setTimeout(() => {
+        createWindow()
+      }, 1000)
+    })
+    
+    autoUpdater.on('download-progress', (progressObj) => {
+      const percent = Math.round(progressObj.percent)
+      console.log(`[AutoUpdater] Download progress: ${percent}%`)
+      sendStatus('progress', { 
+        percent: progressObj.percent,
+        version: updateVersion || undefined
+      })
     })
     
     autoUpdater.on('update-downloaded', (info: UpdateInfo) => {
       console.log('[AutoUpdater] Update downloaded:', info.version)
-      if (mainWindow) {
-        mainWindow.webContents.send('update:downloaded', {
-          version: info.version,
-        })
-      }
+      sendStatus('downloaded', { version: info.version })
+      // Will auto-restart via installUpdate handler
     })
     
     autoUpdater.on('error', (error: Error) => {
       console.error('[AutoUpdater] Error:', error)
+      console.error('[AutoUpdater] Error message:', error.message)
+      console.error('[AutoUpdater] Error stack:', error.stack)
+      sendStatus('error', { message: error.message })
+      // Open main window even on error
+      setTimeout(() => {
+        createWindow()
+      }, 2000)
     })
     
-    // Check for updates periodically (every 6 hours)
-    setInterval(() => {
-      if (!isDev) {
-        autoUpdater.checkForUpdatesAndNotify()
-      }
-    }, 6 * 60 * 60 * 1000)
+    // Check for updates on startup (after a short delay to ensure splash is ready)
+    setTimeout(() => {
+      console.log('[AutoUpdater] Checking for updates on startup...')
+      autoUpdater.checkForUpdatesAndNotify()
+    }, 500)
   }
-  
-  createWindow()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -1458,7 +1659,20 @@ if (!isDev) {
   })
   
   ipcMain.handle('update:install', () => {
+    console.log('[AutoUpdater] Installing update and restarting...')
     autoUpdater.quitAndInstall(false, true)
+  })
+  
+  // Splash window handlers
+  ipcMain.handle('splash:getVersion', () => {
+    return app.getVersion()
+  })
+  
+  ipcMain.handle('splash:close', () => {
+    if (splashWindow && !splashWindow.isDestroyed()) {
+      splashWindow.close()
+      splashWindow = null
+    }
   })
 }
 

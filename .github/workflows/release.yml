@@ -100,33 +100,30 @@ jobs:
           git push origin master
           git push origin --tags
 
+      - name: Ensure tag exists for publishing
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $tagName = "v$version"
+          Write-Host "Checking for tag: $tagName"
+          # Fetch tags to ensure we have the latest
+          git fetch origin --tags
+          # Verify tag exists
+          if (git rev-parse "$tagName" >$null 2>&1) {
+            Write-Host "Tag $tagName exists"
+          } else {
+            Write-Host "Tag $tagName does not exist, creating it"
+            git tag "$tagName"
+            git push origin "$tagName"
+          }
+
       - name: Build Go parser
         run: |
           cd cmd/parser
           go build -o ../../bin/parser.exe .
           cd ../..
 
-      - name: Package Windows installer
-        run: npm run package:win
+      - name: Package Windows installer and publish
+        run: npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: ${{ steps.version.outputs.tag_name }}
-          name: Release ${{ steps.version.outputs.tag_name }}
-          body: |
-            ## Changes in ${{ steps.version.outputs.tag_name }}
-            
-            Auto-generated release from commit: ${{ github.sha }}
-            
-            ### Installation
-            Download and run the installer from the assets below.
-          files: |
-            release/*.exe
-            release/*.exe.blockmap
-          draft: false
-          prerelease: false
-        env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

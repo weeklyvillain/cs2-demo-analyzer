@@ -57,6 +57,9 @@ export interface ElectronAPI {
   onUpdateAvailable: (callback: (data: { version: string }) => void) => void
   onUpdateDownloaded: (callback: (data: { version: string }) => void) => void
   installUpdate: () => Promise<void>
+  getVersion: () => Promise<string>
+  closeSplash: () => Promise<void>
+  onUpdateStatus: (callback: (status: string, data?: any) => void) => void
   removeAllListeners: (channel: string) => void
 }
 

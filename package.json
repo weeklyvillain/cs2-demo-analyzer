@@ -58,11 +58,12 @@
     "files": [
       "dist/**/*",
       "dist-electron/**/*",
-      "resources/**/*"
+      "resources/**/*",
+      "splash.html"
     ],
     "win": {
       "target": "nsis",
-      "icon": "resources/logo.png",
+      "icon": "resources/icon.ico",
       "publisherName": "WeeklyVillain",
       "extraResources": [
         {
@@ -83,12 +84,17 @@
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "CS2 Demo Analyzer"
     },
-    "publish": {
-      "provider": "github",
-      "owner": "weeklyvillain",
-      "repo": "cs2-demo-analyzer"
-    }
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "weeklyvillain",
+        "repo": "cs2-demo-analyzer"
+      }
+    ]
   }
 }
