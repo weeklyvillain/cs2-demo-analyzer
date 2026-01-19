@@ -167,12 +167,13 @@ func NewParser(path string) (*Parser, error) {
 // The callback is invoked periodically to report progress.
 // The db parameter is used for AFK detection via player position queries.
 func (p *Parser) Parse(ctx context.Context, callback ParseCallback) (*MatchData, error) {
-	return p.ParseWithDB(ctx, callback, nil)
+	return p.ParseWithDB(ctx, callback, nil, 1) // Default to every tick for Parse method
 }
 
 // ParseWithDB parses the demo file and extracts match data with an optional database connection.
 // The db parameter is used for AFK detection via player position queries.
-func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, db *sql.DB) (*MatchData, error) {
+// positionInterval controls how often positions are extracted: 1=every tick, 2=every 2 ticks, 4=every 4 ticks
+func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, db *sql.DB, positionInterval int) (*MatchData, error) {
 	data := &MatchData{
 		Players:          make([]PlayerData, 0),
 		Rounds:           make([]RoundData, 0),
@@ -712,10 +713,10 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, db *sq
 		})
 	})
 
-	// Track player positions every tick for accurate AFK detection
+	// Track player positions at specified interval for AFK detection
 	// Only track after freeze time ends
 	lastPositionTick := 0
-	positionInterval := 1 // Track every tick for accurate AFK detection
+	// positionInterval is passed as parameter (1=all, 2=half, 4=quarter)
 
 	p.parser.RegisterEventHandler(func(e events.FrameDone) {
 		if currentRound == nil {

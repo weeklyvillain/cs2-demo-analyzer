@@ -595,11 +595,15 @@ ipcMain.handle('parser:parse', async (_, { demoPath }: { demoPath: string }) => 
     throw new Error(`Parser not found at: ${parserPath}`)
   }
 
+  // Get position interval setting (default to 4 for 1/4th positions)
+  const positionInterval = getSetting('position_extraction_interval', '4')
+  
   // Spawn parser process
   parserProcess = spawn(parserPath, [
     '--demo', demoPath,
     '--out', dbPath,
     '--match-id', matchId,
+    '--position-interval', positionInterval,
   ])
 
   // Handle stdout (NDJSON)

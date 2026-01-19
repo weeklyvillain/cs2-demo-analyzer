@@ -24,9 +24,10 @@ const (
 
 func main() {
 	var (
-		demoPath = flag.String("demo", "", "Path to CS2 demo file")
-		outPath  = flag.String("out", "", "Path to output SQLite database")
-		matchID  = flag.String("match-id", "", "Optional match ID (defaults to demo filename)")
+		demoPath         = flag.String("demo", "", "Path to CS2 demo file")
+		outPath          = flag.String("out", "", "Path to output SQLite database")
+		matchID          = flag.String("match-id", "", "Optional match ID (defaults to demo filename)")
+		positionInterval = flag.Int("position-interval", 4, "Position extraction interval (1=all, 2=half, 4=quarter)")
 	)
 	flag.Parse()
 
@@ -62,7 +63,7 @@ func main() {
 	output := ipc.NewOutput()
 
 	// Run the parser
-	if err := run(ctx, *demoPath, *outPath, *matchID, output); err != nil {
+	if err := run(ctx, *demoPath, *outPath, *matchID, *positionInterval, output); err != nil {
 		output.Error(err.Error())
 		os.Exit(exitFailure)
 	}
@@ -70,7 +71,7 @@ func main() {
 	os.Exit(exitSuccess)
 }
 
-func run(ctx context.Context, demoPath, outPath, matchID string, output *ipc.Output) error {
+func run(ctx context.Context, demoPath, outPath, matchID string, positionInterval int, output *ipc.Output) error {
 	output.Log("info", fmt.Sprintf("Starting parser for demo: %s", demoPath))
 	output.Log("info", fmt.Sprintf("Output database: %s", outPath))
 	output.Log("info", fmt.Sprintf("Match ID: %s", matchID))
@@ -94,10 +95,10 @@ func run(ctx context.Context, demoPath, outPath, matchID string, output *ipc.Out
 	defer p.Close()
 
 	// Parse demo with progress callback
-	output.Log("info", "Parsing demo...")
+	output.Log("info", fmt.Sprintf("Parsing demo with position interval: %d", positionInterval))
 	matchData, err := p.ParseWithDB(ctx, func(stage string, tick, round int, pct float64) {
 		output.Progress(stage, tick, round, pct)
-	}, dbConn)
+	}, dbConn, positionInterval)
 	if err != nil {
 		// The error message already includes context about crashes
 		return err

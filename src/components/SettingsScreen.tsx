@@ -15,6 +15,7 @@ interface Settings {
   default_sort_field: string
   default_sort_direction: string
   voice_skip_time: string
+  position_extraction_interval: string
 }
 
 function SettingsScreen() {
@@ -32,6 +33,7 @@ function SettingsScreen() {
     default_sort_field: 'date',
     default_sort_direction: 'desc',
     voice_skip_time: '10',
+    position_extraction_interval: '4',
   })
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -95,6 +97,7 @@ function SettingsScreen() {
         default_sort_field: allSettings.default_sort_field || 'date',
         default_sort_direction: allSettings.default_sort_direction || 'desc',
         voice_skip_time: allSettings.voice_skip_time || '10',
+        position_extraction_interval: allSettings.position_extraction_interval || '4',
       })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load settings')
@@ -428,6 +431,28 @@ function SettingsScreen() {
               />
               <p className="text-xs text-gray-500 mt-1">
                 Default minimum flash duration to show in overview (default: 1.5s)
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">
+                Position Extraction Frequency
+              </label>
+              <select
+                value={settings.position_extraction_interval}
+                onChange={async (e) => {
+                  const value = e.target.value
+                  setSettings((prev) => ({ ...prev, position_extraction_interval: value }))
+                  await handleSaveSingleSetting('position_extraction_interval', value)
+                }}
+                className="w-full px-3 py-2 bg-surface border border-border rounded text-white text-sm"
+              >
+                <option value="1">All positions (slowest, most accurate)</option>
+                <option value="2">Half positions (1/2, balanced)</option>
+                <option value="4">Quarter positions (1/4, fastest, default)</option>
+              </select>
+              <p className="text-xs text-gray-500 mt-1">
+                Controls how often player positions are stored. Lower values = more accurate but slower parsing. (default: 1/4)
               </p>
             </div>
 
