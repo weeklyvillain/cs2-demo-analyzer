@@ -42,6 +42,7 @@
   },
   "dependencies": {
     "@wavesurfer/react": "^1.0.12",
+    "electron-updater": "^6.7.3",
     "lucide-react": "^0.562.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",

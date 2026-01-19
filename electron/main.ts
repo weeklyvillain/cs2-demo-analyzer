@@ -1,5 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, shell, clipboard, protocol, Menu } from 'electron'
-import { autoUpdater } from 'electron-updater'
+import { autoUpdater, UpdateInfo } from 'electron-updater'
 import { spawn, ChildProcess, exec } from 'child_process'
 import * as path from 'path'
 import * as fs from 'fs'
@@ -139,7 +139,7 @@ app.whenReady().then(async () => {
     autoUpdater.autoInstallOnAppQuit = true
     
     // Listen for update events
-    autoUpdater.on('update-available', (info) => {
+    autoUpdater.on('update-available', (info: UpdateInfo) => {
       console.log('[AutoUpdater] Update available:', info.version)
       if (mainWindow) {
         mainWindow.webContents.send('update:available', {
@@ -148,7 +148,7 @@ app.whenReady().then(async () => {
       }
     })
     
-    autoUpdater.on('update-downloaded', (info) => {
+    autoUpdater.on('update-downloaded', (info: UpdateInfo) => {
       console.log('[AutoUpdater] Update downloaded:', info.version)
       if (mainWindow) {
         mainWindow.webContents.send('update:downloaded', {
@@ -157,7 +157,7 @@ app.whenReady().then(async () => {
       }
     })
     
-    autoUpdater.on('error', (error) => {
+    autoUpdater.on('error', (error: Error) => {
       console.error('[AutoUpdater] Error:', error)
     })
     
