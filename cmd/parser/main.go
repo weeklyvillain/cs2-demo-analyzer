@@ -259,8 +259,9 @@ func run(ctx context.Context, demoPath, outPath, matchID string, output *ipc.Out
 	afkEvents := afkExtractor.GetEvents()
 	if len(afkEvents) > 0 {
 		output.Log("info", fmt.Sprintf("Found %d AFK events", len(afkEvents)))
+		dbEvents := make([]db.Event, 0, len(afkEvents))
 		for _, eventData := range afkEvents {
-			event := db.Event{
+			dbEvents = append(dbEvents, db.Event{
 				MatchID:       matchID,
 				RoundIndex:    eventData.RoundIndex,
 				Type:          eventData.Type,
@@ -271,12 +272,13 @@ func run(ctx context.Context, demoPath, outPath, matchID string, output *ipc.Out
 				Severity:       &eventData.Severity,
 				Confidence:     &eventData.Confidence,
 				MetaJSON:       eventData.MetaJSON,
-			}
-			if err := writer.InsertEvent(ctx, event); err != nil {
-				output.Log("warn", fmt.Sprintf("Failed to insert AFK event: %v", err))
-			}
+			})
 		}
-		output.Log("info", fmt.Sprintf("Stored %d AFK events", len(afkEvents)))
+		if err := writer.BatchInsertEvents(ctx, dbEvents); err != nil {
+			output.Log("warn", fmt.Sprintf("Failed to batch insert AFK events: %v", err))
+		} else {
+			output.Log("info", fmt.Sprintf("Stored %d AFK events", len(afkEvents)))
+		}
 	}
 
 	// Store grenade positions

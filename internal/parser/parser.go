@@ -712,10 +712,10 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, db *sq
 		})
 	})
 
-	// Track player positions more frequently (every 16 ticks = ~0.25 seconds at 64 tick rate)
+	// Track player positions every tick for accurate AFK detection
 	// Only track after freeze time ends
 	lastPositionTick := 0
-	positionInterval := 16 // Track every 16 ticks (~0.25 seconds) for smoother playback
+	positionInterval := 1 // Track every tick for accurate AFK detection
 
 	p.parser.RegisterEventHandler(func(e events.FrameDone) {
 		if currentRound == nil {

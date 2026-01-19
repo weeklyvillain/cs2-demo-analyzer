@@ -66,15 +66,13 @@ func NewAFKExtractor(tickRate float64, db *sql.DB) *AFKExtractor {
 // position changes through other events that include player position.
 
 // HandleRoundStart resets AFK tracking for a new round.
+// Note: With the new implementation, AFK detection is done via ProcessAFKFromDatabase
+// after all positions are written, so this mainly just cleans up old state.
 func (e *AFKExtractor) HandleRoundStart(roundIndex int, tick int) {
-	// Clear states for this round
+	// Clear states for previous rounds
 	keysToDelete := make([]string, 0)
 	for key, state := range e.playerStates {
 		if state.roundIndex < roundIndex {
-			// Finalize any pending AFK events from previous round
-			if state.afkStartTick != nil {
-				e.finalizeAFK(state, tick)
-			}
 			keysToDelete = append(keysToDelete, key)
 		}
 	}
@@ -249,10 +247,7 @@ func (e *AFKExtractor) UpdatePlayerPosition(player *common.Player, roundIndex in
 
 	if distance > state.movementThreshold {
 		// Player moved - cancel AFK tracking
-		if state.afkStartTick != nil {
-			// Finalize the AFK period
-			e.finalizeAFK(state, tick)
-		}
+		// Note: With new implementation, this is handled in ProcessAFKFromDatabase
 		state.lastPosition = currentPos
 		state.lastMoveTick = tick
 		state.afkStartTick = nil
@@ -275,11 +270,103 @@ func (e *AFKExtractor) UpdatePlayerPosition(player *common.Player, roundIndex in
 }
 
 // ProcessAFKFromDatabase processes AFK detection for a match by querying positions from the database.
-// This should be called after all positions have been written to the database.
+// This implements the "AFK at round start" detector based on the new requirements:
+// - 5 second grace window starting at freezeTimeEnd (roundStart)
+// - If player moves during grace: NOT_AFK
+// - If player doesn't move during grace: AFK starts at roundStart (not after grace ends)
+// - AFK continues until: move, die, or round end
+// - Only tracks round-start AFK (no mid-round AFK intervals)
 func (e *AFKExtractor) ProcessAFKFromDatabase(matchID string, roundIndex int, freezeEndTick int, roundEndTick int) error {
 	// Record round end tick
 	e.roundEndTicks[roundIndex] = roundEndTick
 	
+	// Define grace period: 5 seconds starting at freezeEndTick (roundStart)
+	gracePeriodSeconds := 5.0
+	gracePeriodTicks := int(math.Ceil(gracePeriodSeconds * e.tickRate))
+	gracePeriodEndTick := freezeEndTick + gracePeriodTicks
+	
+	// Movement threshold: 2-5 units (using 3.0 as middle ground)
+	moveEps := 3.0
+
+	// Query disconnect events for this round and previous rounds FIRST
+	// Players who disconnect should not be tracked for AFK
+	// We need to check disconnects from previous rounds too, as they might still be disconnected
+	disconnectQuery := `
+		SELECT actor_steamid, start_tick, end_tick, round_index
+		FROM events
+		WHERE match_id = ? AND type = 'DISCONNECT' AND actor_steamid IS NOT NULL
+		ORDER BY start_tick
+	`
+	disconnectRows, err := e.db.Query(disconnectQuery, matchID)
+	disconnectIntervals := make(map[string][]struct{ start, end int }) // steamID -> list of [start, end] intervals
+	if err == nil {
+		defer disconnectRows.Close()
+		for disconnectRows.Next() {
+			var steamID string
+			var startTick int
+			var endTick sql.NullInt64
+			var eventRoundIndex int
+			if err := disconnectRows.Scan(&steamID, &startTick, &endTick, &eventRoundIndex); err == nil {
+				// Only consider disconnects that are relevant to this round
+				// If disconnect happened before this round and no reconnect, they're still disconnected
+				// If disconnect happened during this round, include it
+				if eventRoundIndex < roundIndex {
+					// Disconnect from previous round - if no reconnect, they're still disconnected
+					if !endTick.Valid {
+						// No reconnect, still disconnected - mark as disconnected from round start
+						disconnectIntervals[steamID] = append(disconnectIntervals[steamID], struct{ start, end int }{start: freezeEndTick, end: roundEndTick})
+					}
+				} else if eventRoundIndex == roundIndex {
+					// Disconnect during this round
+					disconnectEnd := roundEndTick // Default to round end if no reconnect
+					if endTick.Valid {
+						disconnectEnd = int(endTick.Int64)
+					}
+					disconnectIntervals[steamID] = append(disconnectIntervals[steamID], struct{ start, end int }{start: startTick, end: disconnectEnd})
+				}
+			}
+		}
+	}
+
+	// Query death events for this round
+	deathQuery := `
+		SELECT DISTINCT victim_steamid, start_tick
+		FROM events
+		WHERE match_id = ? AND round_index = ? AND victim_steamid IS NOT NULL
+		ORDER BY start_tick
+	`
+	deathRows, err := e.db.Query(deathQuery, matchID, roundIndex)
+	deathTicks := make(map[string]int) // steamID -> death tick
+	if err == nil {
+		defer deathRows.Close()
+		for deathRows.Next() {
+			var steamID string
+			var deathTick int
+			if err := deathRows.Scan(&steamID, &deathTick); err == nil {
+				if existingTick, exists := deathTicks[steamID]; !exists || deathTick < existingTick {
+					deathTicks[steamID] = deathTick
+				}
+			}
+		}
+	}
+
+	// Helper function to check if player is disconnected or dead at a given tick
+	isPlayerDisconnectedOrDead := func(steamID string, tick int) bool {
+		// Check if player is dead at this tick
+		if deathTick, isDead := deathTicks[steamID]; isDead && tick >= deathTick {
+			return true
+		}
+		// Check if player is disconnected at this tick
+		if intervals, isDisconnected := disconnectIntervals[steamID]; isDisconnected {
+			for _, interval := range intervals {
+				if tick >= interval.start && tick <= interval.end {
+					return true
+				}
+			}
+		}
+		return false
+	}
+
 	// Get all unique players for this round
 	query := `
 		SELECT DISTINCT steamid
@@ -293,10 +380,19 @@ func (e *AFKExtractor) ProcessAFKFromDatabase(matchID string, roundIndex int, fr
 	}
 	defer rows.Close()
 
-	// Initialize player states
-	gracePeriodSeconds := 5.0
-	gracePeriodTicks := int(math.Ceil(gracePeriodSeconds * e.tickRate))
-	gracePeriodEndTick := freezeEndTick + gracePeriodTicks
+	// Initialize player states - track movement during grace period
+	// Local type for tracking AFK state during processing
+	type afkPlayerState struct {
+		steamID           string
+		lastPosition      *position
+		lastPositionTick  int
+		movedDuringGrace  bool
+		afkStartTick      *int // nil if NOT_AFK, set to freezeEndTick if AFK
+		deathTick         *int
+		firstMovementTick *int
+	}
+	
+	playerStates := make(map[string]*afkPlayerState)
 
 	for rows.Next() {
 		var steamID string
@@ -304,7 +400,12 @@ func (e *AFKExtractor) ProcessAFKFromDatabase(matchID string, roundIndex int, fr
 			continue
 		}
 
-		// Get position at freeze end (need to query with match_id and round_index)
+		// Skip if player is disconnected at round start - don't track AFK for disconnected players
+		if isPlayerDisconnectedOrDead(steamID, freezeEndTick) {
+			continue
+		}
+
+		// Get position at freeze end (roundStart)
 		queryPos := `
 			SELECT x, y, z
 			FROM player_positions
@@ -312,37 +413,41 @@ func (e *AFKExtractor) ProcessAFKFromDatabase(matchID string, roundIndex int, fr
 		`
 		var x, y, z float64
 		row := e.db.QueryRow(queryPos, matchID, roundIndex, steamID, freezeEndTick)
-		var initialPos *position
 		if err := row.Scan(&x, &y, &z); err != nil {
 			// Try to get first available position after freeze end
 			queryFirst := `
-				SELECT x, y, z
+				SELECT tick, x, y, z
 				FROM player_positions
 				WHERE match_id = ? AND round_index = ? AND steamid = ? AND tick >= ?
 				ORDER BY tick ASC
 				LIMIT 1
 			`
+			var firstTick int
 			rowFirst := e.db.QueryRow(queryFirst, matchID, roundIndex, steamID, freezeEndTick)
-			if err := rowFirst.Scan(&x, &y, &z); err != nil {
+			if err := rowFirst.Scan(&firstTick, &x, &y, &z); err != nil {
 				continue // Skip if no position data
 			}
+			// If first position is after grace period, player might still be AFK
+			// We'll initialize with this position and check if they move
 		}
-		initialPos = &position{X: x, Y: y, Z: z}
 
-		key := fmt.Sprintf("%d_%s", roundIndex, steamID)
-		e.playerStates[key] = &playerAFKState{
-			roundIndex:         roundIndex,
-			steamID:            steamID,
-			initialPosition:    initialPos,
-			lastPosition:       initialPos,
-			lastMoveTick:       freezeEndTick,
-			gracePeriodEndTick: gracePeriodEndTick,
-			movedDuringGrace:   false,
-			afkStartTick:       nil,
-			firstMovementTick:  nil,
-			deathTick:          nil,
-			minAFKSeconds:      5.0,
-			movementThreshold:  3.0,
+		playerStates[steamID] = &afkPlayerState{
+			steamID:           steamID,
+			lastPosition:      &position{X: x, Y: y, Z: z},
+			lastPositionTick:  freezeEndTick,
+			movedDuringGrace:  false,
+			afkStartTick:      nil, // Will be set if no movement during grace
+			deathTick:         nil,
+			firstMovementTick: nil,
+		}
+	}
+
+	// Update death ticks in player states
+	for steamID, deathTick := range deathTicks {
+		if state, exists := playerStates[steamID]; exists {
+			if state.deathTick == nil || deathTick < *state.deathTick {
+				state.deathTick = &deathTick
+			}
 		}
 	}
 
@@ -350,39 +455,14 @@ func (e *AFKExtractor) ProcessAFKFromDatabase(matchID string, roundIndex int, fr
 	posQuery := `
 		SELECT steamid, tick, x, y, z
 		FROM player_positions
-		WHERE match_id = ? AND round_index = ? AND tick >= ?
+		WHERE match_id = ? AND round_index = ? AND tick >= ? AND tick <= ?
 		ORDER BY tick ASC
 	`
-	posRows, err := e.db.Query(posQuery, matchID, roundIndex, freezeEndTick)
+	posRows, err := e.db.Query(posQuery, matchID, roundIndex, freezeEndTick, roundEndTick)
 	if err != nil {
 		return fmt.Errorf("failed to query positions: %w", err)
 	}
 	defer posRows.Close()
-
-	// Query death events for this round to mark when players die
-	// Check both TEAM_KILL events and any events where victim_steamid is set (player died)
-	deathQuery := `
-		SELECT DISTINCT victim_steamid, start_tick
-		FROM events
-		WHERE match_id = ? AND round_index = ? AND victim_steamid IS NOT NULL
-		ORDER BY start_tick
-	`
-	deathRows, err := e.db.Query(deathQuery, matchID, roundIndex)
-	if err == nil {
-		defer deathRows.Close()
-		for deathRows.Next() {
-			var steamID string
-			var deathTick int
-			if err := deathRows.Scan(&steamID, &deathTick); err == nil {
-				key := fmt.Sprintf("%d_%s", roundIndex, steamID)
-				if state, exists := e.playerStates[key]; exists {
-					if state.deathTick == nil || deathTick < *state.deathTick {
-						state.deathTick = &deathTick
-					}
-				}
-			}
-		}
-	}
 
 	// Process positions tick by tick
 	for posRows.Next() {
@@ -393,56 +473,61 @@ func (e *AFKExtractor) ProcessAFKFromDatabase(matchID string, roundIndex int, fr
 			continue
 		}
 
-		key := fmt.Sprintf("%d_%s", roundIndex, steamID)
-		state, exists := e.playerStates[key]
-		if !exists {
-			// Initialize player on the fly if we encounter them in position data
-			// This handles cases where player wasn't initialized earlier (e.g., no position at freezeEndTick)
-			currentPos := &position{X: x, Y: y, Z: z}
-			gracePeriodEndTick := freezeEndTick + int(math.Ceil(5.0*e.tickRate))
-			// If player first appears after grace period, they might still be AFK
-			// But we'll track their first appearance tick
-			firstSeenTick := tick
-			
-			e.playerStates[key] = &playerAFKState{
-				roundIndex:         roundIndex,
-				steamID:            steamID,
-				initialPosition:    currentPos,
-				lastPosition:       currentPos,
-				lastMoveTick:       tick,
-				gracePeriodEndTick: gracePeriodEndTick,
-				movedDuringGrace:   false, // Will be set to true if they move during grace period
-				afkStartTick:       nil,
-				firstMovementTick:  nil,
-				deathTick:          nil,
-				minAFKSeconds:      5.0,
-				movementThreshold:  3.0,
-			}
-			state = e.playerStates[key]
-			
-			// If player first appears at or before grace period end, AFK starts at freezeEndTick
-			// If player appears after grace period, AFK starts when they first appeared (if they don't move)
-			if firstSeenTick <= gracePeriodEndTick {
-				// Player was present during grace period - AFK starts at round start
-				state.afkStartTick = &freezeEndTick
-			} else {
-				// Player appeared after grace period - AFK starts when they first appeared
-				// (but only if they don't move - we'll check this as we process)
-				state.afkStartTick = &firstSeenTick
-			}
+		// Skip AFK tracking if player is disconnected or dead at this tick
+		// But still process their position to update state
+		isDisconnectedOrDead := isPlayerDisconnectedOrDead(steamID, tick)
+
+		// Skip if player is disconnected or dead at this tick - don't track AFK for disconnected players
+		if isPlayerDisconnectedOrDead(steamID, tick) {
+			continue
 		}
 
-		// Check if player died at this tick
-		if state.deathTick != nil && *state.deathTick == tick {
-			// Cancel any active AFK tracking
-			if state.afkStartTick != nil {
-				e.finalizeAFK(state, tick)
-				state.afkStartTick = nil
+		state, exists := playerStates[steamID]
+		if !exists {
+			// Skip if player is disconnected at round start - don't track AFK for disconnected players
+			if isPlayerDisconnectedOrDead(steamID, freezeEndTick) {
+				continue
 			}
-			// Continue processing to update last position
+
+			// Initialize player on the fly if we encounter them
+			state = &afkPlayerState{
+				steamID:           steamID,
+				lastPosition:      &position{X: x, Y: y, Z: z},
+				lastPositionTick:  tick,
+				movedDuringGrace:  false,
+				afkStartTick:      nil,
+				deathTick:         nil,
+				firstMovementTick: nil,
+			}
+			playerStates[steamID] = state
+			
+			// If player first appears during grace period, they could be AFK
+			// If they appear after grace period, they're not considered for round-start AFK
+			// Only start AFK tracking if they're not disconnected/dead at round start
+			if tick <= gracePeriodEndTick && !isPlayerDisconnectedOrDead(steamID, freezeEndTick) {
+				// Player was present during grace - AFK starts at roundStart if no movement
+				afkStart := freezeEndTick
+				state.afkStartTick = &afkStart
+			}
 		}
 
 		currentPos := &position{X: x, Y: y, Z: z}
+
+		// If player is disconnected or dead, cancel any active AFK tracking
+		if isDisconnectedOrDead {
+			if state.afkStartTick != nil {
+				// If they died, finalize with DIED status
+				if state.deathTick != nil && *state.deathTick == tick {
+					e.createAFKEvent(matchID, roundIndex, state.steamID, *state.afkStartTick, tick, "DIED", true, state.firstMovementTick)
+				}
+				// Cancel AFK tracking (disconnected or dead)
+				state.afkStartTick = nil
+			}
+			// Update position but skip AFK tracking
+			state.lastPosition = currentPos
+			state.lastPositionTick = tick
+			continue
+		}
 
 		// Check if player has moved significantly
 		dx := currentPos.X - state.lastPosition.X
@@ -450,59 +535,115 @@ func (e *AFKExtractor) ProcessAFKFromDatabase(matchID string, roundIndex int, fr
 		dz := currentPos.Z - state.lastPosition.Z
 		distance := math.Sqrt(dx*dx + dy*dy + dz*dz)
 
-		if distance > state.movementThreshold {
+		if distance > moveEps {
 			// Player moved significantly
 			if state.firstMovementTick == nil {
 				state.firstMovementTick = &tick
 			}
 
-			// If during grace period, mark that they moved (they're NOT AFK for this round)
-			if tick <= state.gracePeriodEndTick {
+			// If during grace period, mark that they moved (they're NOT_AFK)
+			if tick < gracePeriodEndTick {
 				state.movedDuringGrace = true
-			}
-
-			// If AFK was being tracked, finalize it (ended due to movement)
-			if state.afkStartTick != nil {
-				e.finalizeAFK(state, tick)
+				// Cancel AFK tracking - player moved during grace
+				state.afkStartTick = nil
+			} else if state.afkStartTick != nil {
+				// Player moved after grace period, ending AFK
+				// Finalize AFK interval (ended by movement)
+				e.createAFKEvent(matchID, roundIndex, state.steamID, *state.afkStartTick, tick, "MOVED", false, state.firstMovementTick)
 				state.afkStartTick = nil
 			}
 
 			state.lastPosition = currentPos
-			state.lastMoveTick = tick
+			state.lastPositionTick = tick
 		} else {
 			// Player hasn't moved significantly
-			// CRITICAL: If they moved during grace period, they're NOT AFK - skip entirely
-			// This ensures we only detect AFK at round start, not mid-round
+			
+			// If they moved during grace period, they're NOT_AFK - skip
 			if state.movedDuringGrace {
-				// Player moved during grace period - they're NOT AFK for this round
-				// Cancel any AFK tracking and skip
-				if state.afkStartTick != nil {
-					state.afkStartTick = nil
-				}
 				state.lastPosition = currentPos
+				state.lastPositionTick = tick
 				continue
 			}
 
-			// Only track AFK for players who haven't moved during grace period
-			// AFK should already be started (at freezeEndTick or first appearance)
-			// We should NOT start tracking AFK mid-round - only at round start
-			if state.afkStartTick == nil {
-				// This shouldn't happen if initialization worked correctly
-				// But if it does, skip - we don't want mid-round AFK detection
-				state.lastPosition = currentPos
-				continue
+			// Check if player died at this tick (while AFK)
+			if state.deathTick != nil && *state.deathTick == tick {
+				// Player died while AFK
+				if state.afkStartTick != nil {
+					// Finalize AFK interval (ended by death, state = AFK_DIED)
+					e.createAFKEvent(matchID, roundIndex, state.steamID, *state.afkStartTick, tick, "DIED", true, state.firstMovementTick)
+					state.afkStartTick = nil
+				}
+			} else if state.afkStartTick == nil && tick < gracePeriodEndTick {
+				// Player hasn't moved during grace period yet - start AFK at roundStart
+				// Only if they weren't disconnected/dead at round start
+				if !isPlayerDisconnectedOrDead(steamID, freezeEndTick) {
+					afkStart := freezeEndTick
+					state.afkStartTick = &afkStart
+				}
 			}
 			
-			// Continue AFK tracking - player is still stationary
-			// We'll finalize when they move, die, or round ends
+			// Continue tracking position (player is still stationary)
 			state.lastPosition = currentPos
+			state.lastPositionTick = tick
 		}
 	}
 
 	// Finalize any remaining AFK states at round end
-	e.FinalizeRound(roundIndex, roundEndTick)
+	for _, state := range playerStates {
+		if state.afkStartTick != nil && !state.movedDuringGrace {
+			// Only finalize if player wasn't disconnected/dead at round end
+			if !isPlayerDisconnectedOrDead(state.steamID, roundEndTick) {
+				// Player was still AFK at round end
+				e.createAFKEvent(matchID, roundIndex, state.steamID, *state.afkStartTick, roundEndTick, "ROUND_END", false, state.firstMovementTick)
+			}
+		}
+	}
 
 	return nil
+}
+
+// createAFKEvent creates an AFK event with the specified end condition
+// state is a local type from ProcessAFKFromDatabase, so we pass individual fields
+func (e *AFKExtractor) createAFKEvent(matchID string, roundIndex int, steamID string, afkStartTick int, endTick int, endedBy string, diedWhileAFK bool, firstMovementTick *int) {
+	afkTicks := endTick - afkStartTick
+	afkSeconds := float64(afkTicks) / e.tickRate
+
+	// Determine state: AFK or AFK_DIED
+	stateStr := "AFK"
+	if diedWhileAFK {
+		stateStr = "AFK_DIED"
+	}
+
+	// Build metadata
+	meta := make(map[string]interface{})
+	meta["seconds"] = afkSeconds
+	meta["afkDuration"] = afkSeconds
+	meta["start_tick"] = afkStartTick
+	meta["end_tick"] = endTick
+	meta["state"] = stateStr
+	meta["endedBy"] = endedBy
+	meta["diedWhileAFK"] = diedWhileAFK
+	if firstMovementTick != nil {
+		timeToFirstMovement := float64(*firstMovementTick - afkStartTick) / e.tickRate
+		meta["timeToFirstMovement"] = timeToFirstMovement
+	}
+
+	metaJSON, _ := json.Marshal(meta)
+	metaJSONStr := string(metaJSON)
+
+	// Create event (using AFK_STILLNESS to match UI expectations)
+	event := Event{
+		Type:          "AFK_STILLNESS",
+		RoundIndex:    roundIndex,
+		StartTick:     afkStartTick,
+		EndTick:       &endTick,
+		ActorSteamID:  &steamID,
+		Severity:      1.0, // AFK is always severity 1.0
+		Confidence:    1.0, // High confidence for position-based detection
+		MetaJSON:      &metaJSONStr,
+	}
+
+	e.events = append(e.events, event)
 }
 
 // CheckAllPlayersAFK checks all tracked players for AFK status using live position data.
@@ -575,11 +716,9 @@ func (e *AFKExtractor) CheckAllPlayersAFK(roundIndex int, tick int, playerPositi
 				state.movedDuringGrace = true
 			}
 
-			// If AFK was being tracked, finalize it (ended due to movement)
-			if state.afkStartTick != nil {
-				e.finalizeAFK(state, tick)
-				state.afkStartTick = nil
-			}
+			// If AFK was being tracked, cancel it (ended due to movement)
+			// Note: With new implementation, this is handled in ProcessAFKFromDatabase
+			state.afkStartTick = nil
 
 			state.lastPosition = currentPos
 			state.lastMoveTick = tick
@@ -675,136 +814,18 @@ func (e *AFKExtractor) discoverNewPlayers(roundIndex int, freezeEndTick int, cur
 	}
 }
 
-// CancelAFK cancels AFK tracking for a player (e.g., when they die).
+// CancelAFK is deprecated - AFK detection is now done via ProcessAFKFromDatabase
+// This function is kept for backwards compatibility but does nothing
 func (e *AFKExtractor) CancelAFK(player *common.Player, roundIndex int, tick int) {
-	if player == nil {
-		return
-	}
-
-	steamID := getSteamID(player)
-	if steamID == nil {
-		return
-	}
-
-	key := fmt.Sprintf("%d_%s", roundIndex, *steamID)
-	state, exists := e.playerStates[key]
-	if !exists {
-		return
-	}
-
-	// Record death tick
-	if state.deathTick == nil {
-		state.deathTick = &tick
-	}
-
-	// Cancel any active AFK tracking
-	if state.afkStartTick != nil {
-		// Finalize the AFK period up to now (with diedWhileAFK flag)
-		e.finalizeAFK(state, tick)
-	}
-	// Reset AFK tracking
-	state.afkStartTick = nil
+	// Deprecated - no longer used
 }
 
-// FinalizeRound finalizes all pending AFK events for a round.
-// This does a comprehensive check across all position data stored in the database for this round.
+// FinalizeRound is deprecated - AFK detection is now done via ProcessAFKFromDatabase
+// This function is kept for backwards compatibility but does nothing
 func (e *AFKExtractor) FinalizeRound(roundIndex int, finalTick int) {
-	// Note: CheckAllPlayersAFK should be called with live position data from the parser
-	// For finalization, we just finalize any remaining AFK states
-	// But only for players who didn't move during grace period (round start AFK only)
-
-	// Then finalize any remaining AFK states
-	keysToFinalize := make([]string, 0)
-	for key, state := range e.playerStates {
-		if state.roundIndex == roundIndex && state.afkStartTick != nil && !state.movedDuringGrace {
-			keysToFinalize = append(keysToFinalize, key)
-		}
-	}
-
-	for _, key := range keysToFinalize {
-		state := e.playerStates[key]
-		e.finalizeAFK(state, finalTick)
-		delete(e.playerStates, key)
-	}
+	// Deprecated - no longer used
 }
 
-func (e *AFKExtractor) finalizeAFK(state *playerAFKState, endTick int) {
-	if state.afkStartTick == nil {
-		return
-	}
-
-	// CRITICAL: Don't finalize AFK if player moved during grace period
-	// This ensures we only detect AFK at round start, not mid-round
-	if state.movedDuringGrace {
-		return
-	}
-
-	afkTicks := endTick - *state.afkStartTick
-	afkSeconds := float64(afkTicks) / e.tickRate
-
-	// Only create event if AFK period is significant
-	if afkSeconds < e.minAFKSeconds {
-		return
-	}
-
-	// Check if AFK ended at round end
-	roundEndTick, endedAtRoundEnd := e.roundEndTicks[state.roundIndex]
-	isRoundEnd := endedAtRoundEnd && endTick == roundEndTick
-	
-	// Filter out AFK periods that end at round end if they started too close to round end
-	// This prevents flagging players who are just holding a position at the end of a round
-	if isRoundEnd {
-		// Calculate how long before round end the AFK started
-		timeBeforeRoundEnd := float64(roundEndTick-*state.afkStartTick) / e.tickRate
-		
-		// If AFK started within the last 10 seconds of the round, it's likely just holding position
-		// Filter it out unless it's a very long AFK period (15+ seconds)
-		if timeBeforeRoundEnd < 10.0 && afkSeconds < 15.0 {
-			// Skip this AFK event - likely false positive
-			return
-		}
-	}
-
-	// Determine how AFK ended and calculate timeToFirstMovement
-	diedWhileAFK := state.deathTick != nil && *state.deathTick == endTick
-	var timeToFirstMovement *float64
-	if state.firstMovementTick != nil && *state.firstMovementTick == endTick {
-		// AFK ended due to movement
-		timeToFirstMovementVal := float64(*state.firstMovementTick - *state.afkStartTick) / e.tickRate
-		timeToFirstMovement = &timeToFirstMovementVal
-	}
-
-	// Build metadata (matching cs2-web-replay format)
-	meta := make(map[string]interface{})
-	meta["seconds"] = afkSeconds
-	meta["afkDuration"] = afkSeconds // Also include as afkDuration for consistency
-	meta["start_tick"] = *state.afkStartTick
-	meta["end_tick"] = endTick
-	meta["diedWhileAFK"] = diedWhileAFK
-	if timeToFirstMovement != nil {
-		meta["timeToFirstMovement"] = *timeToFirstMovement
-	}
-
-	metaJSON, _ := json.Marshal(meta)
-	metaJSONStr := string(metaJSON)
-
-	actorSteamID := &state.steamID
-	severity := math.Min(afkSeconds/60.0, 1.0) // Scale by 60 seconds, cap at 1.0
-
-	e.events = append(e.events, Event{
-		Type:         "AFK_STILLNESS",
-		RoundIndex:   state.roundIndex,
-		StartTick:    *state.afkStartTick,
-		EndTick:      &endTick,
-		ActorSteamID: actorSteamID,
-		Severity:     severity,
-		Confidence:   0.8, // AFK detection has some uncertainty
-		MetaJSON:     &metaJSONStr,
-	})
-
-	// Reset AFK tracking
-	state.afkStartTick = nil
-}
 
 // GetEvents returns all extracted events.
 func (e *AFKExtractor) GetEvents() []Event {
