@@ -65,6 +65,7 @@
       "target": "nsis",
       "icon": "resources/icon.ico",
       "publisherName": "WeeklyVillain",
+      "verifyUpdateCodeSignature": false,
       "extraResources": [
         {
           "from": "bin",
