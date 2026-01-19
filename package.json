@@ -1,6 +1,6 @@
 {
   "name": "cs-griefer-electron",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "CS2 Demo Analyzer - Griefing Detection",
   "main": "dist-electron/main.js",
   "scripts": {
