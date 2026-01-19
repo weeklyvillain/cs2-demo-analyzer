@@ -52,6 +52,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // Radar images (to avoid CORS issues with custom protocols)
   getRadarImage: (mapName: string) => ipcRenderer.invoke('radar:getImage', mapName),
+  
+  // Splash screen logo
+  getLogoPath: () => ipcRenderer.invoke('splash:getLogoPath'),
+  
+  // App logo image (for renderer)
+  getLogoImage: () => ipcRenderer.invoke('app:getLogoImage'),
 
   // Voice Extraction
   extractVoice: (options: { demoPath: string; outputPath?: string; mode?: 'split-compact' | 'split-full' | 'single-full'; steamIds?: string[] }) => 

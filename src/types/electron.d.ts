@@ -14,6 +14,7 @@ export interface ElectronAPI {
   getGrenadePositionsForRound: (matchId: string, roundIndex: number) => Promise<{ matchId: string; roundIndex: number; positions: Array<{ tick: number; projectileId: number; grenadeName: string; x: number; y: number; z: number; throwerSteamId: string | null; throwerName: string | null; throwerTeam: string | null }> }>
   getGrenadeEventsForRound: (matchId: string, roundIndex: number) => Promise<{ matchId: string; roundIndex: number; events: Array<{ tick: number; eventType: string; projectileId: number; grenadeName: string; x: number; y: number; z: number; throwerSteamId: string | null; throwerName: string | null; throwerTeam: string | null }> }>
   getRadarImage: (mapName: string) => Promise<{ success: boolean; data?: string; error?: string }>
+  getLogoImage: () => Promise<{ success: boolean; data?: string; error?: string }>
   deleteMatches: (matchIds: string[]) => Promise<{ deleted: number }>
   deleteAllMatches: () => Promise<{ deleted: number }>
   trimMatchesToCap: (cap: number) => Promise<{ deleted: Array<{ matchId: string; reason: string }> }>

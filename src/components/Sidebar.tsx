@@ -7,6 +7,7 @@ interface SidebarProps {
 
 function Sidebar({ currentScreen, onNavigate }: SidebarProps) {
   const [enableDbViewer, setEnableDbViewer] = useState(false)
+  const [logoUrl, setLogoUrl] = useState<string | null>(null)
 
   useEffect(() => {
     const loadSetting = async () => {
@@ -22,10 +23,44 @@ function Sidebar({ currentScreen, onNavigate }: SidebarProps) {
     return () => clearInterval(interval)
   }, [])
 
+  // Load logo image
+  useEffect(() => {
+    const loadLogo = async () => {
+      if (window.electronAPI?.getLogoImage) {
+        try {
+          const result = await window.electronAPI.getLogoImage()
+          if (result.success && result.data) {
+            setLogoUrl(result.data)
+          }
+        } catch (error) {
+          console.error('Failed to load logo:', error)
+        }
+      }
+    }
+    loadLogo()
+  }, [])
+
   return (
     <aside className="w-64 bg-secondary border-r border-border flex flex-col">
       <div className="p-4 border-b border-border">
-        <h1 className="text-xl font-bold text-white">CS2 Demo Analyzer</h1>
+        <div className="flex items-center gap-3">
+          {logoUrl && (
+            <img 
+              src={logoUrl} 
+              alt="Logo" 
+              className="w-16 h-16 object-contain flex-shrink-0"
+            />
+          )}
+          <div className="flex-1 min-w-0">
+            <h1 className="text-lg font-bold text-white leading-tight">
+              <span className="bg-gradient-to-r from-accent to-orange-400 bg-clip-text text-transparent">
+                CS2 Demo
+              </span>
+              <br />
+              <span className="text-gray-300 text-sm font-semibold">Analyzer</span>
+            </h1>
+          </div>
+        </div>
       </div>
       <nav className="flex-1 p-4">
         <ul className="space-y-2">

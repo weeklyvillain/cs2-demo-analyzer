@@ -147,6 +147,9 @@ function createWindow() {
     backgroundColor: '#1e2124',
   })
 
+  // Maximize the window
+  mainWindow.maximize()
+
   // Remove menu bar completely in production builds
   if (!isDev) {
     Menu.setApplicationMenu(null)
@@ -234,6 +237,37 @@ app.whenReady().then(async () => {
       return { success: true, data: `data:${mimeType};base64,${base64}` }
     } catch (error) {
       console.error('Error loading audio file:', error)
+      return { success: false, error: String(error) }
+    }
+  })
+
+  // IPC handler to get logo image path
+  ipcMain.handle('splash:getLogoPath', async () => {
+    try {
+      const logoPath = path.join(__dirname, '../resources/logo.png')
+      if (fs.existsSync(logoPath)) {
+        // Return file:// URL for splash window
+        return `file://${logoPath.replace(/\\/g, '/')}`
+      }
+      return null
+    } catch (error) {
+      console.error('Error getting logo path:', error)
+      return null
+    }
+  })
+
+  // IPC handler to get logo image as base64 (for renderer process)
+  ipcMain.handle('app:getLogoImage', async () => {
+    try {
+      const logoPath = path.join(__dirname, '../resources/logo.png')
+      if (fs.existsSync(logoPath)) {
+        const imageBuffer = fs.readFileSync(logoPath)
+        const base64 = imageBuffer.toString('base64')
+        return { success: true, data: `data:image/png;base64,${base64}` }
+      }
+      return { success: false, error: 'Logo image not found' }
+    } catch (error) {
+      console.error('Error loading logo image:', error)
       return { success: false, error: String(error) }
     }
   })
@@ -1690,11 +1724,11 @@ if (!isDev) {
   })
   
   ipcMain.handle('update:install', () => {
-    console.log('[AutoUpdater] Installing update and restarting...')
+    console.log('[AutoUpdater] Installing update silently and restarting...')
     // quitAndInstall(isSilent, isForceRunAfter)
-    // isSilent=false: Show installer UI
+    // isSilent=true: Silent install (no UI prompts)
     // isForceRunAfter=true: Run the app after installation
-    autoUpdater.quitAndInstall(false, true)
+    autoUpdater.quitAndInstall(true, true)
   })
   
   // Splash window handlers
@@ -1928,25 +1962,28 @@ ipcMain.handle('cs2:launch', async (_, demoPath: string, startTick?: number, pla
   }
 
   // Build command line arguments for launching CS2
+  // Based on cs-demo-manager implementation
   const args: string[] = []
-  args.push(`-console`)
-  args.push(`-novid`)
   args.push(`-insecure`)
+  args.push(`-novid`)
+  
+  // Add demo path before window settings (matching cs-demo-manager order)
+  args.push(`+playdemo`, demoPath)
+  
+  // Add window size (using -width/-height like cs-demo-manager)
+  args.push(`-width`, windowWidth)
+  args.push(`-height`, windowHeight)
   
   // Add window mode flag based on settings
+  // These flags only apply to this launch and don't modify CS2's saved settings
+  // CS2 uses -sw for windowed mode and -fullscreen for fullscreen (matching cs-demo-manager)
   if (windowMode === 'fullscreen') {
     args.push(`-fullscreen`)
-  } else if (windowMode === 'fullscreen_windowed') {
-    args.push(`-fullscreen-windowed`)
   } else {
     // Default to windowed mode (has close/minimize buttons)
-    // Use -window flag for proper windowed mode with controls
-    args.push(`-window`)
+    // Use -sw flag (start windowed) for proper windowed mode
+    args.push(`-sw`)
   }
-  
-  args.push(`-w`, windowWidth)
-  args.push(`-h`, windowHeight)
-  args.push(`+playdemo`, demoPath) // Use original path, spawn handles quoting
   
   // Add +exec to automatically execute commands if config file was created
   // Note: This executes when CS2 starts, which might be before demo loads
@@ -1966,21 +2003,23 @@ ipcMain.handle('cs2:launch', async (_, demoPath: string, startTick?: number, pla
   console.log('Start Tick:', startTick)
   console.log('Target Tick:', targetTick)
   console.log('Player Name:', playerName)
-    console.log('Window Size:', `${windowWidth}x${windowHeight}`)
-    console.log('Console Commands (copied to clipboard):', commandsToCopy)
-    if (jsonActionsFilePath) {
-      console.log('JSON Actions File (CS Demo Analyzer format):', jsonActionsFilePath)
-      if (pluginReady) {
-        console.log('✓ Plugin ready - commands will execute automatically!')
-      } else {
-        console.log('ℹ Install CS Demo Analyzer plugin for automatic execution')
-      }
+  console.log('Window Mode Setting:', windowMode)
+  console.log('Window Size:', `${windowWidth}x${windowHeight}`)
+  console.log('Console Commands (copied to clipboard):', commandsToCopy)
+  if (jsonActionsFilePath) {
+    console.log('JSON Actions File (CS Demo Analyzer format):', jsonActionsFilePath)
+    if (pluginReady) {
+      console.log('✓ Plugin ready - commands will execute automatically!')
+    } else {
+      console.log('ℹ Install CS Demo Analyzer plugin for automatic execution')
     }
-    if (configFilePath) {
-      console.log('Config File (for +exec):', configFilePath)
-    }
-  console.log('Full Command (for spawn):', fullCommand)
-  console.log('Arguments Array (for spawn):', JSON.stringify(args, null, 2))
+  }
+  if (configFilePath) {
+    console.log('Config File (for +exec):', configFilePath)
+  }
+  console.log('--- Launch Arguments ---')
+  console.log('Arguments Array:', JSON.stringify(args, null, 2))
+  console.log('Full Command String:', fullCommand)
   console.log('========================')
 
   try {

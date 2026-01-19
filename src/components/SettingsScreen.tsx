@@ -291,11 +291,7 @@ function SettingsScreen() {
               >
                 <option value="windowed">Windowed</option>
                 <option value="fullscreen">Fullscreen</option>
-                <option value="fullscreen_windowed">Fullscreen Windowed</option>
               </select>
-              <p className="text-xs text-gray-500 mt-1">
-                Note: Currently only windowed mode is supported for demo viewing
-              </p>
             </div>
 
             {/* Save Button for Window Settings */}
