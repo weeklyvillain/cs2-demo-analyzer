@@ -66,6 +66,7 @@
       "icon": "resources/icon.ico",
       "publisherName": "WeeklyVillain",
       "verifyUpdateCodeSignature": false,
+      "requestedExecutionLevel": "asInvoker",
       "extraResources": [
         {
           "from": "bin",
@@ -88,7 +89,9 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "CS2 Demo Analyzer"
+      "shortcutName": "CS2 Demo Analyzer",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false
     },
     "publish": [
       {

@@ -1659,8 +1659,11 @@ if (!isDev) {
   })
   
   ipcMain.handle('update:install', () => {
-    console.log('[AutoUpdater] Installing update and restarting...')
-    autoUpdater.quitAndInstall(false, true)
+    console.log('[AutoUpdater] Installing update and restarting (silent mode)...')
+    // quitAndInstall(isSilent, isForceRunAfter)
+    // isSilent=true: Install silently without showing installer UI
+    // isForceRunAfter=true: Run the app after installation
+    autoUpdater.quitAndInstall(true, true)
   })
   
   // Splash window handlers
