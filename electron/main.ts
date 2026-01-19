@@ -1572,57 +1572,84 @@ function parseReleaseNotes(body: string): string[] {
 }
 
 // Helper function to get release notes for a specific version
-async function getReleaseNotes(version: string): Promise<{ title: string; items: string[] } | null> {
+async function getReleaseNotes(version: string): Promise<{ title: string; body: string } | null> {
   try {
     const repoOwner = 'weeklyvillain'
     const repoName = 'cs2-demo-analyzer'
     
-    // Try to fetch the specific release by tag
-    const apiUrl = `https://api.github.com/repos/${repoOwner}/${repoName}/releases/tags/v${version}`
+    // Normalize version (remove 'v' prefix if present)
+    const normalizedVersion = version.replace(/^v/, '')
+    console.log(`[Release Notes] Fetching notes for version: ${normalizedVersion}`)
     
-    const response = await fetch(apiUrl, {
-      headers: {
-        'Accept': 'application/vnd.github.v3+json',
-        'User-Agent': 'CS2-Demo-Analyzer',
-      },
-    })
+    // Try different tag formats
+    const tagVariants = [
+      `v${normalizedVersion}`,  // v1.0.21
+      normalizedVersion,          // 1.0.21
+    ]
     
-    if (!response.ok) {
-      // If specific release not found, try latest
-      const latestUrl = `https://api.github.com/repos/${repoOwner}/${repoName}/releases/latest`
-      const latestResponse = await fetch(latestUrl, {
+    for (const tag of tagVariants) {
+      try {
+        const apiUrl = `https://api.github.com/repos/${repoOwner}/${repoName}/releases/tags/${tag}`
+        console.log(`[Release Notes] Trying tag: ${tag}`)
+        
+        const response = await fetch(apiUrl, {
+          headers: {
+            'Accept': 'application/vnd.github.v3+json',
+            'User-Agent': 'CS2-Demo-Analyzer',
+          },
+        })
+        
+        if (response.ok) {
+          const release = await response.json() as GitHubRelease
+          console.log(`[Release Notes] Found release: ${release.tag_name}, body length: ${release.body?.length || 0}`)
+          
+          return {
+            title: release.name || `What's New in Version ${normalizedVersion}`,
+            body: release.body || '',
+          }
+        } else {
+          console.log(`[Release Notes] Tag ${tag} not found: ${response.status} ${response.statusText}`)
+        }
+      } catch (err) {
+        console.error(`[Release Notes] Error trying tag ${tag}:`, err)
+        // Continue to next tag variant
+        continue
+      }
+    }
+    
+    // If specific release not found, try listing all releases and find matching one
+    try {
+      console.log(`[Release Notes] Trying to list all releases to find version ${normalizedVersion}`)
+      const allReleasesUrl = `https://api.github.com/repos/${repoOwner}/${repoName}/releases`
+      const allReleasesResponse = await fetch(allReleasesUrl, {
         headers: {
           'Accept': 'application/vnd.github.v3+json',
           'User-Agent': 'CS2-Demo-Analyzer',
         },
       })
       
-      if (!latestResponse.ok) {
-        return null
-      }
-      
-      const latestRelease = await latestResponse.json() as GitHubRelease
-      const latestVersion = latestRelease.tag_name?.replace(/^v/, '') || ''
-      
-      // Only return if it matches the requested version
-      if (latestVersion === version) {
-        const items = parseReleaseNotes(latestRelease.body || '')
-        return {
-          title: latestRelease.name || `What's New in Version ${version}`,
-          items,
+      if (allReleasesResponse.ok) {
+        const allReleases = await allReleasesResponse.json() as GitHubRelease[]
+        console.log(`[Release Notes] Found ${allReleases.length} total releases`)
+        
+        // Find release matching the version
+        for (const release of allReleases) {
+          const releaseVersion = release.tag_name?.replace(/^v/, '') || ''
+          if (releaseVersion === normalizedVersion) {
+            console.log(`[Release Notes] Found matching release: ${release.tag_name}`)
+            return {
+              title: release.name || `What's New in Version ${normalizedVersion}`,
+              body: release.body || '',
+            }
+          }
         }
       }
-      
-      return null
+    } catch (err) {
+      console.error('[Release Notes] Error listing all releases:', err)
     }
     
-    const release = await response.json() as GitHubRelease
-    const items = parseReleaseNotes(release.body || '')
-    
-    return {
-      title: release.name || `What's New in Version ${version}`,
-      items,
-    }
+    console.log(`[Release Notes] Could not find release notes for version ${normalizedVersion}`)
+    return null
   } catch (error) {
     console.error('[Release Notes] Error fetching release notes:', error)
     return null
@@ -1670,7 +1697,10 @@ ipcMain.handle('app:shouldShowWhatsNew', async () => {
 
 // Get release notes for a version
 ipcMain.handle('app:getReleaseNotes', async (_, version: string) => {
-  return await getReleaseNotes(version)
+  console.log(`[IPC] app:getReleaseNotes called with version: ${version}`)
+  const result = await getReleaseNotes(version)
+  console.log(`[IPC] app:getReleaseNotes returning:`, result ? { title: result.title, bodyLength: result.body?.length || 0 } : 'null')
+  return result
 })
 
 // GitHub API response type for releases

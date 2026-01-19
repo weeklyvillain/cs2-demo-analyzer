@@ -29,7 +29,7 @@ export interface ElectronAPI {
   getLastSeenVersion: () => Promise<string>
   setLastSeenVersion: (version: string) => Promise<void>
   shouldShowWhatsNew: () => Promise<boolean>
-  getReleaseNotes: (version: string) => Promise<{ title: string; items: string[] } | null>
+  getReleaseNotes: (version: string) => Promise<{ title: string; body: string } | null>
   getAppInfo: () => Promise<{
     version: string
     platform: string

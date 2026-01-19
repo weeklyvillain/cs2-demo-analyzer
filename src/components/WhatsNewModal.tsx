@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { X, Loader2 } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
 
 interface WhatsNewModalProps {
   version: string
@@ -7,22 +8,20 @@ interface WhatsNewModalProps {
 }
 
 // Fallback changelog for offline use or if GitHub API fails
-const FALLBACK_CHANGELOG: Record<string, { title: string; items: string[] }> = {
+const FALLBACK_CHANGELOG: Record<string, { title: string; body: string }> = {
   '1.0.18': {
     title: 'What\'s New in Version 1.0.18',
-    items: [
-      'Added defuse griefing detection',
-      'Improved AFK detection accuracy',
-      'Enhanced event visualization in 2D viewer',
-      'Bug fixes and performance improvements',
-    ],
+    body: `- Added defuse griefing detection
+- Improved AFK detection accuracy
+- Enhanced event visualization in 2D viewer
+- Bug fixes and performance improvements`,
   },
 }
 
 export default function WhatsNewModal({ version, onClose }: WhatsNewModalProps) {
-  const [changelog, setChangelog] = useState<{ title: string; items: string[] }>({
+  const [changelog, setChangelog] = useState<{ title: string; body: string }>({
     title: `What's New in Version ${version}`,
-    items: ['Loading release notes...'],
+    body: 'Loading release notes...',
   })
   const [loading, setLoading] = useState(true)
 
@@ -32,7 +31,7 @@ export default function WhatsNewModal({ version, onClose }: WhatsNewModalProps) 
         // Fallback if no electron API
         const fallback = FALLBACK_CHANGELOG[version] || {
           title: `What's New in Version ${version}`,
-          items: ['Bug fixes and improvements'],
+          body: 'Bug fixes and improvements',
         }
         setChangelog(fallback)
         setLoading(false)
@@ -41,23 +40,28 @@ export default function WhatsNewModal({ version, onClose }: WhatsNewModalProps) 
 
       try {
         // Try to fetch from GitHub releases
+        console.log(`[WhatsNewModal] Fetching release notes for version: ${version}`)
         const notes = await window.electronAPI.getReleaseNotes(version)
-        if (notes) {
+        console.log(`[WhatsNewModal] Received notes:`, notes ? { title: notes.title, bodyLength: notes.body?.length || 0 } : 'null')
+        
+        if (notes && notes.body && notes.body.trim().length > 0) {
+          console.log(`[WhatsNewModal] Using GitHub release notes`)
           setChangelog(notes)
         } else {
+          console.log(`[WhatsNewModal] No valid release notes found, using fallback`)
           // Fallback to hardcoded changelog
           const fallback = FALLBACK_CHANGELOG[version] || {
             title: `What's New in Version ${version}`,
-            items: ['Bug fixes and improvements'],
+            body: 'Bug fixes and improvements',
           }
           setChangelog(fallback)
         }
       } catch (error) {
-        console.error('Failed to load release notes:', error)
+        console.error('[WhatsNewModal] Failed to load release notes:', error)
         // Fallback to hardcoded changelog
         const fallback = FALLBACK_CHANGELOG[version] || {
           title: `What's New in Version ${version}`,
-          items: ['Bug fixes and improvements'],
+          body: 'Bug fixes and improvements',
         }
         setChangelog(fallback)
       } finally {
@@ -96,13 +100,39 @@ export default function WhatsNewModal({ version, onClose }: WhatsNewModalProps) 
               <Loader2 className="w-6 h-6 text-accent animate-spin" />
             </div>
           ) : (
-            <div className="space-y-3">
-              {changelog.items.map((item, idx) => (
-                <div key={idx} className="flex items-start gap-3">
-                  <div className="w-2 h-2 rounded-full bg-accent mt-2 flex-shrink-0" />
-                  <p className="text-gray-300 text-sm leading-relaxed">{item}</p>
-                </div>
-              ))}
+            <div className="prose prose-invert prose-sm max-w-none text-gray-300">
+              <ReactMarkdown
+                components={{
+                  h1: ({ children }) => <h1 className="text-2xl font-bold text-white mb-4 mt-6 first:mt-0">{children}</h1>,
+                  h2: ({ children }) => <h2 className="text-xl font-semibold text-white mb-3 mt-5">{children}</h2>,
+                  h3: ({ children }) => <h3 className="text-lg font-semibold text-white mb-2 mt-4">{children}</h3>,
+                  p: ({ children }) => <p className="text-gray-300 mb-3 leading-relaxed">{children}</p>,
+                  ul: ({ children }) => <ul className="list-disc list-inside mb-3 space-y-1 text-gray-300">{children}</ul>,
+                  ol: ({ children }) => <ol className="list-decimal list-inside mb-3 space-y-1 text-gray-300">{children}</ol>,
+                  li: ({ children }) => <li className="ml-4">{children}</li>,
+                  code: ({ children, className }) => {
+                    const isInline = !className
+                    return isInline ? (
+                      <code className="bg-surface px-1.5 py-0.5 rounded text-accent text-sm font-mono">{children}</code>
+                    ) : (
+                      <code className="block bg-surface p-3 rounded text-accent text-sm font-mono overflow-x-auto mb-3">{children}</code>
+                    )
+                  },
+                  a: ({ href, children }) => (
+                    <a href={href} target="_blank" rel="noopener noreferrer" className="text-accent hover:text-accent/80 underline">
+                      {children}
+                    </a>
+                  ),
+                  blockquote: ({ children }) => (
+                    <blockquote className="border-l-4 border-accent pl-4 italic text-gray-400 my-3">{children}</blockquote>
+                  ),
+                  hr: () => <hr className="border-border my-4" />,
+                  strong: ({ children }) => <strong className="font-semibold text-white">{children}</strong>,
+                  em: ({ children }) => <em className="italic">{children}</em>,
+                }}
+              >
+                {changelog.body}
+              </ReactMarkdown>
             </div>
           )}
         </div>
