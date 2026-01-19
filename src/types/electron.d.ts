@@ -47,6 +47,7 @@ export interface ElectronAPI {
   showFileInFolder: (filePath: string) => Promise<void>
   extractVoice: (options: { demoPath: string; outputPath?: string; mode?: 'split-compact' | 'split-full' | 'single-full'; steamIds?: string[] }) => Promise<{ success: boolean; outputPath: string; files: string[]; filePaths?: string[] }>
   getVoiceAudio: (filePath: string) => Promise<{ success: boolean; data?: string; error?: string }>
+  generateWaveform: (filePath: string) => Promise<{ success: boolean; data?: string; error?: string }>
   cleanupVoiceFiles: (outputPath: string) => Promise<{ success: boolean; error?: string }>
   onParserMessage: (callback: (message: string) => void) => void
   onParserLog: (callback: (log: string) => void) => void

@@ -39,11 +39,14 @@ export default function VoicePlaybackModal({
   const [volume, setVolume] = useState(1)
   const [playbackRate, setPlaybackRate] = useState(1)
   const [skipTime, setSkipTime] = useState(10) // Default 10 seconds (will be loaded from settings)
+  const [waveformUrl, setWaveformUrl] = useState<string | null>(null)
+  const [waveformLoading, setWaveformLoading] = useState(false)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
   const gainNodeRef = useRef<GainNode | null>(null)
   const sourceRef = useRef<MediaElementAudioSourceNode | null>(null)
   const logsEndRef = useRef<HTMLDivElement | null>(null)
+  const waveformContainerRef = useRef<HTMLDivElement | null>(null)
 
   const selectedFile = audioFiles[selectedFileIndex]
 
@@ -158,6 +161,43 @@ export default function VoicePlaybackModal({
     }
   }, [modalState])
 
+  // Generate waveform when audio file is selected
+  useEffect(() => {
+    if (!selectedFile || !isOpen || modalState !== 'playback') {
+      setWaveformUrl(null)
+      return
+    }
+
+    let mounted = true
+    setWaveformLoading(true)
+
+    const generateWaveform = async () => {
+      try {
+        const result = await window.electronAPI.generateWaveform(selectedFile.path)
+        if (result.success && result.data && mounted) {
+          setWaveformUrl(result.data)
+        } else if (mounted) {
+          console.warn('Failed to generate waveform:', result.error)
+          setWaveformUrl(null)
+        }
+      } catch (error) {
+        console.error('Error generating waveform:', error)
+        if (mounted) {
+          setWaveformUrl(null)
+        }
+      } finally {
+        if (mounted) {
+          setWaveformLoading(false)
+        }
+      }
+    }
+
+    generateWaveform()
+
+    return () => {
+      mounted = false
+    }
+  }, [selectedFile, isOpen, modalState, selectedFileIndex])
 
   useEffect(() => {
     let mounted = true
@@ -506,23 +546,73 @@ export default function VoicePlaybackModal({
                 ) : selectedFile ? (
                   <div className="space-y-3">
                     <div className="bg-surface/50 border border-border rounded p-4">
-                      {/* Progress slider */}
-                      <div className="mb-3">
-                        <input
-                          type="range"
-                          min="0"
-                          max={duration || 100}
-                          step="0.1"
-                          value={currentTime}
-                          onChange={(e) => {
-                            const newTime = parseFloat(e.target.value)
-                            if (audioRef.current) {
-                              audioRef.current.currentTime = newTime
-                              setCurrentTime(newTime)
-                            }
-                          }}
-                          className="w-full h-1.5 bg-secondary rounded-lg appearance-none cursor-pointer accent-accent"
-                        />
+                      {/* Waveform visualization with progress overlay */}
+                      <div className="mb-3 relative">
+                        {waveformLoading ? (
+                          <div className="flex items-center justify-center h-[200px]">
+                            <Loader2 className="w-6 h-6 animate-spin text-accent mr-2" />
+                            <span className="text-gray-400 text-sm">Generating waveform...</span>
+                          </div>
+                        ) : waveformUrl ? (
+                          <div 
+                            ref={waveformContainerRef}
+                            className="relative w-full cursor-pointer"
+                            onClick={(e) => {
+                              if (audioRef.current && duration > 0 && waveformContainerRef.current) {
+                                const rect = waveformContainerRef.current.getBoundingClientRect()
+                                const x = e.clientX - rect.left
+                                const percentage = x / rect.width
+                                const newTime = percentage * duration
+                                audioRef.current.currentTime = newTime
+                                setCurrentTime(newTime)
+                              }
+                            }}
+                          >
+                            <img 
+                              src={waveformUrl} 
+                              alt="Waveform" 
+                              className="w-full h-auto"
+                              style={{ maxHeight: '200px' }}
+                            />
+                            {/* Progress overlay */}
+                            {duration > 0 && (
+                              <>
+                                {/* Progress line */}
+                                <div
+                                  className="absolute top-0 bottom-0 w-0.5 bg-accent z-10 pointer-events-none"
+                                  style={{
+                                    left: `${(currentTime / duration) * 100}%`,
+                                  }}
+                                />
+                                {/* Progress fill overlay (darker area for played portion) */}
+                                <div
+                                  className="absolute top-0 bottom-0 bg-black/30 z-0 pointer-events-none"
+                                  style={{
+                                    left: '0%',
+                                    width: `${(currentTime / duration) * 100}%`,
+                                  }}
+                                />
+                              </>
+                            )}
+                          </div>
+                        ) : (
+                          /* Fallback progress slider */
+                          <input
+                            type="range"
+                            min="0"
+                            max={duration || 100}
+                            step="0.1"
+                            value={currentTime}
+                            onChange={(e) => {
+                              const newTime = parseFloat(e.target.value)
+                              if (audioRef.current) {
+                                audioRef.current.currentTime = newTime
+                                setCurrentTime(newTime)
+                              }
+                            }}
+                            className="w-full h-1.5 bg-secondary rounded-lg appearance-none cursor-pointer accent-accent"
+                          />
+                        )}
                       </div>
 
                       {/* Time display and controls */}

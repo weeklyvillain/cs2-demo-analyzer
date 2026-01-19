@@ -57,6 +57,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   extractVoice: (options: { demoPath: string; outputPath?: string; mode?: 'split-compact' | 'split-full' | 'single-full'; steamIds?: string[] }) => 
     ipcRenderer.invoke('voice:extract', options),
   getVoiceAudio: (filePath: string) => ipcRenderer.invoke('voice:getAudio', filePath),
+  generateWaveform: (filePath: string) => ipcRenderer.invoke('voice:generateWaveform', filePath),
   cleanupVoiceFiles: (outputPath: string) => ipcRenderer.invoke('voice:cleanup', outputPath),
 
   // Listeners

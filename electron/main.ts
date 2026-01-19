@@ -4,6 +4,7 @@ import { spawn, ChildProcess, exec } from 'child_process'
 import * as path from 'path'
 import * as fs from 'fs'
 import * as os from 'os'
+import * as crypto from 'crypto'
 import { initSettingsDb, getSetting, setSetting, getAllSettings } from './settings'
 import * as matchesService from './matchesService'
 import { isCS2PluginInstalled, getPluginInstallPath, isGameInfoModified } from './cs2-plugin'
@@ -423,6 +424,36 @@ function getParserPath(): string {
     }
     
     // Files are now in resources/bin/ directory
+    return path.join(resourcesPath, 'bin', binaryName)
+  }
+}
+
+// Helper to get audiowaveform executable path
+function getAudiowaveformPath(): string {
+  if (isDev) {
+    // Dev: check for audiowaveform in bin
+    const projectRoot = path.resolve(__dirname, '..')
+    const defaultPath = path.join(projectRoot, 'bin', 'audiowaveform')
+    const devPath = process.env.AUDIOWAVEFORM_PATH || defaultPath
+    // Add .exe on Windows
+    if (process.platform === 'win32') {
+      return devPath + '.exe'
+    }
+    return devPath
+  } else {
+    // Prod: use resources/bin path (files are in resources/bin/)
+    const resourcesPath = process.resourcesPath || path.join(app.getAppPath(), '..', 'resources')
+    const platform = process.platform
+    let binaryName = 'audiowaveform'
+    
+    if (platform === 'win32') {
+      binaryName = 'audiowaveform.exe'
+    } else if (platform === 'darwin') {
+      binaryName = 'audiowaveform-mac'
+    } else if (platform === 'linux') {
+      binaryName = 'audiowaveform-linux'
+    }
+    
     return path.join(resourcesPath, 'bin', binaryName)
   }
 }
@@ -1659,11 +1690,11 @@ if (!isDev) {
   })
   
   ipcMain.handle('update:install', () => {
-    console.log('[AutoUpdater] Installing update and restarting (silent mode)...')
+    console.log('[AutoUpdater] Installing update and restarting...')
     // quitAndInstall(isSilent, isForceRunAfter)
-    // isSilent=true: Install silently without showing installer UI
+    // isSilent=false: Show installer UI
     // isForceRunAfter=true: Run the app after installation
-    autoUpdater.quitAndInstall(true, true)
+    autoUpdater.quitAndInstall(false, true)
   })
   
   // Splash window handlers
@@ -2137,6 +2168,95 @@ ipcMain.handle('voice:extract', async (_, options: { demoPath: string; outputPat
       reject(new Error(`Failed to start voice extractor: ${error.message}`))
     })
   })
+})
+
+// Voice waveform generation IPC handler - generate waveform PNG using audiowaveform
+ipcMain.handle('voice:generateWaveform', async (_, filePath: string) => {
+  try {
+    if (!fs.existsSync(filePath)) {
+      return { success: false, error: 'Audio file not found' }
+    }
+
+    const audiowaveformPath = getAudiowaveformPath()
+    if (!fs.existsSync(audiowaveformPath)) {
+      return { success: false, error: `audiowaveform not found at: ${audiowaveformPath}` }
+    }
+
+    // Create temp directory for waveform output
+    const tempDir = app.getPath('temp')
+    const waveformDir = path.join(tempDir, 'cs2-waveforms')
+    if (!fs.existsSync(waveformDir)) {
+      fs.mkdirSync(waveformDir, { recursive: true })
+    }
+
+    // Generate unique filename based on audio file content hash
+    // This ensures each unique audio file gets its own waveform
+    const fileBuffer = fs.readFileSync(filePath)
+    const audioHash = crypto.createHash('sha256').update(fileBuffer).digest('hex').substring(0, 32)
+    const waveformPath = path.join(waveformDir, `waveform-${audioHash}.png`)
+
+    // Check if waveform already exists (cache)
+    if (fs.existsSync(waveformPath)) {
+      const imageBuffer = fs.readFileSync(waveformPath)
+      const base64 = imageBuffer.toString('base64')
+      return { success: true, data: `data:image/png;base64,${base64}` }
+    }
+
+    // Build audiowaveform command
+    // Colors: background #282b30, waveform #d07a2d, progress will be overlaid in React
+    // Using bars style for better visual appeal
+    // Higher resolution for better detail on voice comms
+    const args: string[] = [
+      '-i', filePath,
+      '-o', waveformPath,
+      '-w', '1200',  // Increased width for better detail
+      '-h', '200',   // Increased height for better amplitude visibility
+      '--waveform-style', 'bars',
+      '--bar-width', '2',   // Slightly thinner bars for higher resolution
+      '--bar-gap', '1',
+      '--bar-style', 'rounded',
+      '--background-color', '282b30',  // Dark background matching theme
+      '--waveform-color', 'd07a2d',    // Orange waveform matching accent
+      '--no-axis-labels',              // No axis labels for cleaner look
+      '--amplitude-scale', '1.8',       // Lower fixed scale to preserve volume relationships
+      '--pixels-per-second', '100',     // Higher time resolution for voice comms (was 50)
+      // Higher resolution shows more detail in speech patterns and volume changes
+    ]
+
+    return new Promise<{ success: boolean; data?: string; error?: string }>((resolve) => {
+      const audiowaveformProcess = spawn(audiowaveformPath, args, {
+        cwd: path.dirname(audiowaveformPath),
+        windowsHide: true,
+      })
+
+      let stderr = ''
+
+      audiowaveformProcess.stderr?.on('data', (data) => {
+        stderr += data.toString()
+      })
+
+      audiowaveformProcess.on('close', (code) => {
+        if (code === 0 && fs.existsSync(waveformPath)) {
+          try {
+            const imageBuffer = fs.readFileSync(waveformPath)
+            const base64 = imageBuffer.toString('base64')
+            resolve({ success: true, data: `data:image/png;base64,${base64}` })
+          } catch (error) {
+            resolve({ success: false, error: `Failed to read waveform: ${error instanceof Error ? error.message : String(error)}` })
+          }
+        } else {
+          resolve({ success: false, error: `audiowaveform failed with code ${code}: ${stderr}` })
+        }
+      })
+
+      audiowaveformProcess.on('error', (error) => {
+        resolve({ success: false, error: `Failed to spawn audiowaveform: ${error.message}` })
+      })
+    })
+  } catch (error) {
+    console.error('Error generating waveform:', error)
+    return { success: false, error: error instanceof Error ? error.message : String(error) }
+  }
 })
 
 // Voice extraction cleanup IPC handler - delete temp directory
