@@ -98,7 +98,7 @@ func run(ctx context.Context, demoPath, outPath, matchID string, positionInterva
 	output.Log("info", fmt.Sprintf("Parsing demo with position interval: %d", positionInterval))
 	matchData, err := p.ParseWithDB(ctx, func(stage string, tick, round int, pct float64) {
 		output.Progress(stage, tick, round, pct)
-	}, dbConn, positionInterval)
+	}, dbConn, positionInterval, writer, matchID)
 	if err != nil {
 		// The error message already includes context about crashes
 		return err
@@ -125,6 +125,13 @@ func run(ctx context.Context, demoPath, outPath, matchID string, positionInterva
 			MatchID: matchID,
 			SteamID: playerData.SteamID,
 			Name:    playerData.Name,
+			Team:    playerData.Team,
+		}
+		// Debug: log team assignment
+		if playerData.Team == "" {
+			output.Log("warn", fmt.Sprintf("Player %s (%s) has no team assigned!", playerData.SteamID, playerData.Name))
+		} else {
+			output.Log("info", fmt.Sprintf("Player %s (%s) assigned to team %s", playerData.SteamID, playerData.Name, playerData.Team))
 		}
 		if err := writer.InsertPlayer(ctx, player); err != nil {
 			output.Log("warn", fmt.Sprintf("Failed to insert player %s: %v", playerData.SteamID, err))
@@ -211,38 +218,42 @@ func run(ctx context.Context, demoPath, outPath, matchID string, positionInterva
 		}
 	}
 
-	// Store player positions
-	positions := make([]db.PlayerPosition, 0, len(matchData.Positions))
-	for _, posData := range matchData.Positions {
-		var team *string
-		if posData.Team != "" {
-			team = &posData.Team
+	// Store player positions (only if not already inserted incrementally)
+	// Positions are now inserted incrementally during parsing, so this is only for backward compatibility
+	if len(matchData.Positions) > 0 {
+		output.Log("info", fmt.Sprintf("Storing %d player positions (fallback mode)...", len(matchData.Positions)))
+		positions := make([]db.PlayerPosition, 0, len(matchData.Positions))
+		for _, posData := range matchData.Positions {
+			var team *string
+			if posData.Team != "" {
+				team = &posData.Team
+			}
+			var yaw *float64
+			if posData.Yaw != 0 {
+				yaw = &posData.Yaw
+			}
+			positions = append(positions, db.PlayerPosition{
+				MatchID:    matchID,
+				RoundIndex: posData.RoundIndex,
+				Tick:       posData.Tick,
+				SteamID:    posData.SteamID,
+				X:          posData.X,
+				Y:          posData.Y,
+				Z:          posData.Z,
+				Yaw:        yaw,
+				Team:       team,
+				Health:     posData.Health,
+				Armor:      posData.Armor,
+				Weapon:     posData.Weapon,
+			})
 		}
-		var yaw *float64
-		if posData.Yaw != 0 {
-			yaw = &posData.Yaw
-		}
-		positions = append(positions, db.PlayerPosition{
-			MatchID:    matchID,
-			RoundIndex: posData.RoundIndex,
-			Tick:       posData.Tick,
-			SteamID:    posData.SteamID,
-			X:          posData.X,
-			Y:          posData.Y,
-			Z:          posData.Z,
-			Yaw:        yaw,
-			Team:       team,
-			Health:     posData.Health,
-			Armor:      posData.Armor,
-			Weapon:     posData.Weapon,
-		})
-	}
-	if len(positions) > 0 {
 		if err := writer.InsertPlayerPositions(ctx, positions); err != nil {
 			output.Log("warn", fmt.Sprintf("Failed to insert player positions: %v", err))
 		} else {
 			output.Log("info", fmt.Sprintf("Stored %d player positions", len(positions)))
 		}
+	} else {
+		output.Log("info", "Player positions were inserted incrementally during parsing")
 	}
 
 	// Process AFK detection from database positions

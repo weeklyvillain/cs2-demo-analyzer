@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import Modal from './Modal'
 import WhatsNewModal from './WhatsNewModal'
+import { RefreshCw } from 'lucide-react'
 
 interface Settings {
   cs2_path: string
@@ -17,6 +18,7 @@ interface Settings {
   default_sort_direction: string
   voice_skip_time: string
   position_extraction_interval: string
+  voiceCacheSizeLimitMB: string
 }
 
 function SettingsScreen() {
@@ -35,6 +37,7 @@ function SettingsScreen() {
     default_sort_direction: 'desc',
     voice_skip_time: '10',
     position_extraction_interval: '4',
+    voiceCacheSizeLimitMB: '50',
   })
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -54,6 +57,7 @@ function SettingsScreen() {
     storage: {
       matches: { bytes: number; formatted: string; count: number }
       settings: { bytes: number; formatted: string }
+      voiceCache?: { bytes: number; formatted: string }
       total: { bytes: number; formatted: string }
     }
     updateAvailable: boolean
@@ -63,6 +67,13 @@ function SettingsScreen() {
   useEffect(() => {
     loadSettings()
     loadAppInfo()
+    
+    // Refresh app info periodically to update storage usage (especially voice cache)
+    const refreshInterval = setInterval(() => {
+      loadAppInfo()
+    }, 5000) // Refresh every 5 seconds
+    
+    return () => clearInterval(refreshInterval)
   }, [])
 
   const loadAppInfo = async () => {
@@ -100,6 +111,7 @@ function SettingsScreen() {
         default_sort_direction: allSettings.default_sort_direction || 'desc',
         voice_skip_time: allSettings.voice_skip_time || '10',
         position_extraction_interval: allSettings.position_extraction_interval || '4',
+        voiceCacheSizeLimitMB: allSettings.voiceCacheSizeLimitMB || '50',
       })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load settings')
@@ -384,6 +396,27 @@ function SettingsScreen() {
                 />
               </div>
             )}
+            
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">
+                Voice Cache Size Limit (MB)
+              </label>
+              <input
+                type="number"
+                value={settings.voiceCacheSizeLimitMB}
+                onChange={async (e) => {
+                  const value = e.target.value
+                  setSettings((prev) => ({ ...prev, voiceCacheSizeLimitMB: value }))
+                  await handleSaveSingleSetting('voiceCacheSizeLimitMB', value)
+                }}
+                className="w-full px-3 py-2 bg-surface border border-border rounded text-white text-sm"
+                min="1"
+                max="10000"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Maximum size for voice extraction cache (default: 50MB). Oldest files are deleted when limit is exceeded.
+              </p>
+            </div>
           </div>
         </div>
 
@@ -694,7 +727,16 @@ function SettingsScreen() {
                 </div>
                 
                 <div className="mt-4 pt-3 border-t border-border">
-                  <h4 className="text-sm font-semibold text-gray-300 mb-3">Storage Usage</h4>
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="text-sm font-semibold text-gray-300">Storage Usage</h4>
+                    <button
+                      onClick={loadAppInfo}
+                      className="p-1.5 hover:bg-surface rounded transition-colors"
+                      title="Refresh storage usage"
+                    >
+                      <RefreshCw size={14} className="text-gray-400 hover:text-white" />
+                    </button>
+                  </div>
                   
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
@@ -705,6 +747,11 @@ function SettingsScreen() {
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-gray-400">Settings</span>
                       <span className="text-sm font-medium text-white">{appInfo.storage.settings.formatted}</span>
+                    </div>
+                    
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-gray-400">Voice Cache</span>
+                      <span className="text-sm font-medium text-white">{appInfo.storage.voiceCache?.formatted || '0 B'}</span>
                     </div>
                     
                     <div className="flex items-center justify-between pt-2 border-t border-border/50">

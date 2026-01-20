@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
 
 interface SidebarProps {
-  currentScreen: 'matches' | 'settings' | 'dbviewer'
-  onNavigate: (screen: 'matches' | 'settings' | 'dbviewer') => void
+  currentScreen: 'matches' | 'settings' | 'dbviewer' | 'stats'
+  onNavigate: (screen: 'matches' | 'settings' | 'dbviewer' | 'stats') => void
 }
 
 function Sidebar({ currentScreen, onNavigate }: SidebarProps) {
@@ -86,6 +86,18 @@ function Sidebar({ currentScreen, onNavigate }: SidebarProps) {
               }`}
             >
               Settings
+            </button>
+          </li>
+          <li>
+            <button
+              onClick={() => onNavigate('stats')}
+              className={`w-full text-left block px-4 py-2 rounded transition-colors ${
+                currentScreen === 'stats'
+                  ? 'bg-surface text-accent font-medium'
+                  : 'text-gray-400 hover:bg-surface hover:text-white'
+              }`}
+            >
+              Statistics
             </button>
           </li>
           {enableDbViewer && (

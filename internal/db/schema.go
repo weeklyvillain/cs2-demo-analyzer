@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS players (
 	match_id TEXT NOT NULL,
 	steamid TEXT NOT NULL,
 	name TEXT NOT NULL,
+	team TEXT,
 	PRIMARY KEY(match_id, steamid),
 	FOREIGN KEY(match_id) REFERENCES matches(id)
 );
@@ -183,4 +184,3 @@ func InitSchema(ctx context.Context, db *sql.DB) error {
 	}
 	return nil
 }
-

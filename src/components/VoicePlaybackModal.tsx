@@ -41,6 +41,7 @@ export default function VoicePlaybackModal({
   const [skipTime, setSkipTime] = useState(10) // Default 10 seconds (will be loaded from settings)
   const [waveformUrl, setWaveformUrl] = useState<string | null>(null)
   const [waveformLoading, setWaveformLoading] = useState(false)
+  const [waveformMetadata, setWaveformMetadata] = useState<{ pixelsPerSecond: number; actualWidth: number } | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
   const gainNodeRef = useRef<GainNode | null>(null)
@@ -126,9 +127,17 @@ export default function VoicePlaybackModal({
           }
         })
 
-        setAudioFiles(extractedFiles)
-        setOutputPath(result.outputPath)
-        setModalState('playback')
+        // Check if any files were extracted
+        if (extractedFiles.length === 0) {
+          // No files found - transition to playback state so modal can be closed
+          setModalState('playback')
+          setAudioFiles([])
+          setOutputPath(result.outputPath)
+        } else {
+          setAudioFiles(extractedFiles)
+          setOutputPath(result.outputPath)
+          setModalState('playback')
+        }
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : 'Failed to extract voice'
         setExtractionError(errorMessage)
@@ -165,6 +174,7 @@ export default function VoicePlaybackModal({
   useEffect(() => {
     if (!selectedFile || !isOpen || modalState !== 'playback') {
       setWaveformUrl(null)
+      setWaveformMetadata(null)
       return
     }
 
@@ -173,17 +183,27 @@ export default function VoicePlaybackModal({
 
     const generateWaveform = async () => {
       try {
-        const result = await window.electronAPI.generateWaveform(selectedFile.path)
+        // Pass duration if available to help with alignment
+        const result = await window.electronAPI.generateWaveform(selectedFile.path, duration > 0 ? duration : undefined)
         if (result.success && result.data && mounted) {
           setWaveformUrl(result.data)
+          // Store metadata for proper alignment
+          if (result.pixelsPerSecond && result.actualWidth) {
+            setWaveformMetadata({
+              pixelsPerSecond: result.pixelsPerSecond,
+              actualWidth: result.actualWidth,
+            })
+          }
         } else if (mounted) {
           console.warn('Failed to generate waveform:', result.error)
           setWaveformUrl(null)
+          setWaveformMetadata(null)
         }
       } catch (error) {
         console.error('Error generating waveform:', error)
         if (mounted) {
           setWaveformUrl(null)
+          setWaveformMetadata(null)
         }
       } finally {
         if (mounted) {
@@ -197,7 +217,7 @@ export default function VoicePlaybackModal({
     return () => {
       mounted = false
     }
-  }, [selectedFile, isOpen, modalState, selectedFileIndex])
+  }, [selectedFile, isOpen, modalState, selectedFileIndex, duration])
 
   useEffect(() => {
     let mounted = true
@@ -470,7 +490,7 @@ export default function VoicePlaybackModal({
       onClose={handleClose}
       title={getModalTitle()}
       size="lg"
-      canClose={modalState !== 'extracting'}
+      canClose={modalState === 'playback' || (modalState === 'extracting' && extractionError !== null)}
     >
       <div className="space-y-4">
         {/* Extracting Screen */}
@@ -496,7 +516,13 @@ export default function VoicePlaybackModal({
             {extractionError && (
               <div className="bg-red-900/20 border border-red-500/50 rounded p-4">
                 <p className="text-red-400 font-semibold mb-1">Extraction Error</p>
-                <p className="text-red-300 text-sm">{extractionError}</p>
+                <p className="text-red-300 text-sm mb-4">{extractionError}</p>
+                <button
+                  onClick={handleClose}
+                  className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded transition-colors text-sm font-medium"
+                >
+                  Close
+                </button>
               </div>
             )}
           </div>
@@ -506,8 +532,15 @@ export default function VoicePlaybackModal({
         {modalState === 'playback' && (
           <div className="space-y-4">
             {audioFiles.length === 0 ? (
-              <div className="text-center text-gray-400 py-8">
-                No audio files available
+              <div className="text-center text-gray-400 py-8 space-y-4">
+                <p>No audio files available</p>
+                <p className="text-sm text-gray-500">No voice data was found in this demo file.</p>
+                <button
+                  onClick={handleClose}
+                  className="px-4 py-2 bg-secondary hover:bg-surface text-white rounded transition-colors text-sm font-medium"
+                >
+                  Close
+                </button>
               </div>
             ) : (
               <>
@@ -547,22 +580,37 @@ export default function VoicePlaybackModal({
                   <div className="space-y-3">
                     <div className="bg-surface/50 border border-border rounded p-4">
                       {/* Waveform visualization with progress overlay */}
-                      <div className="mb-3 relative">
+                      <div className="mb-3 relative overflow-hidden rounded" style={{ width: '600px', height: '150px' }}>
                         {waveformLoading ? (
-                          <div className="flex items-center justify-center h-[200px]">
+                          <div className="flex items-center justify-center" style={{ width: '600px', height: '150px' }}>
                             <Loader2 className="w-6 h-6 animate-spin text-accent mr-2" />
                             <span className="text-gray-400 text-sm">Generating waveform...</span>
                           </div>
                         ) : waveformUrl ? (
                           <div 
                             ref={waveformContainerRef}
-                            className="relative w-full cursor-pointer"
+                            className="relative cursor-pointer overflow-hidden"
+                            style={{ width: '600px', height: '150px' }}
                             onClick={(e) => {
                               if (audioRef.current && duration > 0 && waveformContainerRef.current) {
                                 const rect = waveformContainerRef.current.getBoundingClientRect()
                                 const x = e.clientX - rect.left
-                                const percentage = x / rect.width
-                                const newTime = percentage * duration
+                                
+                                // Use actual waveform width for accurate time calculation
+                                let timePosition = 0
+                                if (waveformMetadata && waveformMetadata.actualWidth > 0) {
+                                  // Calculate time based on actual waveform pixels
+                                  const pixelsPerSecond = waveformMetadata.pixelsPerSecond
+                                  const scale = rect.width / waveformMetadata.actualWidth
+                                  const waveformX = x / scale
+                                  timePosition = waveformX / pixelsPerSecond
+                                } else {
+                                  // Fallback to percentage-based calculation
+                                  const percentage = x / rect.width
+                                  timePosition = percentage * duration
+                                }
+                                
+                                const newTime = Math.max(0, Math.min(duration, timePosition))
                                 audioRef.current.currentTime = newTime
                                 setCurrentTime(newTime)
                               }
@@ -571,11 +619,36 @@ export default function VoicePlaybackModal({
                             <img 
                               src={waveformUrl} 
                               alt="Waveform" 
-                              className="w-full h-auto"
-                              style={{ maxHeight: '200px' }}
+                              className="block"
+                              style={{ 
+                                width: '600px',
+                                height: '150px',
+                                objectFit: 'contain',
+                                display: 'block'
+                              }}
                             />
                             {/* Progress overlay */}
-                            {duration > 0 && (
+                            {duration > 0 && waveformMetadata && waveformMetadata.actualWidth > 0 && (
+                              <>
+                                {/* Progress line - calculated based on actual waveform width */}
+                                <div
+                                  className="absolute top-0 bottom-0 w-0.5 bg-accent z-10 pointer-events-none"
+                                  style={{
+                                    left: `${(currentTime * waveformMetadata.pixelsPerSecond / waveformMetadata.actualWidth) * 100}%`,
+                                  }}
+                                />
+                                {/* Progress fill overlay (darker area for played portion) */}
+                                <div
+                                  className="absolute top-0 bottom-0 bg-black/30 z-0 pointer-events-none"
+                                  style={{
+                                    left: '0%',
+                                    width: `${(currentTime * waveformMetadata.pixelsPerSecond / waveformMetadata.actualWidth) * 100}%`,
+                                  }}
+                                />
+                              </>
+                            )}
+                            {/* Fallback progress if metadata not available */}
+                            {duration > 0 && (!waveformMetadata || waveformMetadata.actualWidth === 0) && (
                               <>
                                 {/* Progress line */}
                                 <div

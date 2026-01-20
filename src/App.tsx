@@ -4,9 +4,11 @@ import Sidebar from './components/Sidebar'
 import MatchesScreen from './components/MatchesScreen'
 import SettingsScreen from './components/SettingsScreen'
 import DBViewerScreen from './components/DBViewerScreen'
+import StatsScreen from './components/StatsScreen'
 import WhatsNewModal from './components/WhatsNewModal'
+import TitleBar from './components/TitleBar'
 
-type Screen = 'matches' | 'settings' | 'dbviewer'
+type Screen = 'matches' | 'settings' | 'dbviewer' | 'stats'
 
 function App() {
   const [currentScreen, setCurrentScreen] = useState<Screen>('matches')
@@ -54,6 +56,17 @@ function App() {
     }
   }, [currentScreen, enableDbViewer])
 
+  // Listen for navigation to DB viewer from context menu
+  useEffect(() => {
+    const handleNavigateToDbViewer = () => {
+      if (enableDbViewer) {
+        setCurrentScreen('dbviewer')
+      }
+    }
+    window.addEventListener('navigateToDbViewer', handleNavigateToDbViewer)
+    return () => window.removeEventListener('navigateToDbViewer', handleNavigateToDbViewer)
+  }, [enableDbViewer])
+
   if (isLoading) {
     return (
       <div className="flex h-screen bg-primary text-white items-center justify-center">
@@ -74,13 +87,17 @@ function App() {
   }
 
   return (
-    <div className="flex h-screen bg-primary text-white overflow-hidden">
-      <Sidebar currentScreen={currentScreen} onNavigate={setCurrentScreen} />
-      <main className="flex-1 flex flex-col">
-        {currentScreen === 'matches' && <MatchesScreen />}
-        {currentScreen === 'settings' && <SettingsScreen />}
-        {currentScreen === 'dbviewer' && <DBViewerScreen />}
-      </main>
+    <div className="flex flex-col h-screen bg-primary text-white overflow-hidden">
+      <TitleBar />
+      <div className="flex flex-1 overflow-hidden">
+        <Sidebar currentScreen={currentScreen} onNavigate={setCurrentScreen} />
+        <main className="flex-1 flex flex-col overflow-hidden">
+          {currentScreen === 'matches' && <MatchesScreen />}
+          {currentScreen === 'settings' && <SettingsScreen />}
+          {currentScreen === 'dbviewer' && <DBViewerScreen />}
+          {currentScreen === 'stats' && <StatsScreen />}
+        </main>
+      </div>
       {showWhatsNew && appVersion && (
         <WhatsNewModal version={appVersion} onClose={handleWhatsNewClose} />
       )}

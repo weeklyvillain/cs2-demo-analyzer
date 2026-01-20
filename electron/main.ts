@@ -6,6 +6,7 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as crypto from 'crypto'
 import { initSettingsDb, getSetting, setSetting, getAllSettings } from './settings'
+import { initStatsDb, incrementStat, incrementMapParseCount, getAllStats, resetStats } from './stats'
 import * as matchesService from './matchesService'
 import { isCS2PluginInstalled, getPluginInstallPath, isGameInfoModified } from './cs2-plugin'
 
@@ -137,6 +138,7 @@ function createWindow() {
     width: 1200,
     height: 800,
     icon: iconPath,
+    frame: false, // Use custom title bar
     autoHideMenuBar: !isDev, // Hide menu bar in production, show in dev
     show: false, // Don't show until ready
     webPreferences: {
@@ -204,6 +206,19 @@ function createWindow() {
   mainWindow.on('closed', () => {
     mainWindow = null
   })
+
+  // Listen for window maximize/unmaximize to update title bar
+  mainWindow.on('maximize', () => {
+    if (mainWindow) {
+      mainWindow.webContents.send('window:maximized', true)
+    }
+  })
+
+  mainWindow.on('unmaximize', () => {
+    if (mainWindow) {
+      mainWindow.webContents.send('window:maximized', false)
+    }
+  })
 }
 
 app.whenReady().then(async () => {
@@ -211,7 +226,14 @@ app.whenReady().then(async () => {
   protocol.registerFileProtocol('map', (request, callback) => {
     const url = request.url.replace('map://', '')
     const mapPath = path.join(__dirname, '../resources/maps', url)
-    callback({ path: mapPath })
+    
+    // Check if the map image exists, otherwise use unknown_map.png as fallback
+    if (fs.existsSync(mapPath)) {
+      callback({ path: mapPath })
+    } else {
+      const unknownMapPath = path.join(__dirname, '../resources/maps', 'unknown_map.png')
+      callback({ path: unknownMapPath })
+    }
   })
   
   // Register protocol to serve radar images (for 2D viewer)
@@ -303,6 +325,9 @@ app.whenReady().then(async () => {
 
   // Initialize settings database
   await initSettingsDb()
+  
+  // Initialize stats database
+  await initStatsDb()
   
   // Ensure matches directory exists
   matchesService.ensureMatchesDir()
@@ -627,8 +652,33 @@ ipcMain.handle('parser:parse', async (_, { demoPath }: { demoPath: string }) => 
     parserProcess = null
     mainWindow?.webContents.send('parser:exit', { code, signal })
     
-    // If parsing succeeded, apply match cap if enabled
+    // If parsing succeeded, track stats and apply match cap if enabled
     if (code === 0) {
+      // Track demo parsed
+      incrementStat('total_demos_parsed')
+      
+      // Get map name from database and track map parse count
+      try {
+        const initSqlJs = require('sql.js')
+        const SQL = await initSqlJs()
+        const buffer = fs.readFileSync(dbPath)
+        const db = new SQL.Database(buffer)
+        
+        const stmt = db.prepare('SELECT map FROM matches WHERE id = ?')
+        stmt.bind([matchId])
+        if (stmt.step()) {
+          const row = stmt.getAsObject()
+          const mapName = row.map as string
+          if (mapName) {
+            incrementMapParseCount(mapName)
+          }
+        }
+        stmt.free()
+        db.close()
+      } catch (err) {
+        console.error('[Stats] Failed to get map name for stats:', err)
+      }
+      
       const capEnabled = getSetting('match_cap_enabled', 'false') === 'true'
       if (capEnabled) {
         const capValue = parseInt(getSetting('match_cap_value', '10'), 10)
@@ -837,21 +887,32 @@ ipcMain.handle('matches:players', async (_, matchId: string) => {
     const buffer = fs.readFileSync(dbPath)
     const db = new SQL.Database(buffer)
     
+    // Check if team column exists, if not add it
+    try {
+      db.run(`ALTER TABLE players ADD COLUMN team TEXT`)
+    } catch (err: any) {
+      // Column might already exist, ignore error
+      if (!err.message?.includes('duplicate column')) {
+        console.warn('Failed to add team column (might already exist):', err)
+      }
+    }
+    
     // Get all players (not just those with scores)
     const stmt = db.prepare(`
-      SELECT steamid, name
+      SELECT steamid, name, team
       FROM players
       WHERE match_id = ?
-      ORDER BY name
+      ORDER BY team, name
     `)
     stmt.bind([matchId])
     
-    const players: Array<{ steamId: string; name: string }> = []
+    const players: Array<{ steamId: string; name: string; team: string | null }> = []
     while (stmt.step()) {
       const row = stmt.getAsObject()
       players.push({
         steamId: row.steamid as string,
         name: (row.name as string) || (row.steamid as string),
+        team: (row.team as string) || null,
       })
     }
     stmt.free()
@@ -1513,6 +1574,16 @@ ipcMain.handle('matches:trimToCap', async (_, cap: number) => {
   return { deleted }
 })
 
+// Stats IPC handlers
+ipcMain.handle('stats:getAll', async () => {
+  return getAllStats()
+})
+
+ipcMain.handle('stats:reset', async () => {
+  resetStats()
+  return { success: true }
+})
+
 // DB Viewer IPC handlers
 ipcMain.handle('db:listTables', async (_, matchId: string) => {
   return await matchesService.listTables(matchId)
@@ -1538,6 +1609,27 @@ ipcMain.handle('settings:set', async (_, key: string, value: string) => {
 
 ipcMain.handle('settings:getAll', async () => {
   return getAllSettings()
+})
+
+// Voice cache management
+ipcMain.handle('voice:getCacheInfo', async () => {
+  const currentSize = calculateCacheSize()
+  const limit = getCacheSizeLimit()
+  return {
+    currentSize,
+    limit,
+    currentSizeMB: (currentSize / 1024 / 1024).toFixed(2),
+    limitMB: (limit / 1024 / 1024).toFixed(2),
+  }
+})
+
+ipcMain.handle('voice:cleanupCache', async () => {
+  cleanupCacheIfNeeded()
+  const currentSize = calculateCacheSize()
+  return {
+    currentSize,
+    currentSizeMB: (currentSize / 1024 / 1024).toFixed(2),
+  }
 })
 
 // Helper function to parse release notes from GitHub release body
@@ -1791,6 +1883,7 @@ ipcMain.handle('app:getInfo', async () => {
   
   let matchesStorageBytes = 0
   let settingsStorageBytes = 0
+  let voiceCacheStorageBytes = 0
   let matchCount = 0
   
   // Calculate matches storage
@@ -1820,7 +1913,10 @@ ipcMain.handle('app:getInfo', async () => {
     }
   }
   
-  const totalStorageBytes = matchesStorageBytes + settingsStorageBytes
+  // Calculate voice cache storage
+  voiceCacheStorageBytes = calculateCacheSize()
+  
+  const totalStorageBytes = matchesStorageBytes + settingsStorageBytes + voiceCacheStorageBytes
   
   // Format bytes to human readable
   const formatBytes = (bytes: number): string => {
@@ -1848,6 +1944,10 @@ ipcMain.handle('app:getInfo', async () => {
       settings: {
         bytes: settingsStorageBytes,
         formatted: formatBytes(settingsStorageBytes),
+      },
+      voiceCache: {
+        bytes: voiceCacheStorageBytes,
+        formatted: formatBytes(voiceCacheStorageBytes),
       },
       total: {
         bytes: totalStorageBytes,
@@ -1918,6 +2018,33 @@ ipcMain.handle('app:restart', () => {
   console.log('[App] Restarting application...')
   app.relaunch()
   app.quit()
+})
+
+// Window control handlers for custom title bar
+ipcMain.handle('window:minimize', () => {
+  if (mainWindow) {
+    mainWindow.minimize()
+  }
+})
+
+ipcMain.handle('window:maximize', () => {
+  if (mainWindow) {
+    if (mainWindow.isMaximized()) {
+      mainWindow.unmaximize()
+    } else {
+      mainWindow.maximize()
+    }
+  }
+})
+
+ipcMain.handle('window:close', () => {
+  if (mainWindow) {
+    mainWindow.close()
+  }
+})
+
+ipcMain.handle('window:isMaximized', () => {
+  return mainWindow ? mainWindow.isMaximized() : false
 })
 
 // IPC handler to show file in folder
@@ -2242,6 +2369,237 @@ ipcMain.handle('cs2:copyCommands', async (_, demoPath: string, startTick?: numbe
   return { success: true, commands: commandsToCopy }
 })
 
+// Voice extraction cache helpers
+function getVoiceCacheDir(): string {
+  // Use temp directory so cache resets between restarts
+  const tempDir = app.getPath('temp')
+  const cacheDir = path.join(tempDir, 'cs2-voice-cache')
+  if (!fs.existsSync(cacheDir)) {
+    fs.mkdirSync(cacheDir, { recursive: true })
+  }
+  return cacheDir
+}
+
+function generateCacheKey(demoPath: string, steamId: string, mode: string): string {
+  // Create a hash from demo path, steam ID, and mode
+  // Use full demo path to ensure uniqueness even if files have the same name
+  const normalizedDemoPath = path.resolve(demoPath).toLowerCase()
+  const keyString = `${normalizedDemoPath}-${steamId}-${mode}`
+  // Create a safe filename from the key using MD5 hash
+  const hash = crypto.createHash('md5').update(keyString).digest('hex')
+  return hash
+}
+
+function getCachedVoiceFiles(cacheKey: string): { files: string[]; filePaths: string[]; cachePath: string } | null {
+  const cacheDir = getVoiceCacheDir()
+  const cacheEntryDir = path.join(cacheDir, cacheKey)
+  
+  if (!fs.existsSync(cacheEntryDir)) {
+    return null
+  }
+  
+  // Check if cache directory has .wav files
+  const files = fs.readdirSync(cacheEntryDir)
+    .filter(file => file.endsWith('.wav'))
+    .map(file => ({
+      name: file,
+      path: path.join(cacheEntryDir, file),
+    }))
+  
+  if (files.length === 0) {
+    return null
+  }
+  
+  // Verify all files exist and are readable
+  const validFiles = files.filter(f => {
+    try {
+      return fs.existsSync(f.path) && fs.statSync(f.path).size > 0
+    } catch {
+      return false
+    }
+  })
+  
+  if (validFiles.length === 0) {
+    return null
+  }
+  
+  return {
+    files: validFiles.map(f => f.name),
+    filePaths: validFiles.map(f => f.path),
+    cachePath: cacheEntryDir,
+  }
+}
+
+// Get cache size limit from settings (default 50MB)
+function getCacheSizeLimit(): number {
+  const limitMB = parseInt(getSetting('voiceCacheSizeLimitMB', '50'), 10)
+  return limitMB * 1024 * 1024 // Convert to bytes
+}
+
+// Calculate total cache size
+function calculateCacheSize(): number {
+  const cacheDir = getVoiceCacheDir()
+  if (!fs.existsSync(cacheDir)) {
+    return 0
+  }
+  
+  let totalSize = 0
+  
+  function calculateDirSize(dirPath: string): void {
+    try {
+      const entries = fs.readdirSync(dirPath, { withFileTypes: true })
+      for (const entry of entries) {
+        const fullPath = path.join(dirPath, entry.name)
+        try {
+          if (entry.isDirectory()) {
+            calculateDirSize(fullPath)
+          } else if (entry.isFile()) {
+            const stats = fs.statSync(fullPath)
+            totalSize += stats.size
+          }
+        } catch (err) {
+          // Skip files/dirs that can't be accessed
+          console.warn(`[Voice Cache] Could not access: ${fullPath}`, err)
+        }
+      }
+    } catch (err) {
+      console.warn(`[Voice Cache] Could not read directory: ${dirPath}`, err)
+    }
+  }
+  
+  calculateDirSize(cacheDir)
+  return totalSize
+}
+
+// Get all cache files with their sizes and modification times
+interface CacheFile {
+  path: string
+  size: number
+  mtime: number
+}
+
+function getAllCacheFiles(): CacheFile[] {
+  const cacheDir = getVoiceCacheDir()
+  if (!fs.existsSync(cacheDir)) {
+    return []
+  }
+  
+  const files: CacheFile[] = []
+  
+  function collectFiles(dirPath: string): void {
+    try {
+      const entries = fs.readdirSync(dirPath, { withFileTypes: true })
+      for (const entry of entries) {
+        const fullPath = path.join(dirPath, entry.name)
+        try {
+          if (entry.isDirectory()) {
+            collectFiles(fullPath)
+          } else if (entry.isFile()) {
+            const stats = fs.statSync(fullPath)
+            files.push({
+              path: fullPath,
+              size: stats.size,
+              mtime: stats.mtime.getTime(),
+            })
+          }
+        } catch (err) {
+          // Skip files/dirs that can't be accessed
+          console.warn(`[Voice Cache] Could not access: ${fullPath}`, err)
+        }
+      }
+    } catch (err) {
+      console.warn(`[Voice Cache] Could not read directory: ${dirPath}`, err)
+    }
+  }
+  
+  collectFiles(cacheDir)
+  return files
+}
+
+// Clean up old cache files when limit is exceeded
+function cleanupCacheIfNeeded(): void {
+  const limit = getCacheSizeLimit()
+  let currentSize = calculateCacheSize()
+  
+  if (currentSize <= limit) {
+    return // No cleanup needed
+  }
+  
+  console.log(`[Voice Cache] Cache size (${(currentSize / 1024 / 1024).toFixed(2)}MB) exceeds limit (${(limit / 1024 / 1024).toFixed(2)}MB), cleaning up...`)
+  
+  // Get all files sorted by modification time (oldest first)
+  const files = getAllCacheFiles().sort((a, b) => a.mtime - b.mtime)
+  
+  let deletedSize = 0
+  let deletedCount = 0
+  
+  // Delete oldest files until we're under the limit
+  for (const file of files) {
+    if (currentSize - deletedSize <= limit) {
+      break // We're under the limit now
+    }
+    
+    try {
+      fs.unlinkSync(file.path)
+      deletedSize += file.size
+      deletedCount++
+    } catch (err) {
+      console.warn(`[Voice Cache] Could not delete file: ${file.path}`, err)
+    }
+  }
+  
+  // Try to remove empty directories
+  const cacheDir = getVoiceCacheDir()
+  try {
+    const entries = fs.readdirSync(cacheDir, { withFileTypes: true })
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        const dirPath = path.join(cacheDir, entry.name)
+        try {
+          const dirEntries = fs.readdirSync(dirPath)
+          if (dirEntries.length === 0) {
+            fs.rmdirSync(dirPath)
+          }
+        } catch (err) {
+          // Directory might not be empty or might have subdirectories, skip
+        }
+      }
+    }
+  } catch (err) {
+    // Ignore errors when cleaning up directories
+  }
+  
+  console.log(`[Voice Cache] Cleaned up ${deletedCount} file(s), freed ${(deletedSize / 1024 / 1024).toFixed(2)}MB`)
+}
+
+function saveToCache(cacheKey: string, sourceFiles: string[]): void {
+  const cacheDir = getVoiceCacheDir()
+  const cacheEntryDir = path.join(cacheDir, cacheKey)
+  
+  // Create cache entry directory
+  if (!fs.existsSync(cacheEntryDir)) {
+    fs.mkdirSync(cacheEntryDir, { recursive: true })
+  }
+  
+  // Copy files to cache
+  for (const sourceFile of sourceFiles) {
+    if (fs.existsSync(sourceFile)) {
+      const fileName = path.basename(sourceFile)
+      const destPath = path.join(cacheEntryDir, fileName)
+      
+      // Only copy if it doesn't already exist (avoid unnecessary I/O)
+      if (!fs.existsSync(destPath)) {
+        fs.copyFileSync(sourceFile, destPath)
+      }
+    }
+  }
+  
+  console.log(`[Voice Cache] Saved ${sourceFiles.length} file(s) to cache: ${cacheKey}`)
+  
+  // Clean up cache if it exceeds the size limit
+  cleanupCacheIfNeeded()
+}
+
 // Voice extraction IPC handler
 ipcMain.handle('voice:extract', async (_, options: { demoPath: string; outputPath?: string; mode?: 'split-compact' | 'split-full' | 'single-full'; steamIds?: string[] }) => {
   const { demoPath, mode = 'split-compact', steamIds = [] } = options
@@ -2249,6 +2607,30 @@ ipcMain.handle('voice:extract', async (_, options: { demoPath: string; outputPat
   // Validate demo file exists
   if (!fs.existsSync(demoPath)) {
     throw new Error(`Demo file not found: ${demoPath}`)
+  }
+  
+  // Check cache if extracting for a single player
+  if (steamIds.length === 1) {
+    const cacheKey = generateCacheKey(demoPath, steamIds[0], mode)
+    const cached = getCachedVoiceFiles(cacheKey)
+    
+    if (cached && cached.files.length > 0) {
+      console.log(`[Voice Cache] Cache hit for ${steamIds[0]} in ${path.basename(demoPath)} (mode: ${mode})`)
+      
+      // Notify renderer process that we're using cache
+      if (mainWindow) {
+        mainWindow.webContents.send('voice:extractionLog', `[Cache] Using cached voice files (${cached.files.length} file(s))`)
+      }
+      
+      return {
+        success: true,
+        outputPath: cached.cachePath,
+        files: cached.files,
+        filePaths: cached.filePaths,
+      }
+    } else {
+      console.log(`[Voice Cache] Cache miss for ${steamIds[0]} in ${path.basename(demoPath)} (mode: ${mode})`)
+    }
   }
   
   // Use provided outputPath or create temp directory
@@ -2363,6 +2745,26 @@ ipcMain.handle('voice:extract', async (_, options: { demoPath: string; outputPat
             path: path.join(outputPath, file),
           }))
         console.log(`[Voice Extraction] Completed successfully. Extracted ${files.length} file(s).`)
+        
+        // Save to cache if extracting for a single player
+        if (steamIds.length === 1) {
+          try {
+            const cacheKey = generateCacheKey(demoPath, steamIds[0], mode)
+            saveToCache(cacheKey, files.map(f => f.path))
+            
+            // Notify renderer process
+            if (mainWindow) {
+              mainWindow.webContents.send('voice:extractionLog', `[Cache] Saved to cache for future use`)
+            }
+          } catch (cacheError) {
+            console.error(`[Voice Cache] Failed to save to cache:`, cacheError)
+            // Don't fail the extraction if caching fails
+          }
+        }
+        
+        // Track voice extraction
+        incrementStat('total_voices_extracted', files.length)
+        
         resolve({ success: true, outputPath, files: files.map(f => f.name), filePaths: files.map(f => f.path) })
       } else {
         console.error(`[Voice Extraction] Process exited with code ${code}`)
@@ -2378,8 +2780,27 @@ ipcMain.handle('voice:extract', async (_, options: { demoPath: string; outputPat
   })
 })
 
+// Helper function to read PNG dimensions from buffer
+function getPngDimensions(buffer: Buffer): { width: number; height: number } | null {
+  try {
+    // PNG signature check
+    const signature = [137, 80, 78, 71, 13, 10, 26, 10]
+    for (let i = 0; i < signature.length; i++) {
+      if (buffer[i] !== signature[i]) {
+        return null
+      }
+    }
+    // PNG width is at offset 16 (4 bytes), height at offset 20 (4 bytes), both big-endian
+    const width = buffer.readUInt32BE(16)
+    const height = buffer.readUInt32BE(20)
+    return { width, height }
+  } catch {
+    return null
+  }
+}
+
 // Voice waveform generation IPC handler - generate waveform PNG using audiowaveform
-ipcMain.handle('voice:generateWaveform', async (_, filePath: string) => {
+ipcMain.handle('voice:generateWaveform', async (_, filePath: string, audioDuration?: number) => {
   try {
     if (!fs.existsSync(filePath)) {
       return { success: false, error: 'Audio file not found' }
@@ -2390,9 +2811,9 @@ ipcMain.handle('voice:generateWaveform', async (_, filePath: string) => {
       return { success: false, error: `audiowaveform not found at: ${audiowaveformPath}` }
     }
 
-    // Create temp directory for waveform output
-    const tempDir = app.getPath('temp')
-    const waveformDir = path.join(tempDir, 'cs2-waveforms')
+    // Use temp directory for waveform cache (same as voice cache)
+    const cacheDir = getVoiceCacheDir()
+    const waveformDir = path.join(cacheDir, 'waveforms')
     if (!fs.existsSync(waveformDir)) {
       fs.mkdirSync(waveformDir, { recursive: true })
     }
@@ -2403,22 +2824,42 @@ ipcMain.handle('voice:generateWaveform', async (_, filePath: string) => {
     const audioHash = crypto.createHash('sha256').update(fileBuffer).digest('hex').substring(0, 32)
     const waveformPath = path.join(waveformDir, `waveform-${audioHash}.png`)
 
+    const targetWidth = 600
+    
+    // Calculate pixels-per-second dynamically to ensure waveform is always exactly 600px wide
+    // This must be calculated based on audio duration and target width
+    if (!audioDuration || audioDuration <= 0) {
+      return { success: false, error: 'Audio duration is required to generate waveform with fixed width' }
+    }
+    
+    const pixelsPerSecond = targetWidth / audioDuration
+
     // Check if waveform already exists (cache)
+    // Note: We still use cached waveforms, but always calculate pixelsPerSecond based on targetWidth
     if (fs.existsSync(waveformPath)) {
       const imageBuffer = fs.readFileSync(waveformPath)
       const base64 = imageBuffer.toString('base64')
-      return { success: true, data: `data:image/png;base64,${base64}` }
+      
+      // Always use targetWidth for pixelsPerSecond calculation, regardless of cached image size
+      // This ensures consistent behavior even if old cached waveforms have different dimensions
+      
+      return { 
+        success: true, 
+        data: `data:image/png;base64,${base64}`,
+        pixelsPerSecond,
+        actualWidth: targetWidth, // Always report targetWidth as actualWidth for consistency
+      }
     }
 
     // Build audiowaveform command
     // Colors: background #282b30, waveform #d07a2d, progress will be overlaid in React
     // Using bars style for better visual appeal
-    // Higher resolution for better detail on voice comms
+    // Calculate pixels-per-second dynamically to ensure waveform is always exactly 600px
     const args: string[] = [
       '-i', filePath,
       '-o', waveformPath,
-      '-w', '1200',  // Increased width for better detail
-      '-h', '200',   // Increased height for better amplitude visibility
+      '-w', targetWidth.toString(),   // Fixed width: always 600px
+      '-h', '150',   // Fixed height for consistent display
       '--waveform-style', 'bars',
       '--bar-width', '2',   // Slightly thinner bars for higher resolution
       '--bar-gap', '1',
@@ -2427,11 +2868,11 @@ ipcMain.handle('voice:generateWaveform', async (_, filePath: string) => {
       '--waveform-color', 'd07a2d',    // Orange waveform matching accent
       '--no-axis-labels',              // No axis labels for cleaner look
       '--amplitude-scale', '1.8',       // Lower fixed scale to preserve volume relationships
-      '--pixels-per-second', '100',     // Higher time resolution for voice comms (was 50)
-      // Higher resolution shows more detail in speech patterns and volume changes
+      '--pixels-per-second', Math.round(pixelsPerSecond).toString(),  // Calculated to ensure 600px width
+      // Dynamic pixels-per-second ensures waveform is always exactly 600px regardless of duration
     ]
 
-    return new Promise<{ success: boolean; data?: string; error?: string }>((resolve) => {
+    return new Promise<{ success: boolean; data?: string; error?: string; pixelsPerSecond?: number; actualWidth?: number }>((resolve) => {
       const audiowaveformProcess = spawn(audiowaveformPath, args, {
         cwd: path.dirname(audiowaveformPath),
         windowsHide: true,
@@ -2448,7 +2889,20 @@ ipcMain.handle('voice:generateWaveform', async (_, filePath: string) => {
           try {
             const imageBuffer = fs.readFileSync(waveformPath)
             const base64 = imageBuffer.toString('base64')
-            resolve({ success: true, data: `data:image/png;base64,${base64}` })
+            
+            // Verify the generated waveform is the correct width
+            // Always use targetWidth for pixelsPerSecond calculation to ensure consistency
+            const dimensions = getPngDimensions(imageBuffer)
+            if (dimensions && dimensions.width !== targetWidth) {
+              console.warn(`[Waveform] Generated waveform width (${dimensions.width}px) does not match target (${targetWidth}px)`)
+            }
+            
+            resolve({ 
+              success: true, 
+              data: `data:image/png;base64,${base64}`,
+              pixelsPerSecond, // Already calculated based on targetWidth and audioDuration
+              actualWidth: targetWidth, // Always report targetWidth for consistency
+            })
           } catch (error) {
             resolve({ success: false, error: `Failed to read waveform: ${error instanceof Error ? error.message : String(error)}` })
           }

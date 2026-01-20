@@ -6,7 +6,7 @@ import ParsingModal from './ParsingModal'
 import VoicePlaybackModal from './VoicePlaybackModal'
 import Toast from './Toast'
 import { formatDisconnectReason } from '../utils/disconnectReason'
-import { Clock, Skull, Zap, WifiOff, ChevronDown, ChevronUp, Copy, Check, ArrowUp, ArrowDown, Trash2, X, Plus, Loader2, Mic } from 'lucide-react'
+import { Clock, Skull, Zap, WifiOff, ChevronDown, ChevronUp, Copy, Check, ArrowUp, ArrowDown, Trash2, X, Plus, Loader2, Mic, FolderOpen, Database, RefreshCw, Upload, Map as MapIcon } from 'lucide-react'
 
 interface Match {
   id: string
@@ -91,7 +91,7 @@ function MatchesScreen() {
   const [toast, setToast] = useState<{ message: string; type?: 'success' | 'error' | 'info' } | null>(null)
   const [activeTab, setActiveTab] = useState<'overview' | 'players' | 'rounds' | 'chat' | '2d-viewer'>('overview')
   const [allEvents, setAllEvents] = useState<any[]>([])
-  const [allPlayers, setAllPlayers] = useState<Array<{ steamId: string; name: string }>>([])
+  const [allPlayers, setAllPlayers] = useState<Array<{ steamId: string; name: string; team: string | null }>>([])
   const [selectedPlayer, setSelectedPlayer] = useState<PlayerScore | null>(null)
   const [playerEvents, setPlayerEvents] = useState<PlayerEvent[]>([])
   const [loadingEvents, setLoadingEvents] = useState(false)
@@ -120,7 +120,6 @@ function MatchesScreen() {
   const [playerSortField, setPlayerSortField] = useState<'name' | 'teamKills' | 'teamDamage' | 'teamFlashSeconds' | 'afkSeconds'>('teamKills')
   const [playerSortDirection, setPlayerSortDirection] = useState<'asc' | 'desc'>('desc')
   const [selectedMatches, setSelectedMatches] = useState<Set<string>>(new Set())
-  const [isSelectionMode, setIsSelectionMode] = useState(false)
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [showParsingModal, setShowParsingModal] = useState(false)
@@ -130,6 +129,23 @@ function MatchesScreen() {
   const [showVoiceModal, setShowVoiceModal] = useState(false)
   const [voicePlayerSteamId, setVoicePlayerSteamId] = useState<string>('')
   const [voicePlayerName, setVoicePlayerName] = useState<string>('')
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; match: Match } | null>(null)
+  const [enableDbViewer, setEnableDbViewer] = useState(false)
+
+  // Load DB viewer setting
+  useEffect(() => {
+    const loadDbViewerSetting = async () => {
+      if (window.electronAPI) {
+        const value = await window.electronAPI.getSetting('enable_db_viewer', 'false')
+        setEnableDbViewer(value === 'true')
+      }
+    }
+    loadDbViewerSetting()
+    
+    // Listen for setting changes
+    const interval = setInterval(loadDbViewerSetting, 1000)
+    return () => clearInterval(interval)
+  }, [])
 
   const fetchMatches = async () => {
     if (!window.electronAPI) {
@@ -405,46 +421,72 @@ function MatchesScreen() {
     const merged = allPlayers.map(player => {
       const score = scoresMap.get(player.steamId)
       if (score) {
-        return score // Player has scores, use them
+        // Preserve team information from player data
+        return { ...score, team: player.team } as PlayerScore & { team: string | null }
       }
       // Player doesn't have scores, create a default entry
       return {
         matchId: selectedMatch || '',
         steamId: player.steamId,
         name: player.name || player.steamId,
+        team: player.team,
         teamKills: 0,
         teamDamage: 0,
         teamFlashSeconds: 0,
         afkSeconds: 0,
         bodyBlockSeconds: 0,
         griefScore: 0,
-      } as PlayerScore
+      } as PlayerScore & { team: string | null }
     })
     
     return merged
   }, [allPlayers, scores, selectedMatch])
 
-  // Sort players based on current sort settings
-  const sortedScores = useMemo(() => {
-    return [...allPlayersWithScores].sort((a, b) => {
-      let comparison = 0
-      
-      if (playerSortField === 'name') {
-        const aName = a.name || a.steamId
-        const bName = b.name || b.steamId
-        comparison = aName.localeCompare(bName)
-      } else if (playerSortField === 'teamKills') {
-        comparison = a.teamKills - b.teamKills
-      } else if (playerSortField === 'teamDamage') {
-        comparison = a.teamDamage - b.teamDamage
-      } else if (playerSortField === 'teamFlashSeconds') {
-        comparison = a.teamFlashSeconds - b.teamFlashSeconds
-      } else if (playerSortField === 'afkSeconds') {
-        comparison = a.afkSeconds - b.afkSeconds
+  // Group and sort players by team, then by sort settings
+  const groupedAndSortedScores = useMemo(() => {
+    // Group players by team
+    const teamA: Array<PlayerScore & { team: string | null }> = []
+    const teamB: Array<PlayerScore & { team: string | null }> = []
+    const noTeam: Array<PlayerScore & { team: string | null }> = []
+    
+    allPlayersWithScores.forEach(player => {
+      if (player.team === 'A') {
+        teamA.push(player)
+      } else if (player.team === 'B') {
+        teamB.push(player)
+      } else {
+        noTeam.push(player)
       }
-      
-      return playerSortDirection === 'asc' ? comparison : -comparison
     })
+    
+    // Sort function
+    const sortPlayers = (players: Array<PlayerScore & { team: string | null }>) => {
+      return [...players].sort((a, b) => {
+        let comparison = 0
+        
+        if (playerSortField === 'name') {
+          const aName = a.name || a.steamId
+          const bName = b.name || b.steamId
+          comparison = aName.localeCompare(bName)
+        } else if (playerSortField === 'teamKills') {
+          comparison = a.teamKills - b.teamKills
+        } else if (playerSortField === 'teamDamage') {
+          comparison = a.teamDamage - b.teamDamage
+        } else if (playerSortField === 'teamFlashSeconds') {
+          comparison = a.teamFlashSeconds - b.teamFlashSeconds
+        } else if (playerSortField === 'afkSeconds') {
+          comparison = a.afkSeconds - b.afkSeconds
+        }
+        
+        return playerSortDirection === 'asc' ? comparison : -comparison
+      })
+    }
+    
+    return {
+      teamA: sortPlayers(teamA),
+      teamB: sortPlayers(teamB),
+      noTeam: sortPlayers(noTeam),
+    }
   }, [allPlayersWithScores, playerSortField, playerSortDirection])
 
   // Handle player table column sorting
@@ -510,6 +552,50 @@ function MatchesScreen() {
     fetchMatchData(matchId)
     setShowMatchOverview(true)
   }
+
+  const handleContextMenu = (e: React.MouseEvent, match: Match) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setContextMenu({ x: e.clientX, y: e.clientY, match })
+  }
+
+  const handleContextMenuAction = async (action: 'delete' | 'open' | 'showInDb' | 'reparse' | 'select', match: Match) => {
+    setContextMenu(null)
+
+    if (action === 'delete') {
+      setSelectedMatches(new Set([match.id]))
+      setShowDeleteModal(true)
+    } else if (action === 'open' && match.demoPath) {
+      try {
+        await window.electronAPI?.showFileInFolder(match.demoPath)
+      } catch (err) {
+        setToast({ message: 'Failed to open file location', type: 'error' })
+      }
+    } else if (action === 'showInDb') {
+      // Store match ID in localStorage for DBViewerScreen to pick up
+      localStorage.setItem('dbViewerSelectedMatch', match.id)
+      // Trigger navigation via custom event
+      window.dispatchEvent(new CustomEvent('navigateToDbViewer', { detail: { matchId: match.id } }))
+    } else if (action === 'reparse' && match.demoPath) {
+      // Set the demo to parse and open the parsing modal
+      setDemoToParse(match.demoPath)
+      setShowParsingModal(true)
+    } else if (action === 'select') {
+      // Toggle selection for this match
+      toggleMatchSelection(match.id)
+    }
+  }
+
+  // Close context menu on click outside
+  useEffect(() => {
+    const handleClickOutside = () => {
+      setContextMenu(null)
+    }
+    if (contextMenu) {
+      document.addEventListener('click', handleClickOutside)
+      return () => document.removeEventListener('click', handleClickOutside)
+    }
+  }, [contextMenu])
 
   const handlePlayerClick = async (player: PlayerScore) => {
     if (!window.electronAPI || !selectedMatch) return
@@ -760,13 +846,6 @@ function MatchesScreen() {
     })
   }
 
-  const toggleSelectionMode = () => {
-    setIsSelectionMode(!isSelectionMode)
-    if (isSelectionMode) {
-      setSelectedMatches(new Set())
-    }
-  }
-
   const toggleMatchSelection = (matchId: string) => {
     setSelectedMatches((prev) => {
       const next = new Set(prev)
@@ -800,7 +879,6 @@ function MatchesScreen() {
       // Remove deleted matches from state
       setMatches((prev) => prev.filter(m => !selectedMatches.has(m.id)))
       setSelectedMatches(new Set())
-      setIsSelectionMode(false)
       setShowDeleteModal(false)
       
       // If the selected match was deleted, clear selection
@@ -890,86 +968,55 @@ function MatchesScreen() {
           <div className="flex justify-between items-center mb-6">
             <h2 className="text-2xl font-bold">Matches</h2>
             <div className="flex gap-2">
-              {isSelectionMode && selectedMatches.size > 0 && (
-                <button
-                  onClick={() => setShowDeleteModal(true)}
-                  className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition-colors flex items-center gap-2"
-                >
-                  <Trash2 size={16} />
-                  Delete ({selectedMatches.size})
-                </button>
-              )}
-              {isSelectionMode && (
-                <div className="flex gap-2">
-                  {selectedMatches.size < sortedMatches.length ? (
-                    <button
-                      onClick={selectAllMatches}
-                      className="px-4 py-2 bg-surface border border-border text-white rounded hover:bg-surface/80 transition-colors text-sm"
-                    >
-                      Select All
-                    </button>
-                  ) : (
-                    <button
-                      onClick={deselectAllMatches}
-                      className="px-4 py-2 bg-surface border border-border text-white rounded hover:bg-surface/80 transition-colors text-sm"
-                    >
-                      Deselect All
-                    </button>
-                  )}
+              {selectedMatches.size > 0 && (
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-gray-400">
+                    {selectedMatches.size} match{selectedMatches.size !== 1 ? 'es' : ''} selected
+                  </span>
                   <button
-                    onClick={toggleSelectionMode}
+                    onClick={() => setShowDeleteModal(true)}
+                    className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition-colors flex items-center gap-2"
+                  >
+                    <Trash2 size={16} />
+                    Delete Selected
+                  </button>
+                  <button
+                    onClick={deselectAllMatches}
                     className="px-4 py-2 bg-surface border border-border text-white rounded hover:bg-surface/80 transition-colors text-sm"
                   >
-                    Cancel
+                    Deselect All
                   </button>
                 </div>
               )}
-              {!isSelectionMode && (
-                <>
-                  <button
-                    onClick={async () => {
-                      if (!window.electronAPI) return
-                      try {
-                        const paths = await window.electronAPI.openFileDialog(true) // Allow multiple
-                        if (paths) {
-                          const filePaths = Array.isArray(paths) ? paths : [paths]
-                          if (filePaths.length === 1) {
-                            // Single file - use existing single-file parsing modal
-                            setDemoToParse(filePaths[0])
-                            setDemosToParse([])
-                            setShowParsingModal(true)
-                          } else {
-                            // Multiple files - queue them for sequential parsing
-                            // First file goes to demoToParse, rest go to queue
-                            setDemoToParse(filePaths[0])
-                            setDemosToParse(filePaths.slice(1))
-                            setShowParsingModal(true)
-                          }
-                        }
-                      } catch (err) {
-                        setError(err instanceof Error ? err.message : 'Failed to open file dialog')
+              <button
+                onClick={async () => {
+                  if (!window.electronAPI) return
+                  try {
+                    const paths = await window.electronAPI.openFileDialog(true) // Allow multiple
+                    if (paths) {
+                      const filePaths = Array.isArray(paths) ? paths : [paths]
+                      if (filePaths.length === 1) {
+                        // Single file - use existing single-file parsing modal
+                        setDemoToParse(filePaths[0])
+                        setDemosToParse([])
+                        setShowParsingModal(true)
+                      } else {
+                        // Multiple files - queue them for sequential parsing
+                        // First file goes to demoToParse, rest go to queue
+                        setDemoToParse(filePaths[0])
+                        setDemosToParse(filePaths.slice(1))
+                        setShowParsingModal(true)
                       }
-                    }}
-                    className="px-4 py-2 bg-accent text-white rounded hover:bg-accent/80 transition-colors flex items-center gap-2"
-                  >
-                    <Plus size={16} />
-                    Add Demo{/*(s)*/}
-                  </button>
-                  <button
-                    onClick={toggleSelectionMode}
-                    className="px-4 py-2 bg-surface border border-border text-white rounded hover:bg-surface/80 transition-colors text-sm"
-                  >
-                    Select
-                  </button>
-                  <button
-                    onClick={fetchMatches}
-                    disabled={loading}
-                    className="px-4 py-2 bg-accent text-white rounded hover:bg-accent/80 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    Refresh
-                  </button>
-                </>
-              )}
+                    }
+                  } catch (err) {
+                    setError(err instanceof Error ? err.message : 'Failed to open file dialog')
+                  }
+                }}
+                className="px-4 py-2 bg-accent text-white rounded hover:bg-accent/80 transition-colors flex items-center gap-2"
+              >
+                <Plus size={16} />
+                Add Demo{/*(s)*/}
+              </button>
             </div>
           </div>
 
@@ -1014,9 +1061,18 @@ function MatchesScreen() {
               <div className="text-gray-400">Loading matches...</div>
             </div>
           ) : matches.length === 0 ? (
-            <div className="text-center text-gray-400 py-16">
-              <p className="text-lg mb-2">No matches found</p>
-              <p className="text-sm">Parse a demo to get started.</p>
+            <div className="flex flex-col items-center justify-center py-16 gap-4">
+              <div className="text-center text-gray-400">
+                <Upload className="w-16 h-16 mx-auto mb-4 text-gray-500 opacity-50" />
+                <p className="text-lg mb-2">No matches found</p>
+                <p className="text-sm mb-4">Parse a demo to get started.</p>
+                <div className="mt-6 p-4 bg-surface/50 rounded-lg border border-gray-700/50 max-w-md">
+                  <p className="text-sm text-gray-300 mb-2 font-medium">Drag & Drop Demo Files</p>
+                  <p className="text-xs text-gray-400">
+                    Drag and drop one or more <code className="px-1 py-0.5 bg-gray-800 rounded text-gray-300">.dem</code> files here to parse them and add matches to your collection.
+                  </p>
+                </div>
+              </div>
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-4 gap-4">
@@ -1027,36 +1083,29 @@ function MatchesScreen() {
                 return (
                   <div
                     key={match.id}
+                    onContextMenu={(e) => handleContextMenu(e, match)}
                     className={`bg-secondary rounded-lg border overflow-hidden transition-all hover:shadow-xl group flex flex-col relative ${
-                      isSelectionMode
-                        ? isSelected
-                          ? 'border-accent border-2'
-                          : 'border-border hover:border-accent/50'
+                      isSelected
+                        ? 'border-accent border-2'
                         : 'border-border hover:border-accent/50'
                     }`}
                   >
-                    {isSelectionMode && (
+                    {isSelected && (
                       <div className="absolute top-2 left-2 z-10">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            toggleMatchSelection(match.id)
-                          }}
-                          className={`w-6 h-6 rounded border-2 flex items-center justify-center transition-colors ${
-                            isSelected
-                              ? 'bg-accent border-accent'
-                              : 'bg-surface/80 border-border hover:border-accent'
-                          }`}
-                        >
-                          {isSelected && <Check size={16} className="text-white" />}
-                        </button>
+                        <div className="w-6 h-6 rounded border-2 flex items-center justify-center bg-accent border-accent">
+                          <Check size={16} className="text-white" />
+                        </div>
                       </div>
                     )}
                     <button
-                      onClick={() => {
-                        if (isSelectionMode) {
+                      onClick={(e) => {
+                        if (e.ctrlKey || e.metaKey) {
+                          // CTRL + Click (or CMD + Click on Mac) to toggle selection
+                          e.preventDefault()
+                          e.stopPropagation()
                           toggleMatchSelection(match.id)
                         } else {
+                          // Normal click to open match
                           handleMatchClick(match.id)
                         }
                       }}
@@ -1128,6 +1177,69 @@ function MatchesScreen() {
                   </div>
                 )
               })}
+            </div>
+          )}
+
+          {/* Context Menu */}
+          {contextMenu && (
+            <div
+              className="fixed z-50 bg-secondary border border-border rounded-lg shadow-xl py-1 min-w-[180px]"
+              style={{
+                left: `${Math.min(contextMenu.x, window.innerWidth - 200)}px`,
+                top: `${Math.min(contextMenu.y, window.innerHeight - 150)}px`,
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button
+                onClick={() => handleContextMenuAction('open', contextMenu.match)}
+                disabled={!contextMenu.match.demoPath}
+                className="w-full text-left px-4 py-2 text-sm text-white hover:bg-surface disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+              >
+                <FolderOpen className="w-4 h-4" />
+                Open folder for demo
+              </button>
+              <button
+                onClick={() => handleContextMenuAction('reparse', contextMenu.match)}
+                disabled={!contextMenu.match.demoPath}
+                className="w-full text-left px-4 py-2 text-sm text-white hover:bg-surface disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+              >
+                <RefreshCw className="w-4 h-4" />
+                Reparse Demo
+              </button>
+              {enableDbViewer && (
+                <button
+                  onClick={() => handleContextMenuAction('showInDb', contextMenu.match)}
+                  className="w-full text-left px-4 py-2 text-sm text-white hover:bg-surface transition-colors flex items-center gap-2"
+                >
+                  <Database className="w-4 h-4" />
+                  Show in DB Viewer
+                </button>
+              )}
+              {selectedMatches.has(contextMenu.match.id) ? (
+                <button
+                  onClick={() => handleContextMenuAction('select', contextMenu.match)}
+                  className="w-full text-left px-4 py-2 text-sm text-white hover:bg-surface transition-colors flex items-center gap-2"
+                >
+                  <X className="w-4 h-4" />
+                  Deselect
+                </button>
+              ) : (
+                <button
+                  onClick={() => handleContextMenuAction('select', contextMenu.match)}
+                  className="w-full text-left px-4 py-2 text-sm text-white hover:bg-surface transition-colors flex items-center gap-2"
+                >
+                  <Check className="w-4 h-4" />
+                  Select (CTRL + Click)
+                </button>
+              )}
+              <div className="border-t border-border my-1" />
+              <button
+                onClick={() => handleContextMenuAction('delete', contextMenu.match)}
+                className="w-full text-left px-4 py-2 text-sm text-red-400 hover:bg-red-900/20 transition-colors flex items-center gap-2"
+              >
+                <Trash2 className="w-4 h-4" />
+                Delete
+              </button>
             </div>
           )}
 
@@ -1585,13 +1697,30 @@ function MatchesScreen() {
                                             <div className="flex items-center justify-between mb-2">
                                               <span className="text-xs text-gray-400">Round {afk.roundIndex + 1}</span>
                                               {demoPath && (
-                                                <button
-                                                  onClick={() => handleCopyCommand(afk)}
-                                                  className="p-1 hover:bg-accent/20 rounded transition-colors"
-                                                  title="Copy CS2 console commands"
-                                                >
-                                                  <Copy size={14} className="text-gray-400 hover:text-accent" />
-                                                </button>
+                                                <div className="flex items-center gap-1">
+                                                  <button
+                                                    onClick={() => {
+                                                      const round = rounds.find(r => r.roundIndex === afk.roundIndex)
+                                                      if (round) {
+                                                        const previewSeconds = 5
+                                                        const previewTicks = previewSeconds * tickRate
+                                                        const targetTick = Math.max(round.startTick || 0, afk.startTick - previewTicks)
+                                                        setViewer2D({ roundIndex: afk.roundIndex, tick: targetTick })
+                                                      }
+                                                    }}
+                                                    className="p-1 hover:bg-accent/20 rounded transition-colors"
+                                                    title="View in 2D"
+                                                  >
+                                                    <MapIcon size={14} className="text-gray-400 hover:text-accent" />
+                                                  </button>
+                                                  <button
+                                                    onClick={() => handleCopyCommand(afk)}
+                                                    className="p-1 hover:bg-accent/20 rounded transition-colors"
+                                                    title="Copy CS2 console commands"
+                                                  >
+                                                    <Copy size={14} className="text-gray-400 hover:text-accent" />
+                                                  </button>
+                                                </div>
                                               )}
                                             </div>
                                             <div className="text-xs text-gray-400 space-y-1">
@@ -1661,13 +1790,30 @@ function MatchesScreen() {
                                       <div className="flex items-center gap-2">
                                         <span className="text-xs text-gray-400">Round {dc.roundIndex + 1}/{rounds.length}</span>
                                         {demoPath && (
-                                          <button
-                                            onClick={() => handleCopyCommand(dc)}
-                                            className="p-1 hover:bg-accent/20 rounded transition-colors"
-                                            title="Copy CS2 console commands"
-                                          >
-                                            <Copy size={14} className="text-gray-400 hover:text-accent" />
-                                          </button>
+                                          <div className="flex items-center gap-1">
+                                            <button
+                                              onClick={() => {
+                                                const round = rounds.find(r => r.roundIndex === dc.roundIndex)
+                                                if (round) {
+                                                  const previewSeconds = 5
+                                                  const previewTicks = previewSeconds * tickRate
+                                                  const targetTick = Math.max(round.startTick || 0, dc.startTick - previewTicks)
+                                                  setViewer2D({ roundIndex: dc.roundIndex, tick: targetTick })
+                                                }
+                                              }}
+                                              className="p-1 hover:bg-accent/20 rounded transition-colors"
+                                              title="View in 2D"
+                                            >
+                                              <MapIcon size={14} className="text-gray-400 hover:text-accent" />
+                                            </button>
+                                            <button
+                                              onClick={() => handleCopyCommand(dc)}
+                                              className="p-1 hover:bg-accent/20 rounded transition-colors"
+                                              title="Copy CS2 console commands"
+                                            >
+                                              <Copy size={14} className="text-gray-400 hover:text-accent" />
+                                            </button>
+                                          </div>
                                         )}
                                       </div>
                                     </div>
@@ -1737,13 +1883,30 @@ function MatchesScreen() {
                                     <div className="flex items-center gap-2">
                                       <span className="text-xs text-gray-400">Round {kill.roundIndex + 1}</span>
                                       {demoPath && (
-                                        <button
-                                          onClick={() => handleCopyCommand(kill)}
-                                          className="p-1 hover:bg-accent/20 rounded transition-colors"
-                                          title="Copy CS2 console commands"
-                                        >
-                                          <Copy size={14} className="text-gray-400 hover:text-accent" />
-                                        </button>
+                                        <div className="flex items-center gap-1">
+                                          <button
+                                            onClick={() => {
+                                              const round = rounds.find(r => r.roundIndex === kill.roundIndex)
+                                              if (round) {
+                                                const previewSeconds = 5
+                                                const previewTicks = previewSeconds * tickRate
+                                                const targetTick = Math.max(round.startTick || 0, kill.startTick - previewTicks)
+                                                setViewer2D({ roundIndex: kill.roundIndex, tick: targetTick })
+                                              }
+                                            }}
+                                            className="p-1 hover:bg-accent/20 rounded transition-colors"
+                                            title="View in 2D"
+                                          >
+                                            <MapIcon size={14} className="text-gray-400 hover:text-accent" />
+                                          </button>
+                                          <button
+                                            onClick={() => handleCopyCommand(kill)}
+                                            className="p-1 hover:bg-accent/20 rounded transition-colors"
+                                            title="Copy CS2 console commands"
+                                          >
+                                            <Copy size={14} className="text-gray-400 hover:text-accent" />
+                                          </button>
+                                        </div>
                                       )}
                                     </div>
                                   </div>
@@ -1796,13 +1959,30 @@ function MatchesScreen() {
                                         <div className="flex items-center gap-2">
                                           <span className="text-xs text-gray-400">Round {damage.roundIndex + 1}</span>
                                           {demoPath && (
-                                            <button
-                                              onClick={() => handleCopyCommand(damage)}
-                                              className="p-1 hover:bg-accent/20 rounded transition-colors"
-                                              title="Copy CS2 console commands"
-                                            >
-                                              <Copy size={14} className="text-gray-400 hover:text-accent" />
-                                            </button>
+                                            <div className="flex items-center gap-1">
+                                              <button
+                                                onClick={() => {
+                                                  const round = rounds.find(r => r.roundIndex === damage.roundIndex)
+                                                  if (round) {
+                                                    const previewSeconds = 5
+                                                    const previewTicks = previewSeconds * tickRate
+                                                    const targetTick = Math.max(round.startTick || 0, damage.startTick - previewTicks)
+                                                    setViewer2D({ roundIndex: damage.roundIndex, tick: targetTick })
+                                                  }
+                                                }}
+                                                className="p-1 hover:bg-accent/20 rounded transition-colors"
+                                                title="View in 2D"
+                                              >
+                                                <MapIcon size={14} className="text-gray-400 hover:text-accent" />
+                                              </button>
+                                              <button
+                                                onClick={() => handleCopyCommand(damage)}
+                                                className="p-1 hover:bg-accent/20 rounded transition-colors"
+                                                title="Copy CS2 console commands"
+                                              >
+                                                <Copy size={14} className="text-gray-400 hover:text-accent" />
+                                              </button>
+                                            </div>
                                           )}
                                         </div>
                                       </div>
@@ -1866,13 +2046,30 @@ function MatchesScreen() {
                                           <div className="flex items-center gap-2">
                                             <span className="text-xs text-gray-400">Round {flash.roundIndex + 1}</span>
                                             {demoPath && (
-                                              <button
-                                                onClick={() => handleCopyCommand(flash)}
-                                                className="p-1 hover:bg-accent/20 rounded transition-colors"
-                                                title="Copy CS2 console commands"
-                                              >
-                                                <Copy size={14} className="text-gray-400 hover:text-accent" />
-                                              </button>
+                                              <div className="flex items-center gap-1">
+                                                <button
+                                                  onClick={() => {
+                                                    const round = rounds.find(r => r.roundIndex === flash.roundIndex)
+                                                    if (round) {
+                                                      const previewSeconds = 5
+                                                      const previewTicks = previewSeconds * tickRate
+                                                      const targetTick = Math.max(round.startTick || 0, flash.startTick - previewTicks)
+                                                      setViewer2D({ roundIndex: flash.roundIndex, tick: targetTick })
+                                                    }
+                                                  }}
+                                                  className="p-1 hover:bg-accent/20 rounded transition-colors"
+                                                  title="View in 2D"
+                                                >
+                                                  <MapIcon size={14} className="text-gray-400 hover:text-accent" />
+                                                </button>
+                                                <button
+                                                  onClick={() => handleCopyCommand(flash)}
+                                                  className="p-1 hover:bg-accent/20 rounded transition-colors"
+                                                  title="Copy CS2 console commands"
+                                                >
+                                                  <Copy size={14} className="text-gray-400 hover:text-accent" />
+                                                </button>
+                                              </div>
                                             )}
                                           </div>
                                         </div>
@@ -1902,142 +2099,212 @@ function MatchesScreen() {
                   <div className="text-center text-gray-400 py-8">No players available</div>
                 ) : (
                   <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="border-b border-border text-left">
-                          <th 
-                            className="pb-2 cursor-pointer hover:text-white transition-colors select-none"
-                            onClick={() => handlePlayerSort('name')}
-                          >
-                            <div className="flex items-center gap-1">
-                              Player
-                              {playerSortField === 'name' && (
-                                <span className="text-xs text-gray-400">
-                                  {playerSortDirection === 'asc' ? '↑' : '↓'}
-                                </span>
-                              )}
-                            </div>
-                          </th>
-                          <th 
-                            className="pb-2 cursor-pointer hover:text-white transition-colors select-none"
-                            onClick={() => handlePlayerSort('teamKills')}
-                          >
-                            <div className="flex items-center gap-1">
-                              Team Kills
-                              {playerSortField === 'teamKills' && (
-                                <span className="text-xs text-gray-400">
-                                  {playerSortDirection === 'asc' ? '↑' : '↓'}
-                                </span>
-                              )}
-                            </div>
-                          </th>
-                          <th 
-                            className="pb-2 cursor-pointer hover:text-white transition-colors select-none"
-                            onClick={() => handlePlayerSort('teamDamage')}
-                          >
-                            <div className="flex items-center gap-1">
-                              Team Damage
-                              {playerSortField === 'teamDamage' && (
-                                <span className="text-xs text-gray-400">
-                                  {playerSortDirection === 'asc' ? '↑' : '↓'}
-                                </span>
-                              )}
-                            </div>
-                          </th>
-                          <th 
-                            className="pb-2 cursor-pointer hover:text-white transition-colors select-none"
-                            onClick={() => handlePlayerSort('teamFlashSeconds')}
-                          >
-                            <div className="flex items-center gap-1">
-                              Flash Seconds
-                              {playerSortField === 'teamFlashSeconds' && (
-                                <span className="text-xs text-gray-400">
-                                  {playerSortDirection === 'asc' ? '↑' : '↓'}
-                                </span>
-                              )}
-                            </div>
-                          </th>
-                          <th 
-                            className="pb-2 cursor-pointer hover:text-white transition-colors select-none"
-                            onClick={() => handlePlayerSort('afkSeconds')}
-                          >
-                            <div className="flex items-center gap-1">
-                              AFK Seconds
-                              {playerSortField === 'afkSeconds' && (
-                                <span className="text-xs text-gray-400">
-                                  {playerSortDirection === 'asc' ? '↑' : '↓'}
-                                </span>
-                              )}
-                            </div>
-                          </th>
-                          <th className="pb-2 text-left">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                      {sortedScores.map((score) => (
-                        <tr
-                          key={score.steamId}
-                          className="border-b border-border/50 hover:bg-surface/50 transition-colors"
-                        >
-                          <td 
-                            className="py-2 cursor-pointer"
-                            onClick={() => handlePlayerClick(score)}
-                          >
-                            {score.name || (
-                              <button
-                                onClick={async (e) => {
-                                  e.stopPropagation()
-                                  if (window.electronAPI?.openExternal) {
-                                    await window.electronAPI.openExternal(`https://steamcommunity.com/profiles/${score.steamId}`)
-                                  } else {
-                                    window.open(`https://steamcommunity.com/profiles/${score.steamId}`, '_blank')
-                                  }
-                                }}
-                                className="text-accent hover:text-accent/80 underline bg-transparent border-none cursor-pointer p-0"
+                    <div className="grid grid-cols-2 gap-4">
+                      {/* Team A Column */}
+                      <div className="flex flex-col">
+                        <div className="bg-surface/30 border-b border-border pb-2 mb-2">
+                          <h3 className="text-lg font-semibold text-accent px-2">Team A</h3>
+                        </div>
+                        {groupedAndSortedScores.teamA.length === 0 ? (
+                          <div className="text-center text-gray-400 py-4 text-sm">No players</div>
+                        ) : (
+                          <div className="space-y-2">
+                            {groupedAndSortedScores.teamA.map((score) => (
+                              <div
+                                key={score.steamId}
+                                className="border border-border/50 rounded p-3 hover:bg-surface/50 transition-colors cursor-pointer"
+                                onClick={() => handlePlayerClick(score)}
                               >
-                                {score.steamId}
-                              </button>
-                            )}
-                          </td>
-                          <td 
-                            className="py-2 cursor-pointer"
-                            onClick={() => handlePlayerClick(score)}
-                          >
-                            {score.teamKills}
-                          </td>
-                          <td 
-                            className="py-2 cursor-pointer"
-                            onClick={() => handlePlayerClick(score)}
-                          >
-                            {score.teamDamage.toFixed(1)}
-                          </td>
-                          <td 
-                            className="py-2 cursor-pointer"
-                            onClick={() => handlePlayerClick(score)}
-                          >
-                            {score.teamFlashSeconds.toFixed(1)}s
-                          </td>
-                          <td 
-                            className="py-2 cursor-pointer"
-                            onClick={() => handlePlayerClick(score)}
-                          >
-                            {score.afkSeconds.toFixed(1)}s
-                          </td>
-                          <td className="py-2">
-                            <button
-                              onClick={(e) => handleExtractVoice(score, e)}
-                              disabled={!demoPath}
-                              className="px-3 py-1.5 bg-accent hover:bg-accent/90 disabled:bg-gray-600 disabled:cursor-not-allowed text-white text-xs rounded transition-colors flex items-center gap-1.5"
-                              title={!demoPath ? 'Demo file path required' : `Extract voice for ${score.name}`}
+                                <div className="flex items-center justify-between mb-2">
+                                  <div 
+                                    className="font-medium text-white truncate flex-1"
+                                    title={score.name || score.steamId}
+                                  >
+                                    {score.name || (
+                                      <button
+                                        onClick={async (e) => {
+                                          e.stopPropagation()
+                                          if (window.electronAPI?.openExternal) {
+                                            await window.electronAPI.openExternal(`https://steamcommunity.com/profiles/${score.steamId}`)
+                                          } else {
+                                            window.open(`https://steamcommunity.com/profiles/${score.steamId}`, '_blank')
+                                          }
+                                        }}
+                                        className="text-accent hover:text-accent/80 underline bg-transparent border-none cursor-pointer p-0"
+                                      >
+                                        {score.steamId}
+                                      </button>
+                                    )}
+                                  </div>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      handleExtractVoice(score, e)
+                                    }}
+                                    disabled={!demoPath}
+                                    className="px-3 py-1.5 bg-accent hover:bg-accent/90 disabled:bg-gray-600 disabled:cursor-not-allowed text-white text-sm rounded transition-colors flex items-center gap-1.5 ml-2 flex-shrink-0 whitespace-nowrap"
+                                    title={!demoPath ? 'Demo file path required' : `Extract voice for ${score.name}`}
+                                  >
+                                    <Mic size={14} />
+                                    <span>Extract Voice</span>
+                                  </button>
+                                </div>
+                                <div className="grid grid-cols-2 gap-2 text-xs text-gray-300">
+                                  <div>
+                                    <span className="text-gray-400">Team Kills:</span> {score.teamKills}
+                                  </div>
+                                  <div>
+                                    <span className="text-gray-400">Team Damage:</span> {score.teamDamage.toFixed(1)}
+                                  </div>
+                                  <div>
+                                    <span className="text-gray-400">Flash Seconds:</span> {score.teamFlashSeconds.toFixed(1)}s
+                                  </div>
+                                  <div>
+                                    <span className="text-gray-400">AFK Seconds:</span> {score.afkSeconds.toFixed(1)}s
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Team B Column */}
+                      <div className="flex flex-col">
+                        <div className="bg-surface/30 border-b border-border pb-2 mb-2">
+                          <h3 className="text-lg font-semibold text-accent px-2">Team B</h3>
+                        </div>
+                        {groupedAndSortedScores.teamB.length === 0 ? (
+                          <div className="text-center text-gray-400 py-4 text-sm">No players</div>
+                        ) : (
+                          <div className="space-y-2">
+                            {groupedAndSortedScores.teamB.map((score) => (
+                              <div
+                                key={score.steamId}
+                                className="border border-border/50 rounded p-3 hover:bg-surface/50 transition-colors cursor-pointer"
+                                onClick={() => handlePlayerClick(score)}
+                              >
+                                <div className="flex items-center justify-between mb-2">
+                                  <div 
+                                    className="font-medium text-white truncate flex-1"
+                                    title={score.name || score.steamId}
+                                  >
+                                    {score.name || (
+                                      <button
+                                        onClick={async (e) => {
+                                          e.stopPropagation()
+                                          if (window.electronAPI?.openExternal) {
+                                            await window.electronAPI.openExternal(`https://steamcommunity.com/profiles/${score.steamId}`)
+                                          } else {
+                                            window.open(`https://steamcommunity.com/profiles/${score.steamId}`, '_blank')
+                                          }
+                                        }}
+                                        className="text-accent hover:text-accent/80 underline bg-transparent border-none cursor-pointer p-0"
+                                      >
+                                        {score.steamId}
+                                      </button>
+                                    )}
+                                  </div>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      handleExtractVoice(score, e)
+                                    }}
+                                    disabled={!demoPath}
+                                    className="px-3 py-1.5 bg-accent hover:bg-accent/90 disabled:bg-gray-600 disabled:cursor-not-allowed text-white text-sm rounded transition-colors flex items-center gap-1.5 ml-2 flex-shrink-0 whitespace-nowrap"
+                                    title={!demoPath ? 'Demo file path required' : `Extract voice for ${score.name}`}
+                                  >
+                                    <Mic size={14} />
+                                    <span>Extract Voice</span>
+                                  </button>
+                                </div>
+                                <div className="grid grid-cols-2 gap-2 text-xs text-gray-300">
+                                  <div>
+                                    <span className="text-gray-400">Team Kills:</span> {score.teamKills}
+                                  </div>
+                                  <div>
+                                    <span className="text-gray-400">Team Damage:</span> {score.teamDamage.toFixed(1)}
+                                  </div>
+                                  <div>
+                                    <span className="text-gray-400">Flash Seconds:</span> {score.teamFlashSeconds.toFixed(1)}s
+                                  </div>
+                                  <div>
+                                    <span className="text-gray-400">AFK Seconds:</span> {score.afkSeconds.toFixed(1)}s
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Unknown Team (if any) */}
+                    {groupedAndSortedScores.noTeam.length > 0 && (
+                      <div className="mt-6">
+                        <div className="bg-surface/30 border-b border-border pb-2 mb-2">
+                          <h3 className="text-lg font-semibold text-gray-400 px-2">Unknown Team</h3>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          {groupedAndSortedScores.noTeam.map((score) => (
+                            <div
+                              key={score.steamId}
+                              className="border border-border/50 rounded p-3 hover:bg-surface/50 transition-colors cursor-pointer"
+                              onClick={() => handlePlayerClick(score)}
                             >
-                              <Mic size={14} />
-                              Extract Voice
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                      </tbody>
-                    </table>
+                              <div className="flex items-center justify-between mb-2">
+                                <div 
+                                  className="font-medium text-white truncate flex-1"
+                                  title={score.name || score.steamId}
+                                >
+                                  {score.name || (
+                                    <button
+                                      onClick={async (e) => {
+                                        e.stopPropagation()
+                                        if (window.electronAPI?.openExternal) {
+                                          await window.electronAPI.openExternal(`https://steamcommunity.com/profiles/${score.steamId}`)
+                                        } else {
+                                          window.open(`https://steamcommunity.com/profiles/${score.steamId}`, '_blank')
+                                        }
+                                      }}
+                                      className="text-accent hover:text-accent/80 underline bg-transparent border-none cursor-pointer p-0"
+                                    >
+                                      {score.steamId}
+                                    </button>
+                                  )}
+                                </div>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    handleExtractVoice(score, e)
+                                  }}
+                                  disabled={!demoPath}
+                                  className="px-3 py-1.5 bg-accent hover:bg-accent/90 disabled:bg-gray-600 disabled:cursor-not-allowed text-white text-sm rounded transition-colors flex items-center gap-1.5 ml-2"
+                                  title={!demoPath ? 'Demo file path required' : `Extract voice for ${score.name}`}
+                                >
+                                  <Mic size={14} />
+                                  <span>Extract Voice</span>
+                                </button>
+                              </div>
+                              <div className="grid grid-cols-2 gap-2 text-xs text-gray-300">
+                                <div>
+                                  <span className="text-gray-400">Team Kills:</span> {score.teamKills}
+                                </div>
+                                <div>
+                                  <span className="text-gray-400">Team Damage:</span> {score.teamDamage.toFixed(1)}
+                                </div>
+                                <div>
+                                  <span className="text-gray-400">Flash Seconds:</span> {score.teamFlashSeconds.toFixed(1)}s
+                                </div>
+                                <div>
+                                  <span className="text-gray-400">AFK Seconds:</span> {score.afkSeconds.toFixed(1)}s
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )
               ) : activeTab === 'rounds' ? (

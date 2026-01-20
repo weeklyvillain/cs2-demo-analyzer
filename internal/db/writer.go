@@ -31,6 +31,7 @@ type Player struct {
 	MatchID string
 	SteamID string
 	Name    string
+	Team    string // "A" or "B" (Team A/Team B)
 }
 
 // Round represents a round in a match.
@@ -80,10 +81,10 @@ func (w *Writer) InsertMatch(ctx context.Context, m Match) error {
 // InsertPlayer inserts or replaces a player record.
 func (w *Writer) InsertPlayer(ctx context.Context, p Player) error {
 	query := `
-		INSERT OR REPLACE INTO players (match_id, steamid, name)
-		VALUES (?, ?, ?)
+		INSERT OR REPLACE INTO players (match_id, steamid, name, team)
+		VALUES (?, ?, ?, ?)
 	`
-	_, err := w.db.ExecContext(ctx, query, p.MatchID, p.SteamID, p.Name)
+	_, err := w.db.ExecContext(ctx, query, p.MatchID, p.SteamID, p.Name, p.Team)
 	if err != nil {
 		return fmt.Errorf("failed to insert player: %w", err)
 	}

@@ -26,6 +26,8 @@ export interface ElectronAPI {
   getSetting: (key: string, defaultValue?: string) => Promise<string>
   setSetting: (key: string, value: string) => Promise<{ success: boolean }>
   getAllSettings: () => Promise<Record<string, string>>
+  getAllStats: () => Promise<Record<string, number>>
+  resetStats: () => Promise<{ success: boolean }>
   getLastSeenVersion: () => Promise<string>
   setLastSeenVersion: (version: string) => Promise<void>
   shouldShowWhatsNew: () => Promise<boolean>
@@ -41,6 +43,7 @@ export interface ElectronAPI {
     storage: {
       matches: { bytes: number; formatted: string; count: number }
       settings: { bytes: number; formatted: string }
+      voiceCache: { bytes: number; formatted: string }
       total: { bytes: number; formatted: string }
     }
     updateAvailable: boolean
@@ -52,7 +55,7 @@ export interface ElectronAPI {
   showFileInFolder: (filePath: string) => Promise<void>
   extractVoice: (options: { demoPath: string; outputPath?: string; mode?: 'split-compact' | 'split-full' | 'single-full'; steamIds?: string[] }) => Promise<{ success: boolean; outputPath: string; files: string[]; filePaths?: string[] }>
   getVoiceAudio: (filePath: string) => Promise<{ success: boolean; data?: string; error?: string }>
-  generateWaveform: (filePath: string) => Promise<{ success: boolean; data?: string; error?: string }>
+  generateWaveform: (filePath: string, audioDuration?: number) => Promise<{ success: boolean; data?: string; error?: string; pixelsPerSecond?: number; actualWidth?: number }>
   cleanupVoiceFiles: (outputPath: string) => Promise<{ success: boolean; error?: string }>
   onParserMessage: (callback: (message: string) => void) => void
   onParserLog: (callback: (log: string) => void) => void
@@ -68,6 +71,11 @@ export interface ElectronAPI {
   closeSplash: () => Promise<void>
   onUpdateStatus: (callback: (status: string, data?: any) => void) => void
   removeAllListeners: (channel: string) => void
+  windowMinimize: () => Promise<void>
+  windowMaximize: () => Promise<void>
+  windowClose: () => Promise<void>
+  windowIsMaximized: () => Promise<boolean>
+  onWindowMaximized: (callback: (maximized: boolean) => void) => void
 }
 
 declare global {

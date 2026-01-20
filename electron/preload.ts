@@ -42,6 +42,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setSetting: (key: string, value: string) => ipcRenderer.invoke('settings:set', key, value),
   getAllSettings: () => ipcRenderer.invoke('settings:getAll'),
   
+  // Stats
+  getAllStats: () => ipcRenderer.invoke('stats:getAll'),
+  resetStats: () => ipcRenderer.invoke('stats:reset'),
+  
   // What's New
   getLastSeenVersion: () => ipcRenderer.invoke('app:getLastSeenVersion'),
   setLastSeenVersion: (version: string) => ipcRenderer.invoke('app:setLastSeenVersion', version),
@@ -69,7 +73,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   extractVoice: (options: { demoPath: string; outputPath?: string; mode?: 'split-compact' | 'split-full' | 'single-full'; steamIds?: string[] }) => 
     ipcRenderer.invoke('voice:extract', options),
   getVoiceAudio: (filePath: string) => ipcRenderer.invoke('voice:getAudio', filePath),
-  generateWaveform: (filePath: string) => ipcRenderer.invoke('voice:generateWaveform', filePath),
+  generateWaveform: (filePath: string, audioDuration?: number) => ipcRenderer.invoke('voice:generateWaveform', filePath, audioDuration),
   cleanupVoiceFiles: (outputPath: string) => ipcRenderer.invoke('voice:cleanup', outputPath),
 
   // Listeners
@@ -120,6 +124,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   closeSplash: () => ipcRenderer.invoke('splash:close'),
   onUpdateStatus: (callback: (status: string, data?: any) => void) => {
     ipcRenderer.on('update:status', (_, data) => callback(data.status, data))
+  },
+  
+  // Window controls for custom title bar
+  windowMinimize: () => ipcRenderer.invoke('window:minimize'),
+  windowMaximize: () => ipcRenderer.invoke('window:maximize'),
+  windowClose: () => ipcRenderer.invoke('window:close'),
+  windowIsMaximized: () => ipcRenderer.invoke('window:isMaximized'),
+  onWindowMaximized: (callback: (maximized: boolean) => void) => {
+    ipcRenderer.on('window:maximized', (_, maximized) => callback(maximized))
   },
 })
 

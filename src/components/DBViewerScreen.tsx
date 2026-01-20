@@ -26,7 +26,31 @@ function DBViewerScreen() {
 
   useEffect(() => {
     loadMatches()
+    
+    // Listen for navigation events (when already on DB Viewer screen)
+    const handleNavigate = () => {
+      // Reload matches to ensure we have the latest list
+      loadMatches()
+    }
+    
+    window.addEventListener('navigateToDbViewer', handleNavigate)
+    return () => window.removeEventListener('navigateToDbViewer', handleNavigate)
   }, [])
+
+  // Effect to select match from localStorage after matches are loaded
+  useEffect(() => {
+    const storedMatchId = localStorage.getItem('dbViewerSelectedMatch')
+    if (storedMatchId && matches.length > 0) {
+      const matchExists = matches.some(m => m.id === storedMatchId)
+      if (matchExists && selectedMatchId !== storedMatchId) {
+        setSelectedMatchId(storedMatchId)
+        localStorage.removeItem('dbViewerSelectedMatch')
+      }
+    } else if (matches.length > 0 && !selectedMatchId && !storedMatchId) {
+      // Auto-select first match if no selection and no stored ID
+      setSelectedMatchId(matches[0].id)
+    }
+  }, [matches, selectedMatchId])
 
   useEffect(() => {
     if (selectedMatchId) {
@@ -54,9 +78,7 @@ function DBViewerScreen() {
     try {
       const data = await window.electronAPI.listMatches()
       setMatches(data)
-      if (data.length > 0 && !selectedMatchId) {
-        setSelectedMatchId(data[0].id)
-      }
+      // Match selection will be handled by useEffect that watches matches state
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load matches')
     }

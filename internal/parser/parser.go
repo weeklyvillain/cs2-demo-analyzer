@@ -18,6 +18,7 @@ import (
 	"github.com/markus-wa/demoinfocs-golang/v5/pkg/demoinfocs/msg"
 	"github.com/golang/geo/r3"
 
+	"cs-griefer-electron/internal/db"
 	"cs-griefer-electron/internal/parser/extractors"
 )
 
@@ -72,6 +73,7 @@ type ChatMessageData struct {
 type PlayerData struct {
 	SteamID string
 	Name    string
+	Team    string // "A" or "B" (Team A/Team B)
 }
 
 // RoundData contains round information.
@@ -167,13 +169,14 @@ func NewParser(path string) (*Parser, error) {
 // The callback is invoked periodically to report progress.
 // The db parameter is used for AFK detection via player position queries.
 func (p *Parser) Parse(ctx context.Context, callback ParseCallback) (*MatchData, error) {
-	return p.ParseWithDB(ctx, callback, nil, 1) // Default to every tick for Parse method
+	return p.ParseWithDB(ctx, callback, nil, 1, nil, "") // Default to every tick for Parse method
 }
 
 // ParseWithDB parses the demo file and extracts match data with an optional database connection.
 // The db parameter is used for AFK detection via player position queries.
 // positionInterval controls how often positions are extracted: 1=every tick, 2=every 2 ticks, 4=every 4 ticks
-func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, db *sql.DB, positionInterval int) (*MatchData, error) {
+// If writer and matchID are provided, positions will be inserted incrementally during parsing instead of at the end.
+func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn *sql.DB, positionInterval int, writer interface{ InsertPlayerPositions(context.Context, []db.PlayerPosition) error }, matchID string) (*MatchData, error) {
 	data := &MatchData{
 		Players:          make([]PlayerData, 0),
 		Rounds:           make([]RoundData, 0),
@@ -187,6 +190,10 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, db *sq
 	var roundStartTick int
 	var freezeEndTick *int
 	playerMap := make(map[uint64]*PlayerData) // steamid -> player
+	
+	// Position buffer for incremental insertion
+	positionBuffer := make([]db.PlayerPosition, 0, 1000) // Buffer up to 1000 positions
+	const positionBatchSize = 1000 // Flush every 1000 positions
 
 	// Track round state
 	var roundNumber int
@@ -210,10 +217,11 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, db *sq
 
 	// Track Team A and Team B assignments
 	// Team A and Team B are consistent throughout the match (don't swap sides)
-	// We determine which is which based on the first round
+	// We determine which is which based on the first round only
 	playerTeamMap := make(map[uint64]string) // steamid -> "A" or "B" (original team assignment)
-	var firstTTeamSeen bool                   // Track if we've seen a T team player
-	var firstCTTeamSeen bool                  // Track if we've seen a CT team player
+	var firstRoundProcessed bool             // Track if we've processed the first round
+	var tTeamAssignment string              // "A" or "B" - assigned to first T team seen
+	var ctTeamAssignment string             // "A" or "B" - assigned to first CT team seen
 
 	// Initialize event extractors
 	// Get tick rate - will be set after parsing header
@@ -223,7 +231,7 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, db *sq
 	teamDamageExtractor := extractors.NewTeamDamageExtractor(tickRate)
 	teamFlashExtractor := extractors.NewTeamFlashExtractor()
 	disconnectExtractor := extractors.NewDisconnectExtractor()
-	afkExtractor := extractors.NewAFKExtractor(tickRate, db)
+	afkExtractor := extractors.NewAFKExtractor(tickRate, dbConn)
 
 	// Register handler for ServerInfo to get map name (v5)
 	// Based on: https://github.com/markus-wa/demoinfocs-golang/blob/master/examples/print-events/print_events.go
@@ -293,6 +301,65 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, db *sq
 			CTWins:     ctWins,
 		}
 
+		// Assign teams based on the first round only
+		// First T team seen = Team A, first CT team seen = Team B
+		// Players keep their team assignment for the whole game
+		if !firstRoundProcessed && roundNumber == 1 {
+			firstRoundProcessed = true
+			gs := p.parser.GameState()
+			if gs != nil {
+				participants := gs.Participants()
+				for _, p := range participants.All() {
+					if p == nil {
+						continue
+					}
+					steamID64 := p.SteamID64
+					
+					// Skip spectators
+					if p.Team == common.TeamSpectators || p.Team == common.TeamUnassigned {
+						continue
+					}
+					
+					var assignedTeam string
+					if p.Team == common.TeamTerrorists {
+						if tTeamAssignment == "" {
+							// First T team seen = Team A
+							tTeamAssignment = "A"
+							ctTeamAssignment = "B" // CT must be the other team
+						}
+						assignedTeam = tTeamAssignment
+					} else if p.Team == common.TeamCounterTerrorists {
+						if ctTeamAssignment == "" {
+							// First CT team seen = Team B
+							ctTeamAssignment = "B"
+							tTeamAssignment = "A" // T must be the other team
+						}
+						assignedTeam = ctTeamAssignment
+					}
+					
+					if assignedTeam != "" {
+						playerTeamMap[steamID64] = assignedTeam
+						
+						// Update PlayerData with team assignment
+						if playerData, exists := playerMap[steamID64]; exists {
+							playerData.Team = assignedTeam
+						} else {
+							// Player not in map yet, add them
+							name := p.Name
+							if name == "" {
+								name = fmt.Sprintf("Player_%d", steamID64)
+							}
+							playerMap[steamID64] = &PlayerData{
+								SteamID: fmt.Sprintf("%d", steamID64),
+								Name:    name,
+								Team:    assignedTeam,
+							}
+						}
+					}
+				}
+			}
+		}
+
 		if tick > maxTick {
 			maxTick = tick
 		}
@@ -320,6 +387,15 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, db *sq
 		updateTick()
 		tick := getCurrentTick()
 		currentRound.EndTick = tick
+		
+		// Flush position buffer at end of round if using incremental insertion
+		if writer != nil && matchID != "" && len(positionBuffer) > 0 {
+			if err := writer.InsertPlayerPositions(ctx, positionBuffer); err != nil {
+				// Log error but don't fail parsing
+				fmt.Fprintf(os.Stderr, "WARN: Failed to flush position buffer at round end: %v\n", err)
+			}
+			positionBuffer = positionBuffer[:0] // Clear buffer
+		}
 
 		// Notify disconnect extractor of round end (for filtering disconnects within 10s)
 		disconnectExtractor.SetLastRoundEndTick(tick)
@@ -384,19 +460,11 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, db *sq
 			}
 		}
 
-		// Track team assignment when player connects
-		// First T team we see = Team A, first CT team we see = Team B
-		if _, exists := playerTeamMap[player.SteamID64]; !exists {
-			if player.Team == common.TeamTerrorists {
-				if !firstTTeamSeen {
-					firstTTeamSeen = true
-				}
-				playerTeamMap[player.SteamID64] = "A"
-			} else if player.Team == common.TeamCounterTerrorists {
-				if !firstCTTeamSeen {
-					firstCTTeamSeen = true
-				}
-				playerTeamMap[player.SteamID64] = "B"
+		// If teams have been assigned from first round, use existing assignment
+		// Otherwise, wait for first round to assign teams
+		if assignedTeam, exists := playerTeamMap[player.SteamID64]; exists {
+			if playerData, exists := playerMap[player.SteamID64]; exists {
+				playerData.Team = assignedTeam
 			}
 		}
 
@@ -632,31 +700,20 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, db *sq
 				if assignedTeam, exists := playerTeamMap[steamID64]; exists {
 					team = assignedTeam
 				} else {
-					// Player not yet assigned, assign them now based on current team
-					// First T team we see = Team A, first CT team we see = Team B
+					// Player not yet assigned - teams should have been assigned in first round
+					// Use T/CT for now, will be assigned properly if first round hasn't happened yet
 					if player.Team == common.TeamTerrorists {
-						if !firstTTeamSeen {
-							firstTTeamSeen = true
+						team = tTeamAssignment
+						if team == "" {
+							team = "A" // Fallback
 						}
-						team = "A"
-						playerTeamMap[steamID64] = "A"
 					} else if player.Team == common.TeamCounterTerrorists {
-						if !firstCTTeamSeen {
-							firstCTTeamSeen = true
+						team = ctTeamAssignment
+						if team == "" {
+							team = "B" // Fallback
 						}
-						team = "B"
-						playerTeamMap[steamID64] = "B"
 					} else {
-						// Unknown team, try to assign based on what we've seen
-						if firstTTeamSeen && !firstCTTeamSeen {
-							team = "A"
-							playerTeamMap[steamID64] = "A"
-						} else if firstCTTeamSeen && !firstTTeamSeen {
-							team = "B"
-							playerTeamMap[steamID64] = "B"
-						} else {
-							team = ""
-						}
+						team = ""
 					}
 				}
 			} else {
@@ -818,19 +875,59 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, db *sq
 				}
 			}
 
-			data.Positions = append(data.Positions, PlayerPositionData{
+			// Convert to db.PlayerPosition
+			var teamPtr *string
+			if team != "" {
+				teamPtr = &team
+			}
+			var yawPtr *float64
+			if yaw != 0 {
+				yawPtr = &yaw
+			}
+			
+			posData := db.PlayerPosition{
+				MatchID:    matchID,
 				RoundIndex: currentRound.RoundIndex,
 				Tick:       tick,
 				SteamID:    steamID,
 				X:          float64(pos.X),
 				Y:          float64(pos.Y),
 				Z:          float64(pos.Z),
-				Yaw:        yaw,
-				Team:       team,
+				Yaw:        yawPtr,
+				Team:       teamPtr,
 				Health:     health,
 				Armor:      armor,
 				Weapon:     weapon,
-			})
+			}
+			
+			// If writer is provided, buffer for incremental insertion
+			if writer != nil && matchID != "" {
+				positionBuffer = append(positionBuffer, posData)
+				
+				// Flush buffer when it reaches batch size
+				if len(positionBuffer) >= positionBatchSize {
+					if err := writer.InsertPlayerPositions(ctx, positionBuffer); err != nil {
+						// Log error but continue parsing - we'll retry at round end
+						fmt.Fprintf(os.Stderr, "WARN: Failed to insert player positions batch: %v\n", err)
+					}
+					positionBuffer = positionBuffer[:0] // Clear buffer
+				}
+			} else {
+				// Fallback: collect in data.Positions for backward compatibility
+				data.Positions = append(data.Positions, PlayerPositionData{
+					RoundIndex: currentRound.RoundIndex,
+					Tick:       tick,
+					SteamID:    steamID,
+					X:          float64(pos.X),
+					Y:          float64(pos.Y),
+					Z:          float64(pos.Z),
+					Yaw:        yaw,
+					Team:       team,
+					Health:     health,
+					Armor:      armor,
+					Weapon:     weapon,
+				})
+			}
 		}
 
 		// Track all active grenade projectiles
@@ -1427,8 +1524,13 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, db *sq
 	// Common values: 64 (most CS2 servers), 128 (some servers)
 	data.TickRate = tickRate
 
-	// Convert player map to slice
-	for _, player := range playerMap {
+	// Ensure all players have their team assignment from first round
+	for steamID64, player := range playerMap {
+		if player.Team == "" {
+			if team, exists := playerTeamMap[steamID64]; exists {
+				player.Team = team
+			}
+		}
 		data.Players = append(data.Players, *player)
 	}
 
@@ -1442,6 +1544,13 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, db *sq
 				estimated := data.Rounds[i].StartTick + estimatedFreezeTicks
 				data.Rounds[i].FreezeEndTick = &estimated
 			}
+		}
+	}
+	
+	// Flush any remaining positions in buffer
+	if writer != nil && matchID != "" && len(positionBuffer) > 0 {
+		if err := writer.InsertPlayerPositions(ctx, positionBuffer); err != nil {
+			return nil, fmt.Errorf("failed to flush final position buffer: %w", err)
 		}
 	}
 
