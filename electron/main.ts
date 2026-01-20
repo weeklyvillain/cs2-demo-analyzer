@@ -456,16 +456,25 @@ app.on('before-quit', () => {
 // Helper to get parser executable path
 function getParserPath(): string {
   if (isDev) {
-    // Dev: use configurable path or default to bin/parser
+    // Dev: use configurable path or check common locations
     // __dirname in dev is dist-electron, so go up one level to project root
     const projectRoot = path.resolve(__dirname, '..')
-    const defaultPath = path.join(projectRoot, 'bin', 'parser')
-    const devPath = process.env.PARSER_PATH || defaultPath
-    // Add .exe on Windows
-    if (process.platform === 'win32') {
-      return devPath + '.exe'
+    
+    // If PARSER_PATH is explicitly set, use it
+    if (process.env.PARSER_PATH) {
+      const devPath = process.env.PARSER_PATH
+      if (process.platform === 'win32' && !devPath.endsWith('.exe')) {
+        return devPath + '.exe'
+      }
+      return devPath
     }
-    return devPath
+    
+    // Use bin/parser in dev mode
+    const defaultPath = path.join(projectRoot, 'bin', 'parser')
+    if (process.platform === 'win32') {
+      return defaultPath + '.exe'
+    }
+    return defaultPath
   } else {
     // Prod: use resources/bin path (files are in resources/bin/)
     // process.resourcesPath already points to the resources directory in production

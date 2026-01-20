@@ -86,6 +86,20 @@ func run(ctx context.Context, demoPath, outPath, matchID string, positionInterva
 
 	writer := db.NewWriter(dbConn)
 
+	// Insert placeholder match record BEFORE parsing starts
+	// This is required because players and positions have foreign key constraints to matches
+	// We'll update it with full data after parsing completes
+	output.Log("info", "Inserting placeholder match record...")
+	placeholderMatch := db.Match{
+		ID:        matchID,
+		Map:       "unknown", // Will be updated after parsing
+		TickRate:  64.0,     // Default, will be updated after parsing
+		StartedAt: nil,      // Will be updated after parsing
+	}
+	if err := writer.InsertMatch(ctx, placeholderMatch); err != nil {
+		return fmt.Errorf("failed to insert placeholder match: %w", err)
+	}
+
 	// Create parser
 	output.Log("info", "Creating parser...")
 	p, err := parser.NewParser(demoPath)
@@ -106,8 +120,8 @@ func run(ctx context.Context, demoPath, outPath, matchID string, positionInterva
 
 	output.Log("info", fmt.Sprintf("Parsed %d rounds, %d players, %d events", len(matchData.Rounds), len(matchData.Players), len(matchData.Events)))
 
-	// Store match metadata
-	output.Log("info", "Storing match metadata...")
+	// Update match metadata with actual data from parsing
+	output.Log("info", "Updating match metadata...")
 	match := db.Match{
 		ID:        matchID,
 		Map:       matchData.Map,
@@ -115,7 +129,7 @@ func run(ctx context.Context, demoPath, outPath, matchID string, positionInterva
 		StartedAt: matchData.StartedAt,
 	}
 	if err := writer.InsertMatch(ctx, match); err != nil {
-		return fmt.Errorf("failed to insert match: %w", err)
+		return fmt.Errorf("failed to update match: %w", err)
 	}
 
 	// Store players

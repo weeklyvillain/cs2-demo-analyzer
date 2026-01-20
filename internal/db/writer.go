@@ -272,6 +272,7 @@ type PlayerPosition struct {
 }
 
 // InsertPlayerPositions inserts multiple player positions in a transaction.
+// It ensures all players exist in the database before inserting positions to satisfy foreign key constraints.
 func (w *Writer) InsertPlayerPositions(ctx context.Context, positions []PlayerPosition) error {
 	if len(positions) == 0 {
 		return nil
@@ -283,6 +284,47 @@ func (w *Writer) InsertPlayerPositions(ctx context.Context, positions []PlayerPo
 	}
 	defer tx.Rollback()
 
+	// First, ensure all players exist in the database
+	// Collect unique (match_id, steamid) pairs
+	playerSet := make(map[string]bool) // key: "match_id|steamid"
+	playerKeys := make([]struct {
+		MatchID string
+		SteamID string
+	}, 0)
+	
+	for _, pos := range positions {
+		key := pos.MatchID + "|" + pos.SteamID
+		if !playerSet[key] {
+			playerSet[key] = true
+			playerKeys = append(playerKeys, struct {
+				MatchID string
+				SteamID string
+			}{pos.MatchID, pos.SteamID})
+		}
+	}
+
+	// Insert missing players with default names
+	// Use INSERT OR IGNORE to avoid errors if player already exists
+	playerQuery := `
+		INSERT OR IGNORE INTO players (match_id, steamid, name, team)
+		VALUES (?, ?, ?, ?)
+	`
+	playerStmt, err := tx.PrepareContext(ctx, playerQuery)
+	if err != nil {
+		return fmt.Errorf("failed to prepare player statement: %w", err)
+	}
+	defer playerStmt.Close()
+
+	for _, pk := range playerKeys {
+		// Use default name if player doesn't exist
+		defaultName := fmt.Sprintf("Player_%s", pk.SteamID)
+		_, err := playerStmt.ExecContext(ctx, pk.MatchID, pk.SteamID, defaultName, nil)
+		if err != nil {
+			return fmt.Errorf("failed to ensure player exists %s/%s: %w", pk.MatchID, pk.SteamID, err)
+		}
+	}
+
+	// Now insert positions
 	query := `
 		INSERT OR REPLACE INTO player_positions (
 			match_id, round_index, tick, steamid, x, y, z, yaw, team, health, armor, weapon

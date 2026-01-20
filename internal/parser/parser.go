@@ -176,7 +176,10 @@ func (p *Parser) Parse(ctx context.Context, callback ParseCallback) (*MatchData,
 // The db parameter is used for AFK detection via player position queries.
 // positionInterval controls how often positions are extracted: 1=every tick, 2=every 2 ticks, 4=every 4 ticks
 // If writer and matchID are provided, positions will be inserted incrementally during parsing instead of at the end.
-func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn *sql.DB, positionInterval int, writer interface{ InsertPlayerPositions(context.Context, []db.PlayerPosition) error }, matchID string) (*MatchData, error) {
+func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn *sql.DB, positionInterval int, writer interface{ 
+	InsertPlayerPositions(context.Context, []db.PlayerPosition) error
+	InsertPlayer(context.Context, db.Player) error
+}, matchID string) (*MatchData, error) {
 	data := &MatchData{
 		Players:          make([]PlayerData, 0),
 		Rounds:           make([]RoundData, 0),
@@ -341,18 +344,40 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 						playerTeamMap[steamID64] = assignedTeam
 						
 						// Update PlayerData with team assignment
-						if playerData, exists := playerMap[steamID64]; exists {
-							playerData.Team = assignedTeam
+						var playerData *PlayerData
+						var needsUpdate bool
+						if existingPlayer, exists := playerMap[steamID64]; exists {
+							playerData = existingPlayer
+							if playerData.Team != assignedTeam {
+								playerData.Team = assignedTeam
+								needsUpdate = true
+							}
 						} else {
 							// Player not in map yet, add them
 							name := p.Name
 							if name == "" {
 								name = fmt.Sprintf("Player_%d", steamID64)
 							}
-							playerMap[steamID64] = &PlayerData{
+							playerData = &PlayerData{
 								SteamID: fmt.Sprintf("%d", steamID64),
 								Name:    name,
 								Team:    assignedTeam,
+							}
+							playerMap[steamID64] = playerData
+							needsUpdate = true
+						}
+						
+						// Insert or update player in database immediately
+						if writer != nil && matchID != "" && needsUpdate {
+							dbPlayer := db.Player{
+								MatchID: matchID,
+								SteamID: playerData.SteamID,
+								Name:    playerData.Name,
+								Team:    playerData.Team,
+							}
+							if err := writer.InsertPlayer(ctx, dbPlayer); err != nil {
+								fmt.Fprintf(os.Stderr, "WARN: Failed to insert/update player %s: %v\n", playerData.SteamID, err)
+								// Continue parsing even if player insertion fails
 							}
 						}
 					}
@@ -449,22 +474,46 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 		disconnectExtractor.HandlePlayerConnect(e, roundIndex, tick, tickRate)
 
 		steamID := fmt.Sprintf("%d", player.SteamID64)
+		var playerData *PlayerData
+		var isNewPlayer bool
 		if _, exists := playerMap[player.SteamID64]; !exists {
 			name := player.Name
 			if name == "" {
 				name = fmt.Sprintf("Player_%d", player.SteamID64)
 			}
-			playerMap[player.SteamID64] = &PlayerData{
+			playerData = &PlayerData{
 				SteamID: steamID,
 				Name:    name,
 			}
+			playerMap[player.SteamID64] = playerData
+			isNewPlayer = true
+		} else {
+			playerData = playerMap[player.SteamID64]
+			isNewPlayer = false
 		}
 
 		// If teams have been assigned from first round, use existing assignment
 		// Otherwise, wait for first round to assign teams
+		var teamUpdated bool
 		if assignedTeam, exists := playerTeamMap[player.SteamID64]; exists {
-			if playerData, exists := playerMap[player.SteamID64]; exists {
+			if playerData.Team != assignedTeam {
 				playerData.Team = assignedTeam
+				teamUpdated = true
+			}
+		}
+
+		// Insert or update player in database immediately if writer is available
+		// This ensures players exist before positions are inserted (foreign key constraint)
+		if writer != nil && matchID != "" && (isNewPlayer || teamUpdated) {
+			dbPlayer := db.Player{
+				MatchID: matchID,
+				SteamID: playerData.SteamID,
+				Name:    playerData.Name,
+				Team:    playerData.Team, // May be empty initially, will be updated later
+			}
+			if err := writer.InsertPlayer(ctx, dbPlayer); err != nil {
+				fmt.Fprintf(os.Stderr, "WARN: Failed to insert/update player %s: %v\n", playerData.SteamID, err)
+				// Continue parsing even if player insertion fails
 			}
 		}
 
@@ -829,6 +878,36 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 			}
 
 			steamID := fmt.Sprintf("%d", player.SteamID64)
+
+			// Ensure player exists in playerMap and database before inserting position
+			// This is critical for foreign key constraints
+			if _, exists := playerMap[player.SteamID64]; !exists {
+				name := player.Name
+				if name == "" {
+					name = fmt.Sprintf("Player_%d", player.SteamID64)
+				}
+				playerData := &PlayerData{
+					SteamID: steamID,
+					Name:    name,
+					Team:    "", // Will be assigned later
+				}
+				playerMap[player.SteamID64] = playerData
+				
+				// Insert player into database immediately to satisfy foreign key constraint
+				if writer != nil && matchID != "" {
+					dbPlayer := db.Player{
+						MatchID: matchID,
+						SteamID: playerData.SteamID,
+						Name:    playerData.Name,
+						Team:    playerData.Team, // May be empty initially
+					}
+					if err := writer.InsertPlayer(ctx, dbPlayer); err != nil {
+						fmt.Fprintf(os.Stderr, "WARN: Failed to insert player %s for position: %v\n", playerData.SteamID, err)
+						// Skip this position if player insertion fails
+						continue
+					}
+				}
+			}
 
 			// Get health and armor
 			var health *int
