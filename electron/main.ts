@@ -5,6 +5,7 @@ import * as path from 'path'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as crypto from 'crypto'
+import * as net from 'net'
 import { initSettingsDb, getSetting, setSetting, getAllSettings } from './settings'
 import { initStatsDb, incrementStat, incrementMapParseCount, getAllStats, resetStats } from './stats'
 import * as matchesService from './matchesService'
@@ -323,6 +324,25 @@ app.whenReady().then(async () => {
     }
   })
 
+  // Player images (for 2D viewer)
+  ipcMain.handle('player:getImage', async (_, team: 'T' | 'CT') => {
+    try {
+      const fileName = team === 'T' ? 'player_t.png' : 'player_ct.png'
+      const playerPath = path.join(__dirname, '../resources/misc', fileName)
+      
+      if (fs.existsSync(playerPath)) {
+        const imageBuffer = fs.readFileSync(playerPath)
+        const base64 = imageBuffer.toString('base64')
+        return { success: true, data: `data:image/png;base64,${base64}` }
+      } else {
+        return { success: false, error: `Player image not found: ${fileName}` }
+      }
+    } catch (error) {
+      console.error('Error loading player image:', error)
+      return { success: false, error: String(error) }
+    }
+  })
+
   // Initialize settings database
   await initSettingsDb()
   
@@ -342,7 +362,17 @@ app.whenReady().then(async () => {
   // In dev, just create the main window
   if (!isDev) {
     createSplashWindow()
-    initializeAutoUpdater()
+    // Check if auto-update is enabled before initializing
+    const autoUpdateEnabled = getSetting('autoUpdateEnabled', 'true') === 'true'
+    if (autoUpdateEnabled) {
+      initializeAutoUpdater()
+    } else {
+      console.log('[AutoUpdater] Auto-update is disabled in settings')
+      // Open main window immediately if auto-update is disabled
+      setTimeout(() => {
+        createWindow()
+      }, 1000)
+    }
   } else {
     createWindow()
   }
@@ -906,22 +936,73 @@ ipcMain.handle('matches:players', async (_, matchId: string) => {
       }
     }
     
+    // Check if new columns exist, add them if not
+    try {
+      db.run(`ALTER TABLE players ADD COLUMN connected_midgame INTEGER DEFAULT 0`)
+    } catch (err: any) {
+      if (!err.message?.includes('duplicate column')) {
+        console.warn('Failed to add connected_midgame column (might already exist):', err)
+      }
+    }
+    try {
+      db.run(`ALTER TABLE players ADD COLUMN permanent_disconnect INTEGER DEFAULT 0`)
+    } catch (err: any) {
+      if (!err.message?.includes('duplicate column')) {
+        console.warn('Failed to add permanent_disconnect column (might already exist):', err)
+      }
+    }
+    try {
+      db.run(`ALTER TABLE players ADD COLUMN first_connect_round INTEGER`)
+    } catch (err: any) {
+      if (!err.message?.includes('duplicate column')) {
+        console.warn('Failed to add first_connect_round column (might already exist):', err)
+      }
+    }
+    try {
+      db.run(`ALTER TABLE players ADD COLUMN disconnect_round INTEGER`)
+    } catch (err: any) {
+      if (!err.message?.includes('duplicate column')) {
+        console.warn('Failed to add disconnect_round column (might already exist):', err)
+      }
+    }
+    
     // Get all players (not just those with scores)
     const stmt = db.prepare(`
-      SELECT steamid, name, team
+      SELECT steamid, name, team, 
+             COALESCE(connected_midgame, 0) as connected_midgame,
+             COALESCE(permanent_disconnect, 0) as permanent_disconnect,
+             first_connect_round, disconnect_round
       FROM players
       WHERE match_id = ?
       ORDER BY team, name
     `)
     stmt.bind([matchId])
     
-    const players: Array<{ steamId: string; name: string; team: string | null }> = []
+    const players: Array<{ 
+      steamId: string
+      name: string
+      team: string | null
+      connectedMidgame: boolean
+      permanentDisconnect: boolean
+      firstConnectRound: number | null
+      disconnectRound: number | null
+    }> = []
     while (stmt.step()) {
       const row = stmt.getAsObject()
+      const firstConnectRound = row.first_connect_round !== null && row.first_connect_round !== undefined 
+        ? (row.first_connect_round as number) 
+        : null
+      const disconnectRound = row.disconnect_round !== null && row.disconnect_round !== undefined 
+        ? (row.disconnect_round as number) 
+        : null
       players.push({
         steamId: row.steamid as string,
         name: (row.name as string) || (row.steamid as string),
         team: (row.team as string) || null,
+        connectedMidgame: (row.connected_midgame as number) === 1,
+        permanentDisconnect: (row.permanent_disconnect as number) === 1,
+        firstConnectRound: firstConnectRound,
+        disconnectRound: disconnectRound,
       })
     }
     stmt.free()
@@ -1804,12 +1885,188 @@ ipcMain.handle('app:getReleaseNotes', async (_, version: string) => {
   return result
 })
 
+ipcMain.handle('app:getAvailableVersions', async () => {
+  console.log('[IPC] app:getAvailableVersions called')
+  const versions = await getAvailableVersions()
+  console.log(`[IPC] app:getAvailableVersions returning ${versions.length} versions`)
+  return versions
+})
+
+// Helper function to download and install a specific version
+async function downloadAndInstallVersion(version: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    const repoOwner = 'weeklyvillain'
+    const repoName = 'cs2-demo-analyzer'
+    
+    // Find the release for this version
+    const apiUrl = `https://api.github.com/repos/${repoOwner}/${repoName}/releases/tags/v${version}`
+    // Try without v prefix if that fails
+    let response = await fetch(apiUrl, {
+      headers: {
+        'Accept': 'application/vnd.github.v3+json',
+        'User-Agent': 'CS2-Demo-Analyzer',
+      },
+    })
+    
+    if (!response.ok) {
+      // Try with v prefix
+      const altApiUrl = `https://api.github.com/repos/${repoOwner}/${repoName}/releases/tags/${version}`
+      response = await fetch(altApiUrl, {
+        headers: {
+          'Accept': 'application/vnd.github.v3+json',
+          'User-Agent': 'CS2-Demo-Analyzer',
+        },
+      })
+    }
+    
+    if (!response.ok) {
+      return { success: false, error: `Release not found for version ${version}` }
+    }
+    
+    const release = await response.json() as GitHubRelease
+    
+    // Find the installer asset for Windows
+    const platform = process.platform
+    let installerAsset: { name: string; browser_download_url: string } | null = null
+    
+    if (platform === 'win32') {
+      // Look for .exe installer
+      installerAsset = release.assets?.find(asset => 
+        asset.name.endsWith('.exe') && 
+        (asset.name.includes('Setup') || asset.name.includes('Installer'))
+      ) || null
+      
+      // Fallback: any .exe file
+      if (!installerAsset) {
+        installerAsset = release.assets?.find(asset => asset.name.endsWith('.exe')) || null
+      }
+    } else if (platform === 'darwin') {
+      // Look for .dmg or .zip for macOS
+      installerAsset = release.assets?.find(asset => 
+        asset.name.endsWith('.dmg') || asset.name.endsWith('.zip')
+      ) || null
+    } else if (platform === 'linux') {
+      // Look for .AppImage, .deb, or .rpm for Linux
+      installerAsset = release.assets?.find(asset => 
+        asset.name.endsWith('.AppImage') || 
+        asset.name.endsWith('.deb') || 
+        asset.name.endsWith('.rpm')
+      ) || null
+    }
+    
+    if (!installerAsset) {
+      return { success: false, error: `No installer found for ${platform} in version ${version}` }
+    }
+    
+    console.log(`[Update] Downloading installer: ${installerAsset.name}`)
+    
+    // Download the installer to temp directory
+    const tempDir = app.getPath('temp')
+    const installerPath = path.join(tempDir, installerAsset.name)
+    
+    const downloadResponse = await fetch(installerAsset.browser_download_url)
+    if (!downloadResponse.ok) {
+      return { success: false, error: `Failed to download installer: ${downloadResponse.statusText}` }
+    }
+    
+    const buffer = Buffer.from(await downloadResponse.arrayBuffer())
+    fs.writeFileSync(installerPath, buffer)
+    
+    console.log(`[Update] Installer downloaded to: ${installerPath}`)
+    
+    // Execute the installer
+    if (platform === 'win32') {
+      // On Windows, execute the installer which will handle installation and restart
+      // Use spawn to detach the process so it continues after app quits
+      const installerProcess = spawn(installerPath, ['/S'], {
+        detached: true,
+        stdio: 'ignore',
+      })
+      installerProcess.unref()
+      
+      // Give it a moment to start, then quit the app
+      // The installer will handle closing the app and restarting
+      setTimeout(() => {
+        app.quit()
+      }, 1000)
+    } else if (platform === 'darwin') {
+      // On macOS, open the DMG
+      exec(`open "${installerPath}"`, (error) => {
+        if (error) {
+          console.error('[Update] Error opening DMG:', error)
+        }
+      })
+    } else if (platform === 'linux') {
+      // On Linux, make AppImage executable and run it, or install deb/rpm
+      if (installerAsset.name.endsWith('.AppImage')) {
+        fs.chmodSync(installerPath, 0o755)
+        exec(`"${installerPath}"`, (error) => {
+          if (error) {
+            console.error('[Update] Error executing AppImage:', error)
+          }
+        })
+      } else {
+        // For .deb or .rpm, user needs to install manually
+        return { success: false, error: 'Please install the downloaded package manually' }
+      }
+    }
+    
+    return { success: true }
+  } catch (error) {
+    console.error('[Update] Error downloading and installing version:', error)
+    return { success: false, error: String(error) }
+  }
+}
+
+ipcMain.handle('update:downloadAndInstallVersion', async (_, version: string) => {
+  console.log(`[IPC] update:downloadAndInstallVersion called with version: ${version}`)
+  const result = await downloadAndInstallVersion(version)
+  return result
+})
+
 // GitHub API response type for releases
 interface GitHubRelease {
   tag_name: string
   html_url: string
   body: string
   name: string | null
+  assets?: Array<{
+    name: string
+    browser_download_url: string
+    content_type: string
+    size: number
+  }>
+}
+
+// Helper function to fetch all available versions from GitHub releases
+async function getAvailableVersions(): Promise<string[]> {
+  try {
+    const repoOwner = 'weeklyvillain'
+    const repoName = 'cs2-demo-analyzer'
+    const apiUrl = `https://api.github.com/repos/${repoOwner}/${repoName}/releases`
+    
+    const response = await fetch(apiUrl, {
+      headers: {
+        'Accept': 'application/vnd.github.v3+json',
+        'User-Agent': 'CS2-Demo-Analyzer',
+      },
+    })
+    
+    if (!response.ok) {
+      console.log(`[Update] GitHub API returned ${response.status}: ${response.statusText}`)
+      return []
+    }
+    
+    const releases = await response.json() as GitHubRelease[]
+    const versions = releases
+      .map(release => release.tag_name?.replace(/^v/, ''))
+      .filter((version): version is string => version !== undefined && version !== null)
+    
+    return versions
+  } catch (error) {
+    console.error('[Update] Error fetching available versions:', error)
+    return []
+  }
 }
 
 // Helper function to check for updates on GitHub
@@ -1870,19 +2127,24 @@ async function checkForUpdates(currentVersion: string): Promise<{ available: boo
 ipcMain.handle('app:getInfo', async () => {
   const packageJson = require('../package.json')
   
-  // Get app version
-  const version = app.getVersion() || packageJson.version || '1.0.0'
+  // Get app version - use manual version if set, otherwise use actual version
+  const manualVersion = getSetting('manualVersion', '')
+  const actualVersion = app.getVersion() || packageJson.version || '1.0.0'
+  const version = manualVersion || actualVersion
   
-  // Check for updates (only in production, skip in dev)
+  // Check for updates (only in production, skip in dev, and only if auto-update is enabled)
   let updateAvailable = false
   let updateVersion: string | null = null
   let updateReleaseUrl: string | null = null
   
   if (!isDev) {
-    const updateCheck = await checkForUpdates(version)
-    updateAvailable = updateCheck.available
-    updateVersion = updateCheck.version
-    updateReleaseUrl = updateCheck.releaseUrl
+    const autoUpdateEnabled = getSetting('autoUpdateEnabled', 'true') === 'true'
+    if (autoUpdateEnabled) {
+      const updateCheck = await checkForUpdates(version)
+      updateAvailable = updateCheck.available
+      updateVersion = updateCheck.version
+      updateReleaseUrl = updateCheck.releaseUrl
+    }
   }
   
   // Get storage info
@@ -2131,9 +2393,25 @@ ipcMain.handle('cs2:launch', async (_, demoPath: string, startTick?: number, pla
   const previewTicks = previewSeconds * tickRate
   const targetTick = startTick ? Math.max(0, startTick - previewTicks) : 0
 
-  // Build console commands to copy to clipboard
-  // Format: demo_gototick <tick>; spec_player "playername"
+  // Build console commands to send sequentially via netconport
+  // When launching CS2: playdemo -> mat_setvideomode -> demo_pause -> demo_gototick -> spec_player
+  // When CS2 already running: playdemo -> demo_pause -> demo_gototick -> spec_player
   const consoleCommands: string[] = []
+  
+  // Always load the demo first (whether CS2 is running or not)
+  consoleCommands.push(`playdemo "${demoPath}"`)
+  
+  // If CS2 is not running, we need to set video mode
+  if (!cs2Running) {
+    // Add video mode command based on settings (only when starting CS2)
+    // mat_setvideomode syntax: mat_setvideomode <width> <height> <fullscreen>
+    // fullscreen: 0 = windowed, 1 = fullscreen
+    const fullscreen = windowMode === 'fullscreen' ? '1' : '0'
+    consoleCommands.push(`mat_setvideomode ${windowWidth} ${windowHeight} ${fullscreen}`)
+  }
+  
+  // First, pause the demo to ensure we can jump to tick
+  consoleCommands.push(`demo_pause`)
   
   if (targetTick > 0) {
     consoleCommands.push(`demo_gototick ${targetTick}`) // Jump to tick
@@ -2146,6 +2424,7 @@ ipcMain.handle('cs2:launch', async (_, demoPath: string, startTick?: number, pla
     consoleCommands.push(`spec_player ${playerNameQuoted}`) // Spectate the player
   }
 
+  // For clipboard, join with semicolons (fallback if netconport fails)
   const commandsToCopy = consoleCommands.join('; ')
   
   // Copy console commands to clipboard (always available as fallback)
@@ -2244,7 +2523,7 @@ ipcMain.handle('cs2:launch', async (_, demoPath: string, startTick?: number, pla
     }
   }
 
-  // If CS2 is already running, just copy commands and return
+  // If CS2 is already running, send commands via netconport
   if (cs2Running) {
     console.log('=== CS2 Already Running ===')
     console.log('Demo Path:', demoPath)
@@ -2252,6 +2531,18 @@ ipcMain.handle('cs2:launch', async (_, demoPath: string, startTick?: number, pla
     console.log('Target Tick:', targetTick)
     console.log('Player Name:', playerName)
     console.log('Console Commands (copied to clipboard):', commandsToCopy)
+    
+    // Send commands via netconport
+    const netconPort = getSetting('cs2_netconport', '2121')
+    // Wait a bit before sending commands to ensure CS2 is ready
+    const waitTime = 1000 // 1 second delay before sending commands
+    setTimeout(() => {
+      sendCS2CommandsSequentially(parseInt(netconPort), consoleCommands).catch(err => {
+        console.error('Failed to send commands via netconport:', err)
+        console.log('Commands are still available in clipboard:', commandsToCopy)
+      })
+    }, waitTime)
+    
     if (jsonActionsFilePath) {
       console.log('JSON Actions File (CS Demo Analyzer format):', jsonActionsFilePath)
       if (pluginReady) {
@@ -2260,45 +2551,25 @@ ipcMain.handle('cs2:launch', async (_, demoPath: string, startTick?: number, pla
         console.log('ℹ Install CS Demo Analyzer plugin for automatic execution')
       }
     }
-    console.log('Paste these commands into CS2 console (press ~)')
+    console.log('Commands will be sent via netconport')
     console.log('========================')
     
     return { success: true, tick: targetTick, commands: commandsToCopy, alreadyRunning: true }
   }
 
   // Build command line arguments for launching CS2
-  // Based on cs-demo-manager implementation
+  // Use -netconport and -tools to send commands via TCP
   const args: string[] = []
   args.push(`-insecure`)
   args.push(`-novid`)
+  //args.push(`-tools`)
   
-  // Add demo path before window settings (matching cs-demo-manager order)
-  args.push(`+playdemo`, demoPath)
-  
-  // Add window size (using -width/-height like cs-demo-manager)
-  args.push(`-width`, windowWidth)
-  args.push(`-height`, windowHeight)
-  
-  // Add window mode flag based on settings
-  // These flags only apply to this launch and don't modify CS2's saved settings
-  // CS2 uses -sw for windowed mode and -fullscreen for fullscreen (matching cs-demo-manager)
-  if (windowMode === 'fullscreen') {
-    args.push(`-fullscreen`)
-  } else {
-    // Default to windowed mode (has close/minimize buttons)
-    // Use -sw flag (start windowed) for proper windowed mode
-    args.push(`-sw`)
-  }
-  
-  // Add +exec to automatically execute commands if config file was created
-  // Note: This executes when CS2 starts, which might be before demo loads
-  // If demo isn't loaded, commands will fail but user can paste from clipboard
-  if (configFilePath) {
-    // Use forward slashes for CS2 config paths (works on Windows too)
-    const configPathForCS2 = configFilePath.replace(/\\/g, '/')
-    args.push(`+exec`, configPathForCS2)
-    console.log('Added +exec parameter:', configPathForCS2)
-  }
+    // Use netconport for sending commands via TCP
+    // Default port 2121 (can be configured)
+    const netconPort = getSetting('cs2_netconport', '2121')
+    args.push(`-netconport`, netconPort)
+    
+    // Note: playdemo will be sent via netconport instead of as launch argument
 
   // Log the command for debugging
   const fullCommand = `"${cs2Exe}" ${args.map(arg => arg.includes(' ') ? `"${arg}"` : arg).join(' ')}`
@@ -2308,20 +2579,8 @@ ipcMain.handle('cs2:launch', async (_, demoPath: string, startTick?: number, pla
   console.log('Start Tick:', startTick)
   console.log('Target Tick:', targetTick)
   console.log('Player Name:', playerName)
-  console.log('Window Mode Setting:', windowMode)
-  console.log('Window Size:', `${windowWidth}x${windowHeight}`)
-  console.log('Console Commands (copied to clipboard):', commandsToCopy)
-  if (jsonActionsFilePath) {
-    console.log('JSON Actions File (CS Demo Analyzer format):', jsonActionsFilePath)
-    if (pluginReady) {
-      console.log('✓ Plugin ready - commands will execute automatically!')
-    } else {
-      console.log('ℹ Install CS Demo Analyzer plugin for automatic execution')
-    }
-  }
-  if (configFilePath) {
-    console.log('Config File (for +exec):', configFilePath)
-  }
+  console.log('Netcon Port:', netconPort)
+  console.log('Console Commands (will be sent via netconport):', commandsToCopy)
   console.log('--- Launch Arguments ---')
   console.log('Arguments Array:', JSON.stringify(args, null, 2))
   console.log('Full Command String:', fullCommand)
@@ -2337,11 +2596,134 @@ ipcMain.handle('cs2:launch', async (_, demoPath: string, startTick?: number, pla
 
     cs2Process.unref()
     
+    // Wait a bit for CS2 to start, then send commands via netconport sequentially
+    // Need to wait longer for CS2 to fully initialize and be ready for netconport
+    setTimeout(() => {
+      sendCS2CommandsSequentially(parseInt(netconPort), consoleCommands).catch(err => {
+        console.error('Failed to send commands via netconport:', err)
+        console.log('Commands are still available in clipboard:', commandsToCopy)
+      })
+    }, 3000) // Wait 3 seconds for CS2 to start (demo loading will add additional delay)
+    
     return { success: true, tick: targetTick, commands: commandsToCopy, alreadyRunning: false }
   } catch (err) {
     throw new Error(`Failed to launch CS2: ${err instanceof Error ? err.message : String(err)}`)
   }
 })
+
+// Function to connect to CS2 netconport and send commands sequentially
+async function sendCS2CommandsSequentially(port: number, commands: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const socket = net.createConnection({ host: '127.0.0.1', port })
+    let commandIndex = 0
+    let connected = false
+    
+    const timeout = setTimeout(() => {
+      if (!connected) {
+        socket.destroy()
+        reject(new Error('Connection timeout'))
+      }
+    }, 10000) // 10 second timeout
+    
+    socket.on('connect', () => {
+      connected = true
+      clearTimeout(timeout)
+      console.log(`[netcon] Connected to CS2 on port ${port}`)
+      
+      // Start sending commands
+      sendNextCommand()
+    })
+    
+    socket.on('data', (buf) => {
+      // Log response data for debugging
+      const response = buf.toString('utf8')
+      if (response.trim()) {
+        console.log(`[netcon] Response:`, response)
+      }
+    })
+    
+    socket.on('error', (err) => {
+      clearTimeout(timeout)
+      console.error(`[netcon] Error:`, err)
+      if (!connected) {
+        reject(err)
+      } else {
+        // If we're already connected and get an error, try to continue
+        // or resolve if we've sent all commands
+        if (commandIndex >= commands.length) {
+          resolve()
+        }
+      }
+    })
+    
+    socket.on('close', () => {
+      clearTimeout(timeout)
+      console.log(`[netcon] Connection closed`)
+      if (connected) {
+        // If we've sent all commands, resolve successfully
+        if (commandIndex >= commands.length) {
+          resolve()
+        } else {
+          // Connection closed before all commands were sent
+          reject(new Error('Connection closed before all commands were sent'))
+        }
+      }
+    })
+    
+    const sendNextCommand = () => {
+      if (commandIndex >= commands.length) {
+        // All commands sent, close the socket
+        socket.end()
+        return
+      }
+      
+      const command = commands[commandIndex]
+      console.log(`[netcon] Sending command ${commandIndex + 1}/${commands.length}: ${command}`)
+      
+      // netcon expects newline-terminated commands
+      socket.write(command.trimEnd() + '\n', (err) => {
+        if (err) {
+          console.error(`[netcon] Failed to send command ${commandIndex + 1}:`, err)
+          socket.destroy()
+          reject(err)
+          return
+        }
+        
+        commandIndex++
+        
+        // Determine delay based on the command type
+        let delay = 500 // Default delay
+        if (commandIndex > 0) {
+          const previousCommand = commands[commandIndex - 1]
+          // If previous command was demo_gototick, wait longer for tick to load
+          if (previousCommand.startsWith('demo_gototick')) {
+            delay = 2000 // 2 seconds delay after demo_gototick
+          }
+          // If previous command was playdemo, wait longer for demo to load
+          else if (previousCommand.startsWith('playdemo')) {
+            delay = 3000 // 3 seconds delay after playdemo
+          }
+          // If previous command was demo_pause, shorter delay
+          else if (previousCommand.startsWith('demo_pause')) {
+            delay = 300 // 300ms delay after demo_pause
+          }
+        }
+        
+        // Wait a bit before sending next command (CS2 needs time to process)
+        if (commandIndex < commands.length) {
+          setTimeout(() => {
+            sendNextCommand()
+          }, delay)
+        } else {
+          // All commands sent, wait a bit then close
+          setTimeout(() => {
+            socket.end()
+          }, 500)
+        }
+      })
+    }
+  })
+}
 
 // CS2 Copy Commands handler (generates and copies commands without launching)
 ipcMain.handle('cs2:copyCommands', async (_, demoPath: string, startTick?: number, playerName?: string) => {
@@ -2349,15 +2731,24 @@ ipcMain.handle('cs2:copyCommands', async (_, demoPath: string, startTick?: numbe
     throw new Error(`Demo file not found: ${demoPath}`)
   }
 
+  // Get window settings from settings
+  const windowWidth = getSetting('cs2_window_width', '1920')
+  const windowHeight = getSetting('cs2_window_height', '1080')
+  const windowMode = getSetting('cs2_window_mode', 'windowed')
+
   // Calculate tick to start at (5 seconds before event, or at start if not specified)
   const tickRate = 64 // Default tick rate
   const previewSeconds = 5
   const previewTicks = previewSeconds * tickRate
   const targetTick = startTick ? Math.max(0, startTick - previewTicks) : 0
 
-  // Build console commands to copy to clipboard
-  // Format: demo_gototick <tick>; spec_player "playername"
+  // Build console commands to send sequentially via netconport
+  // When CS2 already running: demo_pause -> demo_gototick -> spec_player
+  // (mat_setvideomode is only sent when starting CS2, not when jumping to players)
   const consoleCommands: string[] = []
+  
+  // First, pause the demo to ensure we can jump to tick
+  consoleCommands.push(`demo_pause`)
   
   if (targetTick > 0) {
     consoleCommands.push(`demo_gototick ${targetTick}`) // Jump to tick
@@ -2370,10 +2761,21 @@ ipcMain.handle('cs2:copyCommands', async (_, demoPath: string, startTick?: numbe
     consoleCommands.push(`spec_player ${playerNameQuoted}`) // Spectate the player
   }
 
+  // For clipboard, join with semicolons (fallback if netconport fails)
   const commandsToCopy = consoleCommands.join('; ')
   
   // Copy console commands to clipboard
   clipboard.writeText(commandsToCopy)
+
+  // If CS2 is already running, send commands sequentially via netconport
+  const cs2Running = await isCS2Running()
+  if (cs2Running) {
+    const netconPort = getSetting('cs2_netconport', '2121')
+    sendCS2CommandsSequentially(parseInt(netconPort), consoleCommands).catch(err => {
+      console.error('Failed to send commands via netconport:', err)
+      console.log('Commands are still available in clipboard:', commandsToCopy)
+    })
+  }
 
   return { success: true, commands: commandsToCopy }
 })

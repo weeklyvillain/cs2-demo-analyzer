@@ -136,10 +136,14 @@ func run(ctx context.Context, demoPath, outPath, matchID string, positionInterva
 	output.Log("info", fmt.Sprintf("Storing %d players...", len(matchData.Players)))
 	for _, playerData := range matchData.Players {
 		player := db.Player{
-			MatchID: matchID,
-			SteamID: playerData.SteamID,
-			Name:    playerData.Name,
-			Team:    playerData.Team,
+			MatchID:            matchID,
+			SteamID:            playerData.SteamID,
+			Name:               playerData.Name,
+			Team:               playerData.Team,
+			ConnectedMidgame:   playerData.ConnectedMidgame,
+			PermanentDisconnect: playerData.PermanentDisconnect,
+			FirstConnectRound:  playerData.FirstConnectRound,
+			DisconnectRound:    playerData.DisconnectRound,
 		}
 		// Debug: log team assignment
 		if playerData.Team == "" {

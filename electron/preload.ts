@@ -51,6 +51,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setLastSeenVersion: (version: string) => ipcRenderer.invoke('app:setLastSeenVersion', version),
   shouldShowWhatsNew: () => ipcRenderer.invoke('app:shouldShowWhatsNew'),
   getReleaseNotes: (version: string) => ipcRenderer.invoke('app:getReleaseNotes', version),
+  getAvailableVersions: () => ipcRenderer.invoke('app:getAvailableVersions'),
   
   // App Info
   getAppInfo: () => ipcRenderer.invoke('app:getInfo'),
@@ -62,6 +63,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // Radar images (to avoid CORS issues with custom protocols)
   getRadarImage: (mapName: string) => ipcRenderer.invoke('radar:getImage', mapName),
+  
+  // Player images (for 2D viewer)
+  getPlayerImage: (team: 'T' | 'CT') => ipcRenderer.invoke('player:getImage', team),
   
   // Splash screen logo
   getLogoPath: () => ipcRenderer.invoke('splash:getLogoPath'),
@@ -118,6 +122,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Auto-updater actions
   installUpdate: () => ipcRenderer.invoke('update:install'),
+  downloadAndInstallVersion: (version: string) => ipcRenderer.invoke('update:downloadAndInstallVersion', version),
   
   // Splash window methods
   getVersion: () => ipcRenderer.invoke('splash:getVersion'),

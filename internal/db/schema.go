@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 )
 
 // Schema defines the SQLite database schema for storing CS2 demo data.
@@ -26,6 +27,10 @@ CREATE TABLE IF NOT EXISTS players (
 	steamid TEXT NOT NULL,
 	name TEXT NOT NULL,
 	team TEXT,
+	connected_midgame INTEGER DEFAULT 0,
+	permanent_disconnect INTEGER DEFAULT 0,
+	first_connect_round INTEGER,
+	disconnect_round INTEGER,
 	PRIMARY KEY(match_id, steamid),
 	FOREIGN KEY(match_id) REFERENCES matches(id)
 );
@@ -176,11 +181,86 @@ CREATE INDEX IF NOT EXISTS idx_shots_tick ON shots(match_id, round_index, tick);
 CREATE INDEX IF NOT EXISTS idx_shots_steamid ON shots(match_id, steamid);
 `
 
+// runMigrations runs database migrations to add new columns to existing tables.
+func runMigrations(ctx context.Context, db *sql.DB) error {
+	// Check if players table has connected_midgame column
+	var hasConnectedMidgame bool
+	checkColumnQuery := `SELECT COUNT(*) FROM pragma_table_info('players') WHERE name = 'connected_midgame'`
+	var count int
+	if err := db.QueryRowContext(ctx, checkColumnQuery).Scan(&count); err == nil {
+		hasConnectedMidgame = count > 0
+	}
+	
+	if !hasConnectedMidgame {
+		_, err := db.ExecContext(ctx, `ALTER TABLE players ADD COLUMN connected_midgame INTEGER DEFAULT 0`)
+		if err != nil && !strings.Contains(err.Error(), "duplicate column") {
+			// Ignore "duplicate column" errors, but log others
+			fmt.Printf("WARN: Failed to add connected_midgame column: %v\n", err)
+		}
+	}
+	
+	// Check if players table has permanent_disconnect column
+	var hasPermanentDisconnect bool
+	checkColumnQuery2 := `SELECT COUNT(*) FROM pragma_table_info('players') WHERE name = 'permanent_disconnect'`
+	var count2 int
+	if err := db.QueryRowContext(ctx, checkColumnQuery2).Scan(&count2); err == nil {
+		hasPermanentDisconnect = count2 > 0
+	}
+	
+	if !hasPermanentDisconnect {
+		_, err := db.ExecContext(ctx, `ALTER TABLE players ADD COLUMN permanent_disconnect INTEGER DEFAULT 0`)
+		if err != nil && !strings.Contains(err.Error(), "duplicate column") {
+			// Ignore "duplicate column" errors, but log others
+			fmt.Printf("WARN: Failed to add permanent_disconnect column: %v\n", err)
+		}
+	}
+	
+	// Check if players table has first_connect_round column
+	var hasFirstConnectRound bool
+	checkColumnQuery3 := `SELECT COUNT(*) FROM pragma_table_info('players') WHERE name = 'first_connect_round'`
+	var count3 int
+	if err := db.QueryRowContext(ctx, checkColumnQuery3).Scan(&count3); err == nil {
+		hasFirstConnectRound = count3 > 0
+	}
+	
+	if !hasFirstConnectRound {
+		_, err := db.ExecContext(ctx, `ALTER TABLE players ADD COLUMN first_connect_round INTEGER`)
+		if err != nil && !strings.Contains(err.Error(), "duplicate column") {
+			// Ignore "duplicate column" errors, but log others
+			fmt.Printf("WARN: Failed to add first_connect_round column: %v\n", err)
+		}
+	}
+	
+	// Check if players table has disconnect_round column
+	var hasDisconnectRound bool
+	checkColumnQuery4 := `SELECT COUNT(*) FROM pragma_table_info('players') WHERE name = 'disconnect_round'`
+	var count4 int
+	if err := db.QueryRowContext(ctx, checkColumnQuery4).Scan(&count4); err == nil {
+		hasDisconnectRound = count4 > 0
+	}
+	
+	if !hasDisconnectRound {
+		_, err := db.ExecContext(ctx, `ALTER TABLE players ADD COLUMN disconnect_round INTEGER`)
+		if err != nil && !strings.Contains(err.Error(), "duplicate column") {
+			// Ignore "duplicate column" errors, but log others
+			fmt.Printf("WARN: Failed to add disconnect_round column: %v\n", err)
+		}
+	}
+	
+	return nil
+}
+
 // InitSchema initializes the database schema.
 // It creates all tables and indexes if they don't already exist.
 func InitSchema(ctx context.Context, db *sql.DB) error {
 	if _, err := db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("failed to initialize schema: %w", err)
 	}
+	
+	// Run migrations for existing databases
+	if err := runMigrations(ctx, db); err != nil {
+		return fmt.Errorf("failed to run migrations: %w", err)
+	}
+	
 	return nil
 }

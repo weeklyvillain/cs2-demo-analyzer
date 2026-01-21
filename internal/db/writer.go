@@ -28,10 +28,14 @@ type Match struct {
 
 // Player represents a player in a match.
 type Player struct {
-	MatchID string
-	SteamID string
-	Name    string
-	Team    string // "A" or "B" (Team A/Team B)
+	MatchID            string
+	SteamID            string
+	Name               string
+	Team               string // "A" or "B" (Team A/Team B)
+	ConnectedMidgame   bool   // True if player connected after round 1
+	PermanentDisconnect bool   // True if player disconnected and never returned
+	FirstConnectRound  *int   // Round index when player first connected (nil if round 0)
+	DisconnectRound    *int   // Round index when player disconnected (nil if never disconnected)
 }
 
 // Round represents a round in a match.
@@ -80,11 +84,20 @@ func (w *Writer) InsertMatch(ctx context.Context, m Match) error {
 
 // InsertPlayer inserts or replaces a player record.
 func (w *Writer) InsertPlayer(ctx context.Context, p Player) error {
+	connectedMidgame := 0
+	if p.ConnectedMidgame {
+		connectedMidgame = 1
+	}
+	permanentDisconnect := 0
+	if p.PermanentDisconnect {
+		permanentDisconnect = 1
+	}
+	
 	query := `
-		INSERT OR REPLACE INTO players (match_id, steamid, name, team)
-		VALUES (?, ?, ?, ?)
+		INSERT OR REPLACE INTO players (match_id, steamid, name, team, connected_midgame, permanent_disconnect, first_connect_round, disconnect_round)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 	`
-	_, err := w.db.ExecContext(ctx, query, p.MatchID, p.SteamID, p.Name, p.Team)
+	_, err := w.db.ExecContext(ctx, query, p.MatchID, p.SteamID, p.Name, p.Team, connectedMidgame, permanentDisconnect, p.FirstConnectRound, p.DisconnectRound)
 	if err != nil {
 		return fmt.Errorf("failed to insert player: %w", err)
 	}

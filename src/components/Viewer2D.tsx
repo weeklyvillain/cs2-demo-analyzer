@@ -35,6 +35,9 @@ interface Round {
   startTick: number
   endTick: number
   freezeEndTick: number | null
+  tWins?: number
+  ctWins?: number
+  winner?: string | null
 }
 
 interface Viewer2DProps {
@@ -60,6 +63,8 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
   const [isPlaying, setIsPlaying] = useState(false)
   const [playbackSpeed, setPlaybackSpeed] = useState(1) // 1x, 2x, 4x speed
   const [mapImage, setMapImage] = useState<HTMLImageElement | null>(null)
+  const [playerTImage, setPlayerTImage] = useState<HTMLImageElement | null>(null)
+  const [playerCTImage, setPlayerCTImage] = useState<HTMLImageElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const playbackIntervalRef = useRef<number | null>(null)
   const animationFrameRef = useRef<number | null>(null)
@@ -69,6 +74,17 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
   // Use refs to track loaded/loading rounds to avoid dependency issues
   const loadedRoundsRef = useRef<Set<number>>(new Set())
   const loadingRoundsRef = useRef<Set<number>>(new Set())
+  
+  // Zoom and pan state
+  const [zoom, setZoom] = useState(1) // 1 = 100%
+  const [panX, setPanX] = useState(0) // Pan offset in pixels
+  const [panY, setPanY] = useState(0) // Pan offset in pixels
+  const [isDragging, setIsDragging] = useState(false)
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 })
+  const [dragStartPan, setDragStartPan] = useState({ x: 0, y: 0 })
+  
+  // Follow player state
+  const [followPlayer, setFollowPlayer] = useState<string | null>(null) // steamid of player to follow
 
   // Load radar image (for 2D viewer) via IPC to avoid CORS issues
   useEffect(() => {
@@ -106,6 +122,57 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
 
     loadMapImage()
   }, [mapName])
+
+  // Load player images (for 2D viewer) via IPC to avoid CORS issues
+  useEffect(() => {
+    const loadPlayerImages = async () => {
+      if (!window.electronAPI) return
+      
+      try {
+        // Load T player image
+        const tResult = await window.electronAPI.getPlayerImage('T')
+        if (tResult.success && tResult.data) {
+          const tImg = new Image()
+          tImg.onload = () => {
+            console.log('Successfully loaded T player image')
+            setPlayerTImage(tImg)
+          }
+          tImg.onerror = (e) => {
+            console.error('Failed to load T player image data URL', e)
+            setPlayerTImage(null)
+          }
+          tImg.src = tResult.data
+        } else {
+          console.error('Failed to get T player image:', tResult.error)
+          setPlayerTImage(null)
+        }
+
+        // Load CT player image
+        const ctResult = await window.electronAPI.getPlayerImage('CT')
+        if (ctResult.success && ctResult.data) {
+          const ctImg = new Image()
+          ctImg.onload = () => {
+            console.log('Successfully loaded CT player image')
+            setPlayerCTImage(ctImg)
+          }
+          ctImg.onerror = (e) => {
+            console.error('Failed to load CT player image data URL', e)
+            setPlayerCTImage(null)
+          }
+          ctImg.src = ctResult.data
+        } else {
+          console.error('Failed to get CT player image:', ctResult.error)
+          setPlayerCTImage(null)
+        }
+      } catch (error) {
+        console.error('Error loading player images:', error)
+        setPlayerTImage(null)
+        setPlayerCTImage(null)
+      }
+    }
+
+    loadPlayerImages()
+  }, [])
 
   // Grenade data
   const [shots, setShots] = useState<Array<{
@@ -322,25 +389,37 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
 
   // Interpolate position for a player at a specific tick
   const getInterpolatedPosition = useCallback((steamid: string, tick: number): Position | null => {
-    // Handle round transitions: if tick is past a round's end, instantly jump to next round's spawn
+    // Handle round transitions: if tick is at or past a round's end, instantly jump to next round's spawn
+    // Also handle freeze period: during freeze, use exact spawn positions (no interpolation)
     let actualTick = tick
     let isRoundTransition = false
+    let isInFreezePeriod = false
+    
     if (isFullGame && allRounds.length > 0) {
       // Find the round that contains this tick
       let currentRound = allRounds.find(r => tick >= r.startTick && tick <= r.endTick)
       
-      // If tick is past the current round's end, find the next round
+      // If tick is at or past the current round's end, find the next round
       if (!currentRound) {
-        // Find the round that just ended
+        // Find the round that just ended (tick is past its end)
         const endedRound = allRounds.find(r => tick > r.endTick)
         if (endedRound) {
           const endedRoundIdx = allRounds.indexOf(endedRound)
           // Get the next round
           if (endedRoundIdx < allRounds.length - 1) {
             const nextRound = allRounds[endedRoundIdx + 1]
-            // Use the next round's start tick (or freeze end if available) - INSTANT transition
-            actualTick = nextRound.freezeEndTick || nextRound.startTick
-            isRoundTransition = true
+            // During freeze period, use the spawn position (freezeEndTick or startTick)
+            // After freeze, use the actual tick
+            const freezeEnd = nextRound.freezeEndTick || nextRound.startTick
+            if (tick < freezeEnd) {
+              // Still in freeze - use spawn position
+              actualTick = nextRound.startTick
+              isRoundTransition = true
+              isInFreezePeriod = true
+            } else {
+              // Freeze ended, use actual tick
+              actualTick = tick
+            }
           } else {
             // Last round ended, use its end tick
             actualTick = endedRound.endTick
@@ -348,8 +427,42 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
         } else {
           // Before first round, use first round's start
           const firstRound = allRounds[0]
-          actualTick = firstRound.freezeEndTick || firstRound.startTick
+          const freezeEnd = firstRound.freezeEndTick || firstRound.startTick
+          if (tick < freezeEnd) {
+            // Still in freeze - use spawn position
+            actualTick = firstRound.startTick
+            isRoundTransition = true
+            isInFreezePeriod = true
+          } else {
+            actualTick = tick
+          }
         }
+      } else {
+        // We're within a round
+        // Check if we're in the freeze period
+        const freezeEnd = currentRound.freezeEndTick || currentRound.startTick
+        if (tick < freezeEnd) {
+          // In freeze period - use exact spawn position (no interpolation)
+          actualTick = currentRound.startTick
+          isRoundTransition = true
+          isInFreezePeriod = true
+        } else if (tick >= currentRound.endTick) {
+          // At round end - use the end tick position (no interpolation)
+          actualTick = currentRound.endTick
+          isRoundTransition = true
+        }
+      }
+    } else if (!isFullGame) {
+      // Single round mode - check if we're at round end or in freeze
+      // Note: we don't have freezeEndTick in single round mode, so we'll use roundStartTick
+      if (tick >= roundEndTick) {
+        actualTick = roundEndTick
+        isRoundTransition = true
+      } else if (tick <= roundStartTick) {
+        // At or before round start - use start position
+        actualTick = roundStartTick
+        isRoundTransition = true
+        isInFreezePeriod = true
       }
     }
     
@@ -390,9 +503,26 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
     if (upperPos && !lowerPos) return upperPos
     if (!lowerPos && !upperPos) return null
     
-    // For round transitions, don't interpolate - use the exact spawn position
-    if (isRoundTransition && upperPos) {
-      return upperPos
+    // For round transitions and freeze periods, don't interpolate - use the exact position
+    // If at round end, use the end position. If transitioning to next round or in freeze, use exact spawn position
+    if (isRoundTransition || isInFreezePeriod) {
+      // During freeze or round transition, use exact position at actualTick
+      // First try to get exact match at actualTick
+      if (allPositions.has(actualTick)) {
+        const tickMap = allPositions.get(actualTick)!
+        const exactPos = tickMap.get(steamid)
+        if (exactPos) {
+          return exactPos
+        }
+      }
+      // If no exact match, prefer upperPos (next round's start) if available, otherwise use lowerPos
+      if (upperPos) {
+        return upperPos
+      }
+      if (lowerPos) {
+        return lowerPos
+      }
+      return null
     }
     
     // Interpolate between lower and upper positions
@@ -425,7 +555,7 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
       armor,
       weapon,
     }
-  }, [allPositions, isFullGame, allRounds])
+  }, [allPositions, isFullGame, allRounds, roundEndTick])
 
   // Get all player positions at current tick (interpolated)
   const getCurrentPositions = useCallback((): Position[] => {
@@ -460,6 +590,18 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
       // Clear canvas
       ctx.clearRect(0, 0, canvas.width, canvas.height)
 
+      // Helper function to get zoomed size (like CS Demo Analyzer's zoomedSize)
+      // Must be defined early as it's used throughout the render function
+      const zoomedSize = (size: number) => {
+        const mapTransform = (ctx as any).mapTransform
+        if (mapTransform && mapImage && mapImage.complete) {
+          // Scale based on the map's draw size and zoom level
+          const baseScale = mapTransform.drawWidth / mapTransform.radarSize
+          return size * baseScale
+        }
+        return size
+      }
+
       const positions = getCurrentPositions()
 
       if (positions.length === 0) {
@@ -483,27 +625,29 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
       
       // Draw map image as background if available
       // Following CS Demo Analyzer's approach: draw radar at a specific size and position
+      // Always maintain 1:1 aspect ratio for the map
       if (mapImage && mapImage.complete && mapConfig) {
         // Radar images are square, use radarWidth as the size
         const radarSize = mapConfig.radarWidth || 1024
         
-        // Calculate scale to fit radar to canvas while maintaining aspect ratio
-        const canvasAspect = canvas.width / canvas.height
-        const radarAspect = 1 // Radar images are square
+        // Calculate the square size that fits within the canvas (1:1 aspect ratio)
+        const maxSize = Math.min(canvas.width, canvas.height)
         
-        if (canvasAspect > radarAspect) {
-          // Canvas is wider - fit to height
-          drawHeight = canvas.height
-          drawWidth = canvas.height
-          drawX = (canvas.width - drawWidth) / 2
-          drawY = 0
-        } else {
-          // Canvas is taller - fit to width
-          drawWidth = canvas.width
-          drawHeight = canvas.width
-          drawX = 0
-          drawY = (canvas.height - drawHeight) / 2
-        }
+        // Base size without zoom
+        const baseSize = maxSize
+        
+        // Apply zoom
+        const zoomedSize = baseSize * zoom
+        
+        // Center the map in the canvas
+        const centerX = canvas.width / 2
+        const centerY = canvas.height / 2
+        
+        // Calculate draw position with pan offset
+        drawWidth = zoomedSize
+        drawHeight = zoomedSize
+        drawX = centerX - zoomedSize / 2 + panX
+        drawY = centerY - zoomedSize / 2 + panY
         
         // Draw the radar image
         ctx.drawImage(mapImage, drawX, drawY, drawWidth, drawHeight)
@@ -515,7 +659,10 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
           drawY,
           drawWidth,
           drawHeight,
-          radarSize
+          radarSize,
+          zoom,
+          panX,
+          panY
         }
       } else {
         // Fallback: calculate bounds from positions if no map config
@@ -745,101 +892,200 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
           ctx.textBaseline = 'middle'
           ctx.fillText('💀', screenX, screenY)
         } else {
-          // Draw player circle - matching CS Demo Analyzer style
-          const playerRadius = 8 // CS Demo Analyzer uses zoomedSize(8)
-          ctx.beginPath()
-          ctx.arc(screenX, screenY, playerRadius, 0, 2 * Math.PI)
+          // Draw player image or fallback to circle
+          const playerImage = pos.team === 'T' ? playerTImage : pos.team === 'CT' ? playerCTImage : null
+          const playerRadius = 8 // Used for positioning and fallback
           
-          // Team colors
-          if (pos.team === 'T') {
-            ctx.fillStyle = '#ff6b35' // Orange for T
-          } else if (pos.team === 'CT') {
-            ctx.fillStyle = '#4a90e2' // Blue for CT
-          } else {
-            ctx.fillStyle = '#888' // Gray for unknown
-          }
-          ctx.fill()
-          
-          // Border - white like CS Demo Analyzer
-          ctx.strokeStyle = '#ffffff'
-          ctx.lineWidth = 2
-          ctx.stroke()
-          
-          // Draw health indicator if health is low (matching CS Demo Analyzer)
-          if (pos.health !== null && pos.health < 100) {
-            ctx.beginPath()
-            ctx.fillStyle = '#d7373f99'
-            const percentage = pos.health / 100
-            const startAngle = -Math.PI / 2
-            const endAngle = startAngle + Math.PI * 2 * -percentage // Negative percentage like CS Demo Analyzer
-            ctx.arc(screenX, screenY, 7, startAngle, endAngle)
-            ctx.lineTo(screenX, screenY)
-            ctx.fill()
-          }
-          
-          // Draw view direction - matching CS Demo Analyzer exactly
-          // CS Demo Analyzer uses: -degreesToRadians(position.yaw)
-          if (pos.yaw !== null && pos.yaw !== undefined) {
-            const playerAngle = -degreesToRadians(pos.yaw)
-            const isHoldingKnife = pos.weapon?.toLowerCase().includes('knife') || false
-            const weaponLower = pos.weapon?.toLowerCase() || ''
-            const isHoldingGrenade = 
-              weaponLower.includes('hegrenade') || weaponLower.includes('he_grenade') ||
-              weaponLower.includes('smokegrenade') || weaponLower.includes('smoke_grenade') ||
-              weaponLower.includes('flashbang') ||
-              weaponLower.includes('incendiary') || weaponLower.includes('molotov') ||
-              weaponLower.includes('decoy')
+          if (playerImage && playerImage.complete) {
+            // Draw player image rotated based on yaw
+            ctx.save()
+            ctx.translate(screenX, screenY)
             
-            if (isHoldingKnife || isHoldingGrenade) {
-              // Draw triangle for knife/grenade holders (matching CS Demo Analyzer)
-              const triangleLength1 = 4
-              const triangleLength2 = 4
-              const x0 = screenX + (playerRadius + triangleLength1) * Math.cos(playerAngle)
-              const y0 = screenY + (playerRadius + triangleLength1) * Math.sin(playerAngle)
-              const outerX = screenX + playerRadius * Math.cos(playerAngle)
-              const outerY = screenY + playerRadius * Math.sin(playerAngle)
-              const x1 = outerX + triangleLength2 * Math.cos(playerAngle - Math.PI / 2)
-              const y1 = outerY + triangleLength2 * Math.sin(playerAngle - Math.PI / 2)
-              const x2 = outerX + triangleLength2 * Math.cos(playerAngle + Math.PI / 2)
-              const y2 = outerY + triangleLength2 * Math.sin(playerAngle + Math.PI / 2)
+            // Rotate based on yaw (if available)
+            if (pos.yaw !== null && pos.yaw !== undefined) {
+              const playerAngle = -degreesToRadians(pos.yaw)
+              ctx.rotate(playerAngle)
+            }
+            
+            // Draw the image centered
+            const imageSize = zoomedSize(16) // Size of the player image
+            ctx.drawImage(playerImage, -imageSize / 2, -imageSize / 2, imageSize, imageSize)
+            
+            ctx.restore()
+            
+            // Draw health indicator if health is low (matching CS Demo Analyzer)
+            if (pos.health !== null && pos.health < 100) {
               ctx.beginPath()
-              ctx.moveTo(x0, y0)
-              ctx.lineTo(x1, y1)
-              ctx.lineTo(x2, y2)
+              ctx.fillStyle = '#d7373f99'
+              const percentage = pos.health / 100
+              const startAngle = -Math.PI / 2
+              const endAngle = startAngle + Math.PI * 2 * -percentage // Negative percentage like CS Demo Analyzer
+              ctx.arc(screenX, screenY, zoomedSize(7), startAngle, endAngle)
+              ctx.lineTo(screenX, screenY)
               ctx.fill()
+            }
+            
+            // Draw view direction indicator for weapons/grenades - matching CS Demo Analyzer exactly
+            // CS Demo Analyzer uses: -degreesToRadians(position.yaw)
+            if (pos.yaw !== null && pos.yaw !== undefined) {
+              const playerAngle = -degreesToRadians(pos.yaw)
+              const isHoldingKnife = pos.weapon?.toLowerCase().includes('knife') || false
+              const weaponLower = pos.weapon?.toLowerCase() || ''
+              const isHoldingGrenade = 
+                weaponLower.includes('hegrenade') || weaponLower.includes('he_grenade') ||
+                weaponLower.includes('smokegrenade') || weaponLower.includes('smoke_grenade') ||
+                weaponLower.includes('flashbang') ||
+                weaponLower.includes('incendiary') || weaponLower.includes('molotov') ||
+                weaponLower.includes('decoy')
               
-              // Draw grenade indicator if holding grenade
-              if (isHoldingGrenade) {
-                let grenadeColor: string | null = null
-                if (weaponLower.includes('hegrenade') || weaponLower.includes('he_grenade')) {
-                  grenadeColor = '#268e6c'
-                } else if (weaponLower.includes('smokegrenade') || weaponLower.includes('smoke_grenade')) {
-                  grenadeColor = '#737373'
-                } else if (weaponLower.includes('flashbang')) {
-                  grenadeColor = '#f9a43f'
-                } else if (weaponLower.includes('incendiary') || weaponLower.includes('molotov')) {
-                  grenadeColor = '#da7b11'
-                } else if (weaponLower.includes('decoy')) {
-                  grenadeColor = '#f76d74'
-                }
+              if (isHoldingKnife || isHoldingGrenade) {
+                // Draw triangle for knife/grenade holders (matching CS Demo Analyzer)
+                const triangleLength1 = 4
+                const triangleLength2 = 4
+                const x0 = screenX + (playerRadius + triangleLength1) * Math.cos(playerAngle)
+                const y0 = screenY + (playerRadius + triangleLength1) * Math.sin(playerAngle)
+                const outerX = screenX + playerRadius * Math.cos(playerAngle)
+                const outerY = screenY + playerRadius * Math.sin(playerAngle)
+                const x1 = outerX + triangleLength2 * Math.cos(playerAngle - Math.PI / 2)
+                const y1 = outerY + triangleLength2 * Math.sin(playerAngle - Math.PI / 2)
+                const x2 = outerX + triangleLength2 * Math.cos(playerAngle + Math.PI / 2)
+                const y2 = outerY + triangleLength2 * Math.sin(playerAngle + Math.PI / 2)
+                ctx.beginPath()
+                ctx.moveTo(x0, y0)
+                ctx.lineTo(x1, y1)
+                ctx.lineTo(x2, y2)
+                ctx.fill()
                 
-                if (grenadeColor) {
-                  const grenadeRadius = 3
-                  ctx.beginPath()
-                  ctx.fillStyle = grenadeColor
-                  ctx.arc(screenX, screenY - playerRadius, grenadeRadius, 0, 2 * Math.PI)
-                  ctx.fill()
+                // Draw grenade indicator if holding grenade
+                if (isHoldingGrenade) {
+                  let grenadeColor: string | null = null
+                  if (weaponLower.includes('hegrenade') || weaponLower.includes('he_grenade')) {
+                    grenadeColor = '#268e6c'
+                  } else if (weaponLower.includes('smokegrenade') || weaponLower.includes('smoke_grenade')) {
+                    grenadeColor = '#737373'
+                  } else if (weaponLower.includes('flashbang')) {
+                    grenadeColor = '#f9a43f'
+                  } else if (weaponLower.includes('incendiary') || weaponLower.includes('molotov')) {
+                    grenadeColor = '#da7b11'
+                  } else if (weaponLower.includes('decoy')) {
+                    grenadeColor = '#f76d74'
+                  }
+                  
+                  if (grenadeColor) {
+                    const grenadeRadius = 3
+                    ctx.beginPath()
+                    ctx.fillStyle = grenadeColor
+                    ctx.arc(screenX, screenY - playerRadius, grenadeRadius, 0, 2 * Math.PI)
+                    ctx.fill()
+                  }
                 }
+              } else {
+                // Draw line for normal weapons (matching CS Demo Analyzer)
+                ctx.beginPath()
+                ctx.lineWidth = 2
+                const lineLength = 8 + 2
+                ctx.moveTo(screenX, screenY)
+                ctx.lineTo(screenX + lineLength * Math.cos(playerAngle), screenY + lineLength * Math.sin(playerAngle))
+                ctx.strokeStyle = 'white'
+                ctx.stroke()
               }
+            }
+          } else {
+            // Fallback to circle if image not loaded
+            ctx.beginPath()
+            ctx.arc(screenX, screenY, playerRadius, 0, 2 * Math.PI)
+            
+            // Team colors
+            if (pos.team === 'T') {
+              ctx.fillStyle = '#ff6b35' // Orange for T
+            } else if (pos.team === 'CT') {
+              ctx.fillStyle = '#4a90e2' // Blue for CT
             } else {
-              // Draw line for normal weapons (matching CS Demo Analyzer)
+              ctx.fillStyle = '#888' // Gray for unknown
+            }
+            ctx.fill()
+            
+            // Border - white like CS Demo Analyzer
+            ctx.strokeStyle = '#ffffff'
+            ctx.lineWidth = 2
+            ctx.stroke()
+            
+            // Draw health indicator if health is low (matching CS Demo Analyzer)
+            if (pos.health !== null && pos.health < 100) {
               ctx.beginPath()
-              ctx.lineWidth = 2
-              const lineLength = 8 + 2
-              ctx.moveTo(screenX, screenY)
-              ctx.lineTo(screenX + lineLength * Math.cos(playerAngle), screenY + lineLength * Math.sin(playerAngle))
-              ctx.strokeStyle = 'white'
-              ctx.stroke()
+              ctx.fillStyle = '#d7373f99'
+              const percentage = pos.health / 100
+              const startAngle = -Math.PI / 2
+              const endAngle = startAngle + Math.PI * 2 * -percentage // Negative percentage like CS Demo Analyzer
+              ctx.arc(screenX, screenY, 7, startAngle, endAngle)
+              ctx.lineTo(screenX, screenY)
+              ctx.fill()
+            }
+            
+            // Draw view direction - matching CS Demo Analyzer exactly
+            // CS Demo Analyzer uses: -degreesToRadians(position.yaw)
+            if (pos.yaw !== null && pos.yaw !== undefined) {
+              const playerAngle = -degreesToRadians(pos.yaw)
+              const isHoldingKnife = pos.weapon?.toLowerCase().includes('knife') || false
+              const weaponLower = pos.weapon?.toLowerCase() || ''
+              const isHoldingGrenade = 
+                weaponLower.includes('hegrenade') || weaponLower.includes('he_grenade') ||
+                weaponLower.includes('smokegrenade') || weaponLower.includes('smoke_grenade') ||
+                weaponLower.includes('flashbang') ||
+                weaponLower.includes('incendiary') || weaponLower.includes('molotov') ||
+                weaponLower.includes('decoy')
+              
+              if (isHoldingKnife || isHoldingGrenade) {
+                // Draw triangle for knife/grenade holders (matching CS Demo Analyzer)
+                const triangleLength1 = 4
+                const triangleLength2 = 4
+                const x0 = screenX + (playerRadius + triangleLength1) * Math.cos(playerAngle)
+                const y0 = screenY + (playerRadius + triangleLength1) * Math.sin(playerAngle)
+                const outerX = screenX + playerRadius * Math.cos(playerAngle)
+                const outerY = screenY + playerRadius * Math.sin(playerAngle)
+                const x1 = outerX + triangleLength2 * Math.cos(playerAngle - Math.PI / 2)
+                const y1 = outerY + triangleLength2 * Math.sin(playerAngle - Math.PI / 2)
+                const x2 = outerX + triangleLength2 * Math.cos(playerAngle + Math.PI / 2)
+                const y2 = outerY + triangleLength2 * Math.sin(playerAngle + Math.PI / 2)
+                ctx.beginPath()
+                ctx.moveTo(x0, y0)
+                ctx.lineTo(x1, y1)
+                ctx.lineTo(x2, y2)
+                ctx.fill()
+                
+                // Draw grenade indicator if holding grenade
+                if (isHoldingGrenade) {
+                  let grenadeColor: string | null = null
+                  if (weaponLower.includes('hegrenade') || weaponLower.includes('he_grenade')) {
+                    grenadeColor = '#268e6c'
+                  } else if (weaponLower.includes('smokegrenade') || weaponLower.includes('smoke_grenade')) {
+                    grenadeColor = '#737373'
+                  } else if (weaponLower.includes('flashbang')) {
+                    grenadeColor = '#f9a43f'
+                  } else if (weaponLower.includes('incendiary') || weaponLower.includes('molotov')) {
+                    grenadeColor = '#da7b11'
+                  } else if (weaponLower.includes('decoy')) {
+                    grenadeColor = '#f76d74'
+                  }
+                  
+                  if (grenadeColor) {
+                    const grenadeRadius = 3
+                    ctx.beginPath()
+                    ctx.fillStyle = grenadeColor
+                    ctx.arc(screenX, screenY - playerRadius, grenadeRadius, 0, 2 * Math.PI)
+                    ctx.fill()
+                  }
+                }
+              } else {
+                // Draw line for normal weapons (matching CS Demo Analyzer)
+                ctx.beginPath()
+                ctx.lineWidth = 2
+                const lineLength = 8 + 2
+                ctx.moveTo(screenX, screenY)
+                ctx.lineTo(screenX + lineLength * Math.cos(playerAngle), screenY + lineLength * Math.sin(playerAngle))
+                ctx.strokeStyle = 'white'
+                ctx.stroke()
+              }
             }
           }
         }
@@ -891,238 +1137,297 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
         }
       }
 
-      // Helper function to get zoomed size (like CS Demo Analyzer's zoomedSize)
-      const zoomedSize = (size: number) => {
-        const mapTransform = (ctx as any).mapTransform
-        if (mapTransform && mapImage && mapImage.complete) {
-          const scale = mapTransform.drawWidth / mapTransform.radarSize
-          return size * scale
-        }
-        return size
-      }
-
       // Get tickrate (default to 64 if not available)
       const tickrate = 64 // TODO: get from match data
 
-      // Draw grenade events first (smoke effects, explosions, etc.)
-      // This matches CS Demo Analyzer's approach: events are drawn before grenade positions
-      const relevantEvents = grenadeEvents.filter(ge => ge.tick <= currentTick)
-      const mapTransform = (ctx as any).mapTransform
+      // Get current round to filter grenades
+      const getCurrentRoundForGrenades = () => {
+        if (isFullGame && allRounds.length > 0) {
+          return allRounds.find(r => currentTick >= r.startTick && currentTick <= r.endTick)
+        }
+        return null
+      }
+      const currentRoundForGrenades = getCurrentRoundForGrenades()
       
-      for (const event of relevantEvents) {
-        const coords = transformCoords(event.x, event.y, event.z)
-        const screenX = coords.x
-        const screenY = coords.y
-        const grenadeColor = getGrenadeColor(event.grenadeName)
+      // Draw grenades following cs-demo-manager pattern
+      // Only process grenades that have a position at the current tick (or interpolated)
+      // Filter by current round - clear all grenades between rounds
+      const grenadeCircleSize = zoomedSize(4)
+      
+      // Filter grenade positions by round and current tick
+      const filteredGrenadePositions = grenadePositions.filter(gp => {
+        // Filter by round if in full game mode - only show grenades from current round
+        if (isFullGame && currentRoundForGrenades) {
+          const posRound = allRounds.find(r => gp.tick >= r.startTick && gp.tick <= r.endTick)
+          if (posRound) {
+            const currentRoundIdx = allRounds.indexOf(currentRoundForGrenades)
+            const posRoundIdx = allRounds.indexOf(posRound)
+            // Only show positions from current round
+            if (posRoundIdx !== currentRoundIdx) return false
+          } else {
+            // If position doesn't belong to any round, skip it
+            return false
+          }
+        }
+        return true
+      })
+      
+      // Get grenades at current tick (or interpolate to current tick)
+      // cs-demo-manager pattern: only process grenades that have a position at currentTick
+      // We'll find the most recent position <= currentTick for each projectileId
+      const grenadesAtCurrentTick = new Map<number, typeof grenadePositions[0] & { interpolated?: boolean }>()
+      for (const grenadePos of filteredGrenadePositions) {
+        if (grenadePos.tick > currentTick) continue
         
-        if (event.eventType === 'smoke_start') {
-          // Draw smoke effect matching CS Demo Analyzer
-          // Large circle with semi-transparent fill and team-colored border
-          // Smokes show immediately when they start (event.tick <= currentTick)
-          const elapsedTicks = currentTick - event.tick
-          const secondsElapsed = elapsedTicks / tickrate
-          
-          // Find smoke expiration position (last position for this projectile after smoke starts)
-          const smokeExpirePosition = grenadePositions
-            .filter(gp => gp.projectileId === event.projectileId && gp.tick >= event.tick)
-            .sort((a, b) => b.tick - a.tick)[0]
-          
-          let smokeDuration = 18 // Default 18 seconds
-          if (smokeExpirePosition && smokeExpirePosition.tick > event.tick) {
-            smokeDuration = (smokeExpirePosition.tick - event.tick) / tickrate
-          }
-          
-          // Show smoke immediately when it starts (event.tick <= currentTick) and until it expires
-          if (secondsElapsed >= 0 && secondsElapsed < smokeDuration) {
-            // Draw large smoke circle
-            ctx.beginPath()
-            ctx.fillStyle = `${grenadeColor}7f` // Semi-transparent
-            ctx.lineWidth = zoomedSize(2)
-            // Get team color for border (use thrower team if available)
-            const teamColor = event.throwerTeam === 'T' ? '#ff6b35' : event.throwerTeam === 'CT' ? '#4a90e2' : grenadeColor
-            ctx.strokeStyle = `${teamColor}7f`
-            ctx.arc(screenX, screenY, zoomedSize(26), 0, 2 * Math.PI)
-            ctx.stroke()
-            ctx.fill()
-            
-            // Draw timer circle (white arc showing remaining time)
-            ctx.beginPath()
-            ctx.strokeStyle = '#ffffffbb'
-            ctx.lineWidth = 2
-            const percentage = -(secondsElapsed / smokeDuration)
-            const startAngle = -Math.PI / 2
-            const endAngle = startAngle + Math.PI * 2 * percentage
-            ctx.arc(screenX, screenY, zoomedSize(8), startAngle, endAngle)
-            ctx.stroke()
-          }
-        } else if (event.eventType === 'he_explode') {
-          // Draw HE grenade explosion (fading effect over 1 second)
-          const elapsedTicks = currentTick - event.tick
-          const secondsElapsed = elapsedTicks / tickrate
-          const effectDurationSeconds = 1
-          
-          if (secondsElapsed < effectDurationSeconds) {
-            const scale = 1 - secondsElapsed / effectDurationSeconds
-            ctx.beginPath()
-            ctx.fillStyle = grenadeColor
-            const size = zoomedSize(20 * scale)
-            ctx.arc(screenX, screenY, size, 0, 2 * Math.PI)
-            ctx.closePath()
-            ctx.fill()
-          }
-        } else if (event.eventType === 'flash_explode') {
-          // Draw flashbang explosion (fading effect over 1 second)
-          const elapsedTicks = currentTick - event.tick
-          const secondsElapsed = elapsedTicks / tickrate
-          const effectDurationSeconds = 1
-          
-          if (secondsElapsed < effectDurationSeconds) {
-            const scale = 1 - secondsElapsed
-            ctx.beginPath()
-            ctx.fillStyle = grenadeColor
-            const size = zoomedSize(20 * scale)
-            ctx.arc(screenX, screenY, size, 0, 2 * Math.PI)
-            ctx.closePath()
-            ctx.fill()
-          }
-        } else if (event.eventType === 'decoy_start') {
-          // Draw decoy effect (small filled circle)
-          ctx.beginPath()
-          ctx.fillStyle = grenadeColor
-          ctx.lineWidth = zoomedSize(1)
-          ctx.arc(screenX, screenY, zoomedSize(4), 0, 2 * Math.PI)
-          ctx.closePath()
-          ctx.fill()
+        const existing = grenadesAtCurrentTick.get(grenadePos.projectileId)
+        if (!existing || grenadePos.tick > existing.tick) {
+          grenadesAtCurrentTick.set(grenadePos.projectileId, grenadePos)
         }
       }
-
-      // Draw grenade trajectories (from thrower position to landing position)
-      // Trajectories should be static - drawn once from throw to landing, not updating
-      const grenadeTrajectories = new Map<number, { start: { x: number, y: number, z: number }, end: { x: number, y: number, z: number }, grenadeName: string }>()
       
-      // Build trajectories for all grenades that have landed or started their effect
-      for (const event of grenadeEvents) {
-        if (event.tick > currentTick) continue // Skip future events
-        
-        // Find first position (where grenade was thrown) and last position (where it landed)
-        const allPositions = grenadePositions.filter(gp => gp.projectileId === event.projectileId)
-        if (allPositions.length === 0) continue
-        
-        const firstPosition = allPositions.sort((a, b) => a.tick - b.tick)[0]
-        const landingPosition = { x: event.x, y: event.y, z: event.z } // Event position is where it landed
-        
-        // Try to find thrower position at the time of throw
-        let throwerPos: { x: number, y: number, z: number } | null = null
-        if (event.throwerSteamId && firstPosition) {
-          // Find player position at the tick when grenade was first tracked
-          const throwerPosition = getInterpolatedPosition(event.throwerSteamId, firstPosition.tick)
-          if (throwerPosition) {
-            throwerPos = { x: throwerPosition.x, y: throwerPosition.y, z: throwerPosition.z }
-          }
-        }
-        
-        // Use thrower position if available, otherwise use first grenade position
-        const startPos = throwerPos || { x: firstPosition.x, y: firstPosition.y, z: firstPosition.z }
-        
-        grenadeTrajectories.set(event.projectileId, {
-          start: startPos,
-          end: landingPosition,
-          grenadeName: event.grenadeName
-        })
-      }
-      
-      // Draw static trajectories
-      for (const [projectileId, trajectory] of grenadeTrajectories) {
-        // Check if this grenade has already started its effect (don't draw trajectory for active smokes)
-        const hasActiveEffect = grenadeEvents.some(ge => {
-          if (ge.projectileId !== projectileId) return false
-          if (ge.eventType === 'smoke_start' && ge.tick <= currentTick) {
-            // Check if smoke is still active
-            const elapsedTicks = currentTick - ge.tick
-            const secondsElapsed = elapsedTicks / tickrate
-            const smokeExpirePosition = grenadePositions
-              .filter(gp => gp.projectileId === projectileId && gp.tick >= ge.tick)
-              .sort((a, b) => b.tick - a.tick)[0]
-            let smokeDuration = 18
-            if (smokeExpirePosition && smokeExpirePosition.tick > ge.tick) {
-              smokeDuration = (smokeExpirePosition.tick - ge.tick) / tickrate
-            }
-            return secondsElapsed >= 0 && secondsElapsed < smokeDuration
-          }
-          return false
-        })
-        
-        // Don't draw trajectory if smoke is currently active (smoke effect is drawn instead)
-        if (hasActiveEffect) {
-          continue
-        }
-        
-        const startCoords = transformCoords(trajectory.start.x, trajectory.start.y, trajectory.start.z)
-        const endCoords = transformCoords(trajectory.end.x, trajectory.end.y, trajectory.end.z)
+      // Helper functions for drawing effects (matching cs-demo-manager)
+      const drawSmokeEffect = (smokeStart: typeof grenadeEvents[0], smokeExpirePosition: typeof grenadePositions[0] | undefined) => {
+        const coords = transformCoords(smokeStart.x, smokeStart.y, smokeStart.z)
+        const x = coords.x
+        const y = coords.y
+        const grenadeColor = getGrenadeColor('smokegrenade')
         
         ctx.beginPath()
-        ctx.strokeStyle = getGrenadeColor(trajectory.grenadeName)
-        ctx.lineWidth = zoomedSize(1)
-        ctx.moveTo(startCoords.x, startCoords.y)
-        ctx.lineTo(endCoords.x, endCoords.y)
+        ctx.fillStyle = `${grenadeColor}7f`
+        ctx.lineWidth = zoomedSize(2)
+        const teamColor = smokeStart.throwerTeam === 'T' ? '#ff6b35' : smokeStart.throwerTeam === 'CT' ? '#4a90e2' : grenadeColor
+        ctx.strokeStyle = `${teamColor}7f`
+        ctx.arc(x, y, zoomedSize(26), 0, 2 * Math.PI)
+        ctx.stroke()
+        ctx.fill()
+        
+        ctx.beginPath()
+        ctx.strokeStyle = '#ffffffbb'
+        ctx.lineWidth = 2
+        const elapsedTickCount = currentTick - smokeStart.tick
+        const secondsElapsed = elapsedTickCount / tickrate
+        let smokeDuration = 18
+        if (smokeExpirePosition !== undefined) {
+          smokeDuration = (smokeExpirePosition.tick - smokeStart.tick) / tickrate
+        }
+        const percentage = -(secondsElapsed / smokeDuration)
+        const startAngle = -Math.PI / 2
+        const endAngle = startAngle + Math.PI * 2 * percentage
+        ctx.arc(x, y, zoomedSize(8), startAngle, endAngle)
         ctx.stroke()
       }
-
-      // Draw in-flight grenades (only if they haven't started their effect yet)
-      const currentGrenadePositions = grenadePositions.filter(gp => gp.tick === currentTick)
       
-      for (const grenadePos of currentGrenadePositions) {
-        // Check if this grenade has already started its effect
-        const hasStartedEffect = grenadeEvents.some(ge => {
-          if (ge.projectileId !== grenadePos.projectileId) return false
-          if (ge.eventType === 'smoke_start' && ge.tick <= currentTick) return true
-          if (ge.eventType === 'decoy_start' && ge.tick <= currentTick) return true
-          if (ge.eventType === 'he_explode' && ge.tick <= currentTick) return true
-          if (ge.eventType === 'flash_explode' && ge.tick <= currentTick) return true
-          return false
-        })
+      const drawHeGrenadeExplode = (heGrenadeExplode: typeof grenadeEvents[0]) => {
+        const effectDurationSeconds = 1
+        const elapsedSinceExplosionTickCount = currentTick - heGrenadeExplode.tick
+        const secondsElapsed = elapsedSinceExplosionTickCount / tickrate
+        if (secondsElapsed > effectDurationSeconds) {
+          return
+        }
         
-        // Skip if effect has started
-        if (hasStartedEffect) {
+        const coords = transformCoords(heGrenadeExplode.x, heGrenadeExplode.y, heGrenadeExplode.z)
+        const x = coords.x
+        const y = coords.y
+        const grenadeColor = getGrenadeColor('hegrenade')
+        ctx.beginPath()
+        ctx.fillStyle = grenadeColor
+        const scale = 1 - secondsElapsed / effectDurationSeconds
+        const size = zoomedSize(20 * scale)
+        ctx.arc(x, y, size, 0, 2 * Math.PI)
+        ctx.closePath()
+        ctx.fill()
+      }
+      
+      const drawDecoyEffect = (position: typeof grenadePositions[0]) => {
+        const coords = transformCoords(position.x, position.y, position.z)
+        const x = coords.x
+        const y = coords.y
+        const grenadeColor = getGrenadeColor(position.grenadeName)
+        ctx.beginPath()
+        ctx.fillStyle = grenadeColor
+        ctx.lineWidth = zoomedSize(1)
+        ctx.arc(x, y, grenadeCircleSize, 0, 2 * Math.PI)
+        ctx.closePath()
+        ctx.fill()
+      }
+      
+      // Process each grenade at current tick (cs-demo-manager pattern)
+      for (const [projectileId, position] of grenadesAtCurrentTick) {
+        const { grenadeName } = position
+        
+        // Check if grenade has exploded/started effect
+        switch (grenadeName) {
+          case 'smokegrenade': {
+            // IMPORTANT: event.tick is when smoke ENDS, so smokeStart.tick is when it ends
+            // We need to find the smoke_start event and calculate backwards
+            const smokeEvent = grenadeEvents.find(ge => 
+              ge.projectileId === projectileId && 
+              (ge.eventType === 'smoke_start' || ge.eventType === 'smoke_end') &&
+              ge.tick <= currentTick
+            )
+            if (smokeEvent !== undefined) {
+              // Calculate smoke start tick (event.tick is when smoke ends)
+              const smokeDuration = 18
+              const smokeDurationTicks = Math.floor(smokeDuration * tickrate)
+              const smokeStartTick = smokeEvent.tick - smokeDurationTicks
+              
+              // Only show smoke if currentTick is within smoke duration
+              if (currentTick >= smokeStartTick && currentTick <= smokeEvent.tick) {
+                // Find smoke expire position (last position for this projectileId)
+                const smokeExpirePosition = filteredGrenadePositions
+                  .filter(p => p.projectileId === projectileId && p.tick >= currentTick)
+                  .sort((a, b) => a.tick - b.tick)
+                  .at(-1)
+                
+                // Create a smokeStart event with the calculated start tick
+                const smokeStartEvent = {
+                  ...smokeEvent,
+                  tick: smokeStartTick
+                }
+                drawSmokeEffect(smokeStartEvent, smokeExpirePosition)
+              }
+              // Always skip trajectory if smoke event exists (even if smoke has expired)
+              continue
+            }
+            break
+          }
+          case 'hegrenade': {
+            const heGrenadeExplode = grenadeEvents.find(ge =>
+              ge.projectileId === projectileId &&
+              ge.eventType === 'he_explode' &&
+              ge.tick <= currentTick
+            )
+            if (heGrenadeExplode !== undefined) {
+              drawHeGrenadeExplode(heGrenadeExplode)
+              continue // Skip trajectory
+            }
+            break
+          }
+          case 'decoy': {
+            const decoyStart = grenadeEvents.find(ge =>
+              ge.projectileId === projectileId &&
+              ge.eventType === 'decoy_start' &&
+              ge.tick <= currentTick
+            )
+            if (decoyStart !== undefined) {
+              drawDecoyEffect(position)
+              continue // Skip trajectory
+            }
+            break
+          }
+        }
+        
+        // Draw trajectory for in-flight grenades ONLY if grenade hasn't exploded
+        // Double-check that grenade hasn't exploded (safety check - should have been caught in switch above)
+        // Use the same logic as in the switch statement above
+        let hasExploded = false
+        
+        if (grenadeName === 'smokegrenade') {
+          const smokeEvent = grenadeEvents.find(ge => 
+            ge.projectileId === projectileId && 
+            (ge.eventType === 'smoke_start' || ge.eventType === 'smoke_end') &&
+            ge.tick <= currentTick
+          )
+          hasExploded = smokeEvent !== undefined
+        } else if (grenadeName === 'hegrenade') {
+          const heGrenadeExplode = grenadeEvents.find(ge =>
+            ge.projectileId === projectileId &&
+            ge.eventType === 'he_explode' &&
+            ge.tick <= currentTick
+          )
+          hasExploded = heGrenadeExplode !== undefined
+        } else if (grenadeName === 'decoy') {
+          const decoyStart = grenadeEvents.find(ge =>
+            ge.projectileId === projectileId &&
+            ge.eventType === 'decoy_start' &&
+            ge.tick <= currentTick
+          )
+          hasExploded = decoyStart !== undefined
+        } else if (grenadeName === 'flashbang') {
+          const flashbangExplode = grenadeEvents.find(ge =>
+            ge.projectileId === projectileId &&
+            ge.eventType === 'flash_explode' &&
+            ge.tick <= currentTick
+          )
+          hasExploded = flashbangExplode !== undefined
+        }
+        
+        if (hasExploded) {
+          // Grenade has exploded but we didn't catch it in switch - skip trajectory
           continue
         }
         
-        const coords = transformCoords(grenadePos.x, grenadePos.y, grenadePos.z)
-        const screenX = coords.x
-        const screenY = coords.y
+        // Draw trajectory for in-flight grenades ONLY
+        // Make absolutely sure grenade hasn't exploded by checking again
+        const hasExplodedCheck = grenadeEvents.some(ge => {
+          if (ge.projectileId !== projectileId || ge.tick > currentTick) return false
+          const eventTypeLower = (ge.eventType || '').toLowerCase()
+          const grenadeNameLower = (grenadeName || '').toLowerCase()
+          
+          if (grenadeNameLower === 'smokegrenade' && (eventTypeLower === 'smoke_start' || eventTypeLower === 'smoke_end')) return true
+          if (grenadeNameLower === 'hegrenade' && eventTypeLower === 'he_explode') return true
+          if (grenadeNameLower === 'decoy' && eventTypeLower === 'decoy_start') return true
+          if (grenadeNameLower === 'flashbang' && eventTypeLower === 'flash_explode') return true
+          return false
+        })
         
-        // Draw trajectory from first position to current position (for in-flight grenades)
-        const allPositions = grenadePositions.filter(gp => 
-          gp.projectileId === grenadePos.projectileId && gp.tick <= currentTick
-        )
+        if (hasExplodedCheck) {
+          // Safety check failed - grenade has exploded, skip trajectory
+          continue
+        }
         
-        if (allPositions.length > 1) {
-          const firstPos = allPositions.sort((a, b) => a.tick - b.tick)[0]
-          
-          // Try to find thrower position
-          let throwerPos: { x: number, y: number, z: number } | null = null
-          if (grenadePos.throwerSteamId) {
-            const throwerPosition = getInterpolatedPosition(grenadePos.throwerSteamId, firstPos.tick)
-            if (throwerPosition) {
-              throwerPos = { x: throwerPosition.x, y: throwerPosition.y, z: throwerPosition.z }
-            }
-          }
-          
-          const startPos = throwerPos || { x: firstPos.x, y: firstPos.y, z: firstPos.z }
-          const startCoords = transformCoords(startPos.x, startPos.y, startPos.z)
-          
+        // Draw trajectory for in-flight grenades (tick < currentTick)
+        const previousPositions = filteredGrenadePositions.filter(p => 
+          p.projectileId === projectileId && p.tick < currentTick
+        ).sort((a, b) => a.tick - b.tick)
+        
+        if (previousPositions.length === 0) continue
+        
+        ctx.strokeStyle = getGrenadeColor(grenadeName)
+        ctx.fillStyle = getGrenadeColor(grenadeName)
+        ctx.lineWidth = zoomedSize(1)
+        
+        // Draw grenade path (trajectory)
+        for (let i = 0; i < previousPositions.length - 1; i++) {
           ctx.beginPath()
-          ctx.strokeStyle = getGrenadeColor(grenadePos.grenadeName)
-          ctx.lineWidth = zoomedSize(1)
-          ctx.moveTo(startCoords.x, startCoords.y)
-          ctx.lineTo(screenX, screenY)
+          const currentPosition = previousPositions[i]
+          const currentCoords = transformCoords(currentPosition.x, currentPosition.y, currentPosition.z)
+          ctx.moveTo(currentCoords.x, currentCoords.y)
+          
+          const nextPosition = previousPositions[i + 1]
+          const nextCoords = transformCoords(nextPosition.x, nextPosition.y, nextPosition.z)
+          ctx.lineTo(nextCoords.x, nextCoords.y)
+          ctx.closePath()
           ctx.stroke()
         }
         
         // Draw grenade circle at current position
+        const currentCoords = transformCoords(position.x, position.y, position.z)
         ctx.beginPath()
-        ctx.fillStyle = getGrenadeColor(grenadePos.grenadeName)
-        ctx.arc(screenX, screenY, zoomedSize(4), 0, 2 * Math.PI)
+        ctx.arc(currentCoords.x, currentCoords.y, grenadeCircleSize, 0, 2 * Math.PI)
+        ctx.closePath()
+        ctx.fill()
+      }
+      
+      // Handle flashbang explosions separately (cs-demo-manager pattern)
+      const flashbangExplodes = grenadeEvents.filter(ge =>
+        ge.eventType === 'flash_explode' && ge.tick <= currentTick
+      )
+      for (const flashbangExplode of flashbangExplodes) {
+        const secondsElapsedSinceExplosion = (currentTick - flashbangExplode.tick) / tickrate
+        if (secondsElapsedSinceExplosion > 1) {
+          continue
+        }
+        
+        const coords = transformCoords(flashbangExplode.x, flashbangExplode.y, flashbangExplode.z)
+        const x = coords.x
+        const y = coords.y
+        const grenadeColor = getGrenadeColor('flashbang')
+        ctx.beginPath()
+        ctx.fillStyle = grenadeColor
+        const scale = 1 - secondsElapsedSinceExplosion
+        const size = zoomedSize(20 * scale)
+        ctx.arc(x, y, size, 0, 2 * Math.PI)
         ctx.closePath()
         ctx.fill()
       }
@@ -1190,6 +1495,39 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
       // Filter out shots that have finished animating (time >= 1.0)
       (ctx as any).animatedShots = animatedShots.filter(shot => shot.time < 1.0)
 
+      // Follow player: update pan to keep selected player centered
+      if (followPlayer) {
+        const followedPos = getInterpolatedPosition(followPlayer, currentTick)
+        if (followedPos) {
+          const mapTransform = (ctx as any).mapTransform
+          if (mapTransform && mapImage && mapImage.complete) {
+            // Calculate player's position in radar coordinates
+            const radarX = getScaledCoordinateX(mapTransform.mapConfig, mapTransform.radarSize, followedPos.x)
+            const radarY = getScaledCoordinateY(mapTransform.mapConfig, mapTransform.radarSize, followedPos.y)
+            const scaleX = mapTransform.drawWidth / mapTransform.radarSize
+            const scaleY = mapTransform.drawHeight / mapTransform.radarSize
+            
+            // Calculate center of canvas
+            const centerX = canvas.width / 2
+            const centerY = canvas.height / 2
+            
+            // Calculate pan needed to center the player
+            // drawX = centerX - drawWidth/2 + panX
+            // We want: centerX = drawX + radarX * scaleX
+            // So: centerX = centerX - drawWidth/2 + panX + radarX * scaleX
+            // panX = drawWidth/2 - radarX * scaleX
+            const newPanX = mapTransform.drawWidth / 2 - radarX * scaleX
+            const newPanY = mapTransform.drawHeight / 2 - radarY * scaleY
+            
+            // Only update if values changed to avoid infinite loops
+            if (Math.abs(panX - newPanX) > 0.1 || Math.abs(panY - newPanY) > 0.1) {
+              setPanX(newPanX)
+              setPanY(newPanY)
+            }
+          }
+        }
+      }
+
       // Continue animation if playing
       if (isPlaying) {
         animationFrameRef.current = requestAnimationFrame(render)
@@ -1204,7 +1542,7 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
         cancelAnimationFrame(animationFrameRef.current)
       }
     }
-  }, [allPositions, currentTick, isPlaying, getCurrentPositions, events, getInterpolatedPosition, mapImage, shots, grenadePositions, grenadeEvents])
+  }, [allPositions, currentTick, isPlaying, getCurrentPositions, events, getInterpolatedPosition, mapImage, playerTImage, playerCTImage, shots, grenadePositions, grenadeEvents, zoom, panX, panY, followPlayer])
 
 
   const handleTickChange = (newTick: number) => {
@@ -1290,6 +1628,97 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
       setCurrentTick(minTick)
     }
     setIsPlaying(!isPlaying)
+  }
+
+  // Zoom and pan handlers - use native event listener with passive: false to allow preventDefault
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault()
+      
+      // Disable follow player when user manually zooms
+      if (followPlayer) {
+        setFollowPlayer(null)
+      }
+      
+      const rect = canvas.getBoundingClientRect()
+      const mouseX = e.clientX - rect.left
+      const mouseY = e.clientY - rect.top
+      
+      // Calculate zoom factor (zoom in/out)
+      const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1
+      const newZoom = Math.max(0.5, Math.min(5, zoom * zoomFactor))
+      
+      // Calculate the point under the mouse before zoom
+      const centerX = canvas.width / 2
+      const centerY = canvas.height / 2
+      const maxSize = Math.min(canvas.width, canvas.height)
+      const baseSize = maxSize
+      const oldSize = baseSize * zoom
+      const oldX = centerX - oldSize / 2 + panX
+      const oldY = centerY - oldSize / 2 + panY
+      
+      // Convert mouse position to map coordinates
+      const mapX = (mouseX - oldX) / oldSize
+      const mapY = (mouseY - oldY) / oldSize
+      
+      // Calculate new size and position
+      const newSize = baseSize * newZoom
+      const newX = centerX - newSize / 2
+      const newY = centerY - newSize / 2
+      
+      // Adjust pan to keep the point under the mouse in the same place
+      const newPanX = mouseX - newX - mapX * newSize
+      const newPanY = mouseY - newY - mapY * newSize
+      
+      setZoom(newZoom)
+      setPanX(newPanX)
+      setPanY(newPanY)
+    }
+
+    // Use addEventListener with passive: false to allow preventDefault
+    canvas.addEventListener('wheel', handleWheel, { passive: false })
+
+    return () => {
+      canvas.removeEventListener('wheel', handleWheel)
+    }
+  }, [zoom, panX, panY, followPlayer])
+  
+  const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (e.button !== 0) return // Only handle left mouse button
+    setIsDragging(true)
+    setDragStart({ x: e.clientX, y: e.clientY })
+    setDragStartPan({ x: panX, y: panY })
+  }
+  
+  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!isDragging) return
+    
+    const deltaX = e.clientX - dragStart.x
+    const deltaY = e.clientY - dragStart.y
+    
+    // Disable follow player when user manually pans
+    if (Math.abs(deltaX) > 3 || Math.abs(deltaY) > 3) {
+      if (followPlayer) {
+        setFollowPlayer(null)
+      }
+    }
+    
+    setPanX(dragStartPan.x + deltaX)
+    setPanY(dragStartPan.y + deltaY)
+  }
+  
+  const handleMouseUp = () => {
+    setIsDragging(false)
+  }
+  
+  const handleResetView = () => {
+    setZoom(1)
+    setPanX(0)
+    setPanY(0)
+    setFollowPlayer(null)
   }
 
   const handleStop = () => {
@@ -1485,7 +1914,7 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
   const [showLegend, setShowLegend] = useState(false)
 
   return (
-    <div className={isModal ? "fixed inset-0 bg-black/80 flex items-center justify-center z-50" : "h-screen flex flex-col"}>
+    <div className={isModal ? "fixed inset-0 bg-black/80 flex items-center justify-center z-50" : "h-full flex flex-col"}>
       <div className={`bg-secondary rounded-lg border border-border ${isModal ? 'w-[90vw] h-[90vh]' : 'h-full'} flex flex-col overflow-hidden`}>
         {/* Header */}
         <div className="px-6 py-4 border-b border-border flex items-center justify-between flex-shrink-0">
@@ -1632,11 +2061,9 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
         )}
 
         {/* Canvas with Team Panels */}
-        <div className="flex-1 relative bg-primary overflow-hidden flex min-h-0">
-          {/* Killfeed Overlay */}
-          <KillfeedOverlay events={events} currentTick={currentTick} allPositions={allPositions} />
+        <div className="flex-1 relative bg-primary overflow-hidden flex min-h-0" style={{ maxHeight: isModal ? 'calc(90vh - 300px)' : 'calc(100% - 220px)' }}>
           {/* Left Team Panel (T/Team A) */}
-          <div className="w-56 bg-surface border-r border-border overflow-y-auto flex flex-col">
+          <div className="w-56 bg-surface border-r border-border overflow-y-auto flex flex-col max-h-full">
             <div className="p-3 border-b border-[#ff6b35]/50 bg-[#ff6b35]/10">
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-semibold text-[#ff6b35]">Terrorists</h3>
@@ -1652,10 +2079,16 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
                 .map((pos) => {
                   const isDead = pos.health === null || pos.health <= 0
                   return (
-                    <div key={pos.steamid} className={`p-2 border-b border-border/50 ${isDead ? 'opacity-50' : ''}`}>
+                    <div 
+                      key={pos.steamid} 
+                      className={`p-2 border-b border-border/50 ${isDead ? 'opacity-50' : ''} ${followPlayer === pos.steamid ? 'bg-accent/20 border-accent/50' : 'hover:bg-surface/50'} cursor-pointer transition-colors`}
+                      onClick={() => setFollowPlayer(followPlayer === pos.steamid ? null : pos.steamid)}
+                      title={followPlayer === pos.steamid ? 'Click to unfollow' : 'Click to follow player'}
+                    >
                       <div className="flex items-center gap-2 mb-1">
                         <div className="w-2 h-2 rounded-full bg-[#ff6b35]" />
                         <span className="font-medium text-white text-sm truncate flex-1">{pos.name || pos.steamid}</span>
+                        {followPlayer === pos.steamid && <span className="text-xs text-accent">●</span>}
                       </div>
                       <div className="grid grid-cols-3 gap-1 text-[10px] text-gray-400">
                         <div>
@@ -1691,11 +2124,25 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
               height={800}
               className="w-full h-full cursor-move"
               style={{ imageRendering: 'pixelated' }}
+              onMouseDown={handleMouseDown}
+              onMouseMove={handleMouseMove}
+              onMouseUp={handleMouseUp}
+              onMouseLeave={handleMouseUp}
             />
+            {/* Scoreboard Overlay - positioned at top center */}
+            <ScoreboardOverlay 
+              currentTick={currentTick}
+              isFullGame={isFullGame}
+              allRounds={allRounds}
+              roundStartTick={roundStartTick}
+              roundEndTick={roundEndTick}
+            />
+            {/* Killfeed Overlay - positioned above canvas */}
+            <KillfeedOverlay events={events} currentTick={currentTick} allPositions={allPositions} />
           </div>
 
           {/* Right Team Panel (CT/Team B) */}
-          <div className="w-56 bg-surface border-l border-border overflow-y-auto flex flex-col">
+          <div className="w-56 bg-surface border-l border-border overflow-y-auto flex flex-col max-h-full">
             <div className="p-3 border-b border-[#4a90e2]/50 bg-[#4a90e2]/10">
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-semibold text-[#4a90e2]">Counter-Terrorists</h3>
@@ -1711,10 +2158,16 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
                 .map((pos) => {
                   const isDead = pos.health === null || pos.health <= 0
                   return (
-                    <div key={pos.steamid} className={`p-2 border-b border-border/50 ${isDead ? 'opacity-50' : ''}`}>
+                    <div 
+                      key={pos.steamid} 
+                      className={`p-2 border-b border-border/50 ${isDead ? 'opacity-50' : ''} ${followPlayer === pos.steamid ? 'bg-accent/20 border-accent/50' : 'hover:bg-surface/50'} cursor-pointer transition-colors`}
+                      onClick={() => setFollowPlayer(followPlayer === pos.steamid ? null : pos.steamid)}
+                      title={followPlayer === pos.steamid ? 'Click to unfollow' : 'Click to follow player'}
+                    >
                       <div className="flex items-center gap-2 mb-1">
                         <div className="w-2 h-2 rounded-full bg-[#4a90e2]" />
                         <span className="font-medium text-white text-sm truncate flex-1">{pos.name || pos.steamid}</span>
+                        {followPlayer === pos.steamid && <span className="text-xs text-accent">●</span>}
                       </div>
                       <div className="grid grid-cols-3 gap-1 text-[10px] text-gray-400">
                         <div>
@@ -1759,7 +2212,6 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
               <button
                 onClick={() => handleTickChange(currentTick - 64 * 15)}
                 className="px-3 py-2 bg-[#2a2a2a] hover:bg-[#3a3a3a] text-white rounded-md text-sm border border-[#3a3a3a] transition-colors"
-                disabled={isPlaying}
                 title="Skip -15s"
               >
                 -15s
@@ -1767,7 +2219,6 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
               <button
                 onClick={() => handleTickChange(currentTick + 64 * 15)}
                 className="px-3 py-2 bg-[#2a2a2a] hover:bg-[#3a3a3a] text-white rounded-md text-sm border border-[#3a3a3a] transition-colors"
-                disabled={isPlaying}
                 title="Skip +15s"
               >
                 +15s
@@ -1787,6 +2238,30 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
               {isFullGame && allRounds.length > 0 && <span className="text-gray-500"> / {allRounds.length}</span>}
             </div>
 
+            {/* Follow player */}
+            <select
+              value={followPlayer || ''}
+              onChange={(e) => {
+                const value = e.target.value
+                setFollowPlayer(value || null)
+                if (!value) {
+                  // Reset pan when disabling follow
+                  setPanX(0)
+                  setPanY(0)
+                }
+              }}
+              className="px-3 py-2 bg-[#2a2a2a] border border-[#3a3a3a] rounded-md text-white text-sm hover:bg-[#3a3a3a] transition-colors"
+            >
+              <option value="">No follow</option>
+              {getCurrentPositions()
+                .sort((a, b) => (a.name || a.steamid).localeCompare(b.name || b.steamid))
+                .map((pos) => (
+                  <option key={pos.steamid} value={pos.steamid}>
+                    {pos.name || pos.steamid} ({pos.team || '?'})
+                  </option>
+                ))}
+            </select>
+
             {/* Playback speed */}
             <select
               value={playbackSpeed}
@@ -1794,7 +2269,6 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
                 setPlaybackSpeed(parseFloat(e.target.value))
               }}
               className="px-3 py-2 bg-[#2a2a2a] border border-[#3a3a3a] rounded-md text-white text-sm hover:bg-[#3a3a3a] transition-colors"
-              disabled={isPlaying}
             >
               <option value={0.25}>¼x</option>
               <option value={0.5}>½x</option>
@@ -1803,6 +2277,34 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
               <option value={4}>4x</option>
               <option value={8}>8x</option>
             </select>
+
+            {/* Zoom controls */}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setZoom(Math.max(0.5, zoom - 0.25))}
+                className="px-2 py-1 bg-[#2a2a2a] hover:bg-[#3a3a3a] text-white rounded text-sm border border-[#3a3a3a] transition-colors"
+                title="Zoom out"
+              >
+                −
+              </button>
+              <span className="text-sm text-gray-300 min-w-[3rem] text-center">
+                {Math.round(zoom * 100)}%
+              </span>
+              <button
+                onClick={() => setZoom(Math.min(5, zoom + 0.25))}
+                className="px-2 py-1 bg-[#2a2a2a] hover:bg-[#3a3a3a] text-white rounded text-sm border border-[#3a3a3a] transition-colors"
+                title="Zoom in"
+              >
+                +
+              </button>
+              <button
+                onClick={handleResetView}
+                className="px-2 py-1 bg-[#2a2a2a] hover:bg-[#3a3a3a] text-white rounded text-xs border border-[#3a3a3a] transition-colors"
+                title="Reset zoom and pan"
+              >
+                Reset
+              </button>
+            </div>
 
             {/* Time display */}
             <div className="text-sm text-gray-300 ml-auto font-mono">
@@ -1832,16 +2334,194 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
   )
 }
 
+// Scoreboard Overlay Component
+function ScoreboardOverlay({ 
+  currentTick, 
+  isFullGame, 
+  allRounds, 
+  roundStartTick, 
+  roundEndTick 
+}: { 
+  currentTick: number
+  isFullGame: boolean
+  allRounds: Round[]
+  roundStartTick: number
+  roundEndTick: number
+}) {
+  const tickrate = 64 // CS2 tick rate
+  
+  // Get current round
+  const getCurrentRound = () => {
+    if (isFullGame && allRounds.length > 0) {
+      return allRounds.find(r => currentTick >= r.startTick && currentTick <= r.endTick)
+    }
+    // For single round mode, we need to get freezeEndTick from the round data
+    // Try to find it in allRounds if available, otherwise use null
+    const singleRound = allRounds.find(r => r.roundIndex === 0 || r.startTick === roundStartTick)
+    if (singleRound) {
+      return singleRound
+    }
+    // Fallback: create a mock round from props (no freeze time data)
+    return {
+      roundIndex: 0,
+      startTick: roundStartTick,
+      endTick: roundEndTick,
+      freezeEndTick: null,
+      tWins: 0,
+      ctWins: 0
+    }
+  }
+  
+  const currentRound = getCurrentRound()
+  
+  // Calculate scores - show scores from previous round during active round, or current round if round is finished
+  const getScores = () => {
+    if (isFullGame && allRounds.length > 0 && currentRound) {
+      // Find the current round index
+      const currentRoundIdx = allRounds.findIndex(r => r.roundIndex === currentRound.roundIndex)
+      if (currentRoundIdx >= 0) {
+        // Check if the round is finished (currentTick is at or past endTick)
+        const isRoundFinished = currentTick >= currentRound.endTick
+        
+        if (isRoundFinished) {
+          // Round is finished, show scores from this round (which includes this round's win)
+          return {
+            tWins: currentRound.tWins ?? 0,
+            ctWins: currentRound.ctWins ?? 0
+          }
+        } else {
+          // Round is still in progress, show scores from previous round
+          if (currentRoundIdx > 0) {
+            const previousRound = allRounds[currentRoundIdx - 1]
+            return {
+              tWins: previousRound.tWins ?? 0,
+              ctWins: previousRound.ctWins ?? 0
+            }
+          } else {
+            // First round, show 0-0
+            return { tWins: 0, ctWins: 0 }
+          }
+        }
+      }
+    }
+    // For single round mode or if we can't find the round, show 0-0
+    return { tWins: 0, ctWins: 0 }
+  }
+  
+  const scores = getScores()
+  
+  // Calculate round time
+  const getRoundTime = () => {
+    if (!currentRound) {
+      return { time: '0:00', isFreezeTime: false }
+    }
+    
+    const roundStart = currentRound.startTick
+    const freezeEnd = currentRound.freezeEndTick
+    
+    // Check if we're in freeze time
+    // Only show freeze time if freezeEndTick is set and currentTick is before it
+    const isFreezeTime = freezeEnd !== null && freezeEnd > roundStart && currentTick < freezeEnd
+    
+    // Calculate elapsed time
+    let elapsedTicks = 0
+    if (isFreezeTime) {
+      // During freeze time, show time from round start
+      elapsedTicks = Math.max(0, currentTick - roundStart)
+    } else if (freezeEnd !== null && freezeEnd > roundStart) {
+      // After freeze time, show time from freeze end
+      elapsedTicks = Math.max(0, currentTick - freezeEnd)
+    } else {
+      // No freeze time data, show time from round start
+      elapsedTicks = Math.max(0, currentTick - roundStart)
+    }
+    
+    const elapsedSeconds = elapsedTicks / tickrate
+    const minutes = Math.floor(elapsedSeconds / 60)
+    const seconds = Math.floor(elapsedSeconds % 60)
+    
+    return {
+      time: `${minutes}:${seconds.toString().padStart(2, '0')}`,
+      isFreezeTime
+    }
+  }
+  
+  const roundTime = getRoundTime()
+  
+  return (
+    <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-[90] pointer-events-none">
+      <div className="bg-black/90 backdrop-blur-sm rounded-lg border border-gray-700 px-4 py-2 flex items-center gap-4">
+        {/* Team A Score (T) */}
+        <div className="flex items-center gap-2">
+          <span className="text-[#ff6b35] font-bold text-lg">T</span>
+          <span className="text-white font-semibold text-xl">{scores.tWins}</span>
+        </div>
+        
+        {/* Round Time */}
+        <div className="flex flex-col items-center gap-1 px-3 border-l border-r border-gray-700 min-w-[80px]">
+          <div className={`font-mono font-semibold text-lg ${roundTime.isFreezeTime ? 'text-yellow-400' : 'text-white'}`}>
+            {roundTime.time}
+          </div>
+          {roundTime.isFreezeTime && (
+            <div className="text-yellow-400 text-xs font-semibold uppercase tracking-wide animate-pulse">
+              FREEZE TIME
+            </div>
+          )}
+        </div>
+        
+        {/* Team B Score (CT) */}
+        <div className="flex items-center gap-2">
+          <span className="text-white font-semibold text-xl">{scores.ctWins}</span>
+          <span className="text-[#4a9eff] font-bold text-lg">CT</span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // Killfeed Overlay Component
 function KillfeedOverlay({ events, currentTick, allPositions }: { events: Event[], currentTick: number, allPositions: PositionMap }) {
   const tickrate = 64 // CS2 tick rate
   const visibleDuration = 5 // Show kills for 5 seconds
   
+  // Debug: log events to see what we're getting (only once when events change)
+  useEffect(() => {
+    if (events.length > 0) {
+      const eventTypes = [...new Set(events.map(e => e.type))]
+      console.log('KillfeedOverlay - Total events:', events.length, 'Unique types:', eventTypes)
+      
+      // Check for events with both actor and victim (likely kills)
+      const potentialKills = events.filter(e => e.actorSteamId && e.victimSteamId)
+      console.log('KillfeedOverlay - Events with actor+victim:', potentialKills.length)
+      if (potentialKills.length > 0) {
+        console.log('KillfeedOverlay - Sample potential kills:', potentialKills.slice(0, 3).map(e => ({
+          type: e.type,
+          tick: e.startTick,
+          actor: e.actorSteamId,
+          victim: e.victimSteamId
+        })))
+      }
+    } else {
+      console.log('KillfeedOverlay - No events received')
+    }
+  }, [events.length]) // Only log when event count changes
+  
   // Get visible kills (within time window)
   const visibleKills = events
     .filter(event => {
-      // Filter for kill events (both regular kills and team kills)
-      if (event.type !== 'team_kill' && event.type !== 'kill') {
+      // Check for kill event types (case-insensitive)
+      // TEAM_KILL is stored in uppercase, but we should also check for regular kills
+      const typeUpper = event.type?.toUpperCase() || ''
+      const isKillEvent = typeUpper === 'TEAM_KILL' || 
+                         typeUpper === 'KILL' ||
+                         typeUpper === 'KILLS'
+      
+      if (!isKillEvent) {
+        return false
+      }
+      
+      // Must have both actor and victim for a valid kill
+      if (!event.actorSteamId || !event.victimSteamId) {
         return false
       }
       
@@ -1852,7 +2532,7 @@ function KillfeedOverlay({ events, currentTick, allPositions }: { events: Event[
       
       // Check if kill is within visible duration
       const secondsElapsed = (currentTick - event.startTick) / tickrate
-      return secondsElapsed < visibleDuration
+      return secondsElapsed < visibleDuration && secondsElapsed >= 0
     })
     .sort((a, b) => b.startTick - a.startTick) // Most recent first
     .slice(0, 5) // Limit to 5 most recent kills
@@ -1895,12 +2575,13 @@ function KillfeedOverlay({ events, currentTick, allPositions }: { events: Event[
     return 'weapon'
   }
   
+  // Don't render if no kills
   if (visibleKills.length === 0) {
     return null
   }
   
   return (
-    <div className="absolute top-4 right-4 z-50 flex flex-col gap-2 pointer-events-none">
+    <div className="absolute top-4 right-4 z-[100] flex flex-col gap-2 pointer-events-none">
       {visibleKills.map((kill, index) => {
         const secondsElapsed = (currentTick - kill.startTick) / tickrate
         const opacity = Math.max(0.3, 1 - (secondsElapsed / visibleDuration))

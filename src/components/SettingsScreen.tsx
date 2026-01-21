@@ -19,6 +19,8 @@ interface Settings {
   voice_skip_time: string
   position_extraction_interval: string
   voiceCacheSizeLimitMB: string
+  autoUpdateEnabled: string
+  manualVersion: string
 }
 
 function SettingsScreen() {
@@ -38,6 +40,8 @@ function SettingsScreen() {
     voice_skip_time: '10',
     position_extraction_interval: '4',
     voiceCacheSizeLimitMB: '50',
+    autoUpdateEnabled: 'true',
+    manualVersion: '',
   })
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -46,6 +50,10 @@ function SettingsScreen() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [showWhatsNew, setShowWhatsNew] = useState(false)
+  const [availableVersions, setAvailableVersions] = useState<string[]>([])
+  const [loadingVersions, setLoadingVersions] = useState(false)
+  const [installingVersion, setInstallingVersion] = useState<string | null>(null)
+  const [installError, setInstallError] = useState<string | null>(null)
   const [appInfo, setAppInfo] = useState<{
     version: string
     platform: string
@@ -67,6 +75,7 @@ function SettingsScreen() {
   useEffect(() => {
     loadSettings()
     loadAppInfo()
+    loadAvailableVersions()
     
     // Refresh app info periodically to update storage usage (especially voice cache)
     const refreshInterval = setInterval(() => {
@@ -75,6 +84,20 @@ function SettingsScreen() {
     
     return () => clearInterval(refreshInterval)
   }, [])
+
+  const loadAvailableVersions = async () => {
+    if (!window.electronAPI) return
+
+    setLoadingVersions(true)
+    try {
+      const versions = await window.electronAPI.getAvailableVersions()
+      setAvailableVersions(versions)
+    } catch (err) {
+      console.error('Failed to load available versions:', err)
+    } finally {
+      setLoadingVersions(false)
+    }
+  }
 
   const loadAppInfo = async () => {
     if (!window.electronAPI) return
@@ -112,6 +135,8 @@ function SettingsScreen() {
         voice_skip_time: allSettings.voice_skip_time || '10',
         position_extraction_interval: allSettings.position_extraction_interval || '4',
         voiceCacheSizeLimitMB: allSettings.voiceCacheSizeLimitMB || '50',
+        autoUpdateEnabled: allSettings.autoUpdateEnabled || 'true',
+        manualVersion: allSettings.manualVersion || '',
       })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load settings')
@@ -759,6 +784,102 @@ function SettingsScreen() {
                       <span className="text-sm font-semibold text-white">{appInfo.storage.total.formatted}</span>
                     </div>
                   </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Update Settings */}
+            <div className="bg-secondary rounded-lg border border-border p-4">
+              <h3 className="text-lg font-semibold mb-4">Update Settings</h3>
+              
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-300 mb-1">
+                      Enable Auto-Update on Startup
+                    </label>
+                    <p className="text-xs text-gray-500">
+                      Automatically check for and download updates when the application starts
+                    </p>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={settings.autoUpdateEnabled === 'true'}
+                      onChange={async (e) => {
+                        const value = e.target.checked ? 'true' : 'false'
+                        setSettings((prev) => ({ ...prev, autoUpdateEnabled: value }))
+                        await handleSaveSingleSetting('autoUpdateEnabled', value)
+                      }}
+                      className="sr-only peer"
+                    />
+                    <div className="w-11 h-6 bg-gray-600 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                  </label>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Download and Install Version
+                  </label>
+                  <div className="flex gap-2">
+                    <select
+                      value={settings.manualVersion}
+                      onChange={async (e) => {
+                        const value = e.target.value
+                        setSettings((prev) => ({ ...prev, manualVersion: value }))
+                        await handleSaveSingleSetting('manualVersion', value)
+                        setInstallError(null)
+                      }}
+                      className="flex-1 px-3 py-2 bg-surface border border-border rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      disabled={loadingVersions || installingVersion !== null}
+                    >
+                      <option value="">Use actual version</option>
+                      {availableVersions.map((version) => (
+                        <option key={version} value={version}>
+                          {version}
+                        </option>
+                      ))}
+                    </select>
+                    {settings.manualVersion && (
+                      <button
+                        onClick={async () => {
+                          if (!settings.manualVersion) return
+                          
+                          setInstallingVersion(settings.manualVersion)
+                          setInstallError(null)
+                          
+                          try {
+                            const result = await window.electronAPI?.downloadAndInstallVersion(settings.manualVersion)
+                            if (result?.success) {
+                              // App will restart, so we don't need to do anything else
+                            } else {
+                              setInstallError(result?.error || 'Failed to install version')
+                              setInstallingVersion(null)
+                            }
+                          } catch (err) {
+                            setInstallError(err instanceof Error ? err.message : 'Failed to install version')
+                            setInstallingVersion(null)
+                          }
+                        }}
+                        disabled={installingVersion !== null || !settings.manualVersion}
+                        className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white text-sm rounded transition-colors whitespace-nowrap"
+                      >
+                        {installingVersion ? 'Installing...' : 'Install'}
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Select a version to download and install. The app will restart after installation. Useful if a broken version was published.
+                  </p>
+                  {loadingVersions && (
+                    <p className="text-xs text-gray-400 mt-1">Loading versions...</p>
+                  )}
+                  {installError && (
+                    <p className="text-xs text-red-400 mt-1">{installError}</p>
+                  )}
+                  {installingVersion && (
+                    <p className="text-xs text-blue-400 mt-1">Downloading and installing {installingVersion}... The app will restart shortly.</p>
+                  )}
                 </div>
               </div>
             </div>

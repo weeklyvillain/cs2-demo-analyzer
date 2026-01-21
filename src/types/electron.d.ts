@@ -14,6 +14,7 @@ export interface ElectronAPI {
   getGrenadePositionsForRound: (matchId: string, roundIndex: number) => Promise<{ matchId: string; roundIndex: number; positions: Array<{ tick: number; projectileId: number; grenadeName: string; x: number; y: number; z: number; throwerSteamId: string | null; throwerName: string | null; throwerTeam: string | null }> }>
   getGrenadeEventsForRound: (matchId: string, roundIndex: number) => Promise<{ matchId: string; roundIndex: number; events: Array<{ tick: number; eventType: string; projectileId: number; grenadeName: string; x: number; y: number; z: number; throwerSteamId: string | null; throwerName: string | null; throwerTeam: string | null }> }>
   getRadarImage: (mapName: string) => Promise<{ success: boolean; data?: string; error?: string }>
+  getPlayerImage: (team: 'T' | 'CT') => Promise<{ success: boolean; data?: string; error?: string }>
   getLogoImage: () => Promise<{ success: boolean; data?: string; error?: string }>
   deleteMatches: (matchIds: string[]) => Promise<{ deleted: number }>
   deleteAllMatches: () => Promise<{ deleted: number }>
@@ -32,6 +33,7 @@ export interface ElectronAPI {
   setLastSeenVersion: (version: string) => Promise<void>
   shouldShowWhatsNew: () => Promise<boolean>
   getReleaseNotes: (version: string) => Promise<{ title: string; body: string } | null>
+  getAvailableVersions: () => Promise<string[]>
   getAppInfo: () => Promise<{
     version: string
     platform: string
@@ -67,6 +69,7 @@ export interface ElectronAPI {
   onUpdateAvailable: (callback: (data: { version: string }) => void) => void
   onUpdateDownloaded: (callback: (data: { version: string }) => void) => void
   installUpdate: () => Promise<void>
+  downloadAndInstallVersion: (version: string) => Promise<{ success: boolean; error?: string }>
   getVersion: () => Promise<string>
   closeSplash: () => Promise<void>
   onUpdateStatus: (callback: (status: string, data?: any) => void) => void

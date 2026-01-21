@@ -71,9 +71,13 @@ type ChatMessageData struct {
 
 // PlayerData contains player information.
 type PlayerData struct {
-	SteamID string
-	Name    string
-	Team    string // "A" or "B" (Team A/Team B)
+	SteamID            string
+	Name               string
+	Team               string // "A" or "B" (Team A/Team B)
+	ConnectedMidgame   bool   // True if player connected after round 1
+	PermanentDisconnect bool   // True if player disconnected and never returned
+	FirstConnectRound  *int   // Round index when player first connected (nil if round 0)
+	DisconnectRound    *int   // Round index when player disconnected (nil if never disconnected)
 }
 
 // RoundData contains round information.
@@ -225,12 +229,19 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 	var firstRoundProcessed bool             // Track if we've processed the first round
 	var tTeamAssignment string              // "A" or "B" - assigned to first T team seen
 	var ctTeamAssignment string             // "A" or "B" - assigned to first CT team seen
+	
+	// Track player connection/disconnection status
+	playerFirstConnectRound := make(map[uint64]int) // steamid -> round index when first connected
+	playerDisconnected := make(map[uint64]bool)     // steamid -> true if disconnected
+	playerDisconnectTick := make(map[uint64]int)    // steamid -> tick when disconnected
+	playerDisconnectRound := make(map[uint64]int)   // steamid -> round index when disconnected
 
 	// Initialize event extractors
 	// Get tick rate - will be set after parsing header
 	// For now use default, will update from header after parse
 	tickRate := 64.0 // Default fallback
 	teamKillExtractor := extractors.NewTeamKillExtractor()
+	killExtractor := extractors.NewKillExtractor()
 	teamDamageExtractor := extractors.NewTeamDamageExtractor(tickRate)
 	teamFlashExtractor := extractors.NewTeamFlashExtractor()
 	disconnectExtractor := extractors.NewDisconnectExtractor()
@@ -370,10 +381,14 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 						// Insert or update player in database immediately
 						if writer != nil && matchID != "" && needsUpdate {
 							dbPlayer := db.Player{
-								MatchID: matchID,
-								SteamID: playerData.SteamID,
-								Name:    playerData.Name,
-								Team:    playerData.Team,
+								MatchID:            matchID,
+								SteamID:            playerData.SteamID,
+								Name:               playerData.Name,
+								Team:               playerData.Team,
+								ConnectedMidgame:   playerData.ConnectedMidgame,
+								PermanentDisconnect: playerData.PermanentDisconnect,
+								FirstConnectRound:  playerData.FirstConnectRound,
+								DisconnectRound:    playerData.DisconnectRound,
 							}
 							if err := writer.InsertPlayer(ctx, dbPlayer); err != nil {
 								fmt.Fprintf(os.Stderr, "WARN: Failed to insert/update player %s: %v\n", playerData.SteamID, err)
@@ -487,29 +502,61 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 			}
 			playerMap[player.SteamID64] = playerData
 			isNewPlayer = true
+			// Track when player first connected
+			playerFirstConnectRound[player.SteamID64] = roundIndex
 		} else {
 			playerData = playerMap[player.SteamID64]
 			isNewPlayer = false
 		}
+		
+		// Mark as reconnected if they were disconnected
+		playerDisconnected[player.SteamID64] = false
 
 		// If teams have been assigned from first round, use existing assignment
-		// Otherwise, wait for first round to assign teams
+		// Otherwise, assign team based on current team if first round is processed
 		var teamUpdated bool
 		if assignedTeam, exists := playerTeamMap[player.SteamID64]; exists {
 			if playerData.Team != assignedTeam {
 				playerData.Team = assignedTeam
 				teamUpdated = true
 			}
+		} else if firstRoundProcessed && roundIndex >= 0 {
+			// Player connected mid-game (or during first round but after team assignments are set)
+			// Assign team based on their current team
+			var assignedTeam string
+			if player.Team == common.TeamTerrorists {
+				assignedTeam = tTeamAssignment
+			} else if player.Team == common.TeamCounterTerrorists {
+				assignedTeam = ctTeamAssignment
+			}
+			
+			if assignedTeam != "" {
+				playerTeamMap[player.SteamID64] = assignedTeam
+				playerData.Team = assignedTeam
+				// Only mark as mid-game if they connected after round 0
+				if roundIndex > 0 {
+					playerData.ConnectedMidgame = true
+				}
+				teamUpdated = true
+			}
+		} else if !firstRoundProcessed {
+			// Player connected before first round is processed
+			// We'll assign their team when RoundStart processes the first round
+			// But we can still track which round they connected
 		}
 
 		// Insert or update player in database immediately if writer is available
 		// This ensures players exist before positions are inserted (foreign key constraint)
 		if writer != nil && matchID != "" && (isNewPlayer || teamUpdated) {
 			dbPlayer := db.Player{
-				MatchID: matchID,
-				SteamID: playerData.SteamID,
-				Name:    playerData.Name,
-				Team:    playerData.Team, // May be empty initially, will be updated later
+				MatchID:            matchID,
+				SteamID:            playerData.SteamID,
+				Name:               playerData.Name,
+				Team:               playerData.Team, // May be empty initially, will be updated later
+				ConnectedMidgame:   playerData.ConnectedMidgame,
+				PermanentDisconnect: playerData.PermanentDisconnect,
+				FirstConnectRound:  playerData.FirstConnectRound,
+				DisconnectRound:    playerData.DisconnectRound,
 			}
 			if err := writer.InsertPlayer(ctx, dbPlayer); err != nil {
 				fmt.Fprintf(os.Stderr, "WARN: Failed to insert/update player %s: %v\n", playerData.SteamID, err)
@@ -567,6 +614,7 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 			updateTick()
 			tick := getCurrentTick()
 			teamKillExtractor.HandlePlayerDeath(e, currentRound.RoundIndex, tick)
+			killExtractor.HandlePlayerDeath(e, currentRound.RoundIndex, tick)
 			// AFK tracking is now done from database after positions are written
 		}
 	})
@@ -599,13 +647,18 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 		
 		disconnectExtractor.HandlePlayerDisconnected(e, roundIndex, tick, tickRate)
 		
-		// Add server announcement for player leaving
+		// Mark player as disconnected and record the tick and round
 		player := e.Player
 		if player != nil {
-			steamID := fmt.Sprintf("%d", player.SteamID64)
+			steamID64 := player.SteamID64
+			playerDisconnected[steamID64] = true
+			playerDisconnectTick[steamID64] = tick
+			playerDisconnectRound[steamID64] = roundIndex
+			
+			steamID := fmt.Sprintf("%d", steamID64)
 			playerName := player.Name
 			if playerName == "" {
-				playerName = fmt.Sprintf("Player_%d", player.SteamID64)
+				playerName = fmt.Sprintf("Player_%d", steamID64)
 			}
 			
 			data.ChatMessages = append(data.ChatMessages, ChatMessageData{
@@ -881,31 +934,66 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 
 			// Ensure player exists in playerMap and database before inserting position
 			// This is critical for foreign key constraints
-			if _, exists := playerMap[player.SteamID64]; !exists {
+			var playerData *PlayerData
+			var needsInsert bool
+			if existingPlayer, exists := playerMap[player.SteamID64]; !exists {
 				name := player.Name
 				if name == "" {
 					name = fmt.Sprintf("Player_%d", player.SteamID64)
 				}
-				playerData := &PlayerData{
+				playerData = &PlayerData{
 					SteamID: steamID,
 					Name:    name,
-					Team:    "", // Will be assigned later
+					Team:    "", // Will be assigned below
 				}
 				playerMap[player.SteamID64] = playerData
+				needsInsert = true
+				// Track when player first appeared (might be mid-game)
+				if _, exists := playerFirstConnectRound[player.SteamID64]; !exists {
+					playerFirstConnectRound[player.SteamID64] = currentRound.RoundIndex
+				}
+			} else {
+				playerData = existingPlayer
+			}
+			
+			// Assign team if not already assigned and first round is processed
+			if playerData.Team == "" && firstRoundProcessed {
+				var assignedTeam string
+				if player.Team == common.TeamTerrorists {
+					assignedTeam = tTeamAssignment
+				} else if player.Team == common.TeamCounterTerrorists {
+					assignedTeam = ctTeamAssignment
+				}
 				
-				// Insert player into database immediately to satisfy foreign key constraint
-				if writer != nil && matchID != "" {
-					dbPlayer := db.Player{
-						MatchID: matchID,
-						SteamID: playerData.SteamID,
-						Name:    playerData.Name,
-						Team:    playerData.Team, // May be empty initially
+				if assignedTeam != "" {
+					playerTeamMap[player.SteamID64] = assignedTeam
+					playerData.Team = assignedTeam
+					// Mark as mid-game if they connected after round 0
+					if firstConnectRound, exists := playerFirstConnectRound[player.SteamID64]; exists && firstConnectRound > 0 {
+						playerData.ConnectedMidgame = true
+						roundNum := &firstConnectRound
+						playerData.FirstConnectRound = roundNum
 					}
-					if err := writer.InsertPlayer(ctx, dbPlayer); err != nil {
-						fmt.Fprintf(os.Stderr, "WARN: Failed to insert player %s for position: %v\n", playerData.SteamID, err)
-						// Skip this position if player insertion fails
-						continue
-					}
+					needsInsert = true
+				}
+			}
+			
+			// Insert player into database if needed
+			if needsInsert && writer != nil && matchID != "" {
+				dbPlayer := db.Player{
+					MatchID:            matchID,
+					SteamID:            playerData.SteamID,
+					Name:               playerData.Name,
+					Team:               playerData.Team, // May be empty initially
+					ConnectedMidgame:   playerData.ConnectedMidgame,
+					PermanentDisconnect: playerData.PermanentDisconnect,
+					FirstConnectRound:  playerData.FirstConnectRound,
+					DisconnectRound:    playerData.DisconnectRound,
+				}
+				if err := writer.InsertPlayer(ctx, dbPlayer); err != nil {
+					fmt.Fprintf(os.Stderr, "WARN: Failed to insert player %s for position: %v\n", playerData.SteamID, err)
+					// Skip this position if player insertion fails
+					continue
 				}
 			}
 
@@ -1579,6 +1667,7 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 
 	data.Events = make([]extractors.Event, 0)
 	data.Events = append(data.Events, teamKillExtractor.GetEvents()...)
+	data.Events = append(data.Events, killExtractor.GetEvents()...)
 	data.Events = append(data.Events, teamDamageExtractor.GetEvents()...)
 	data.Events = append(data.Events, teamFlashExtractor.GetEvents()...)
 	data.Events = append(data.Events, disconnectExtractor.GetEvents()...)
@@ -1604,12 +1693,46 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 	data.TickRate = tickRate
 
 	// Ensure all players have their team assignment from first round
+	// Also mark players who disconnected and never returned
 	for steamID64, player := range playerMap {
 		if player.Team == "" {
 			if team, exists := playerTeamMap[steamID64]; exists {
 				player.Team = team
 			}
 		}
+		
+		// Mark as permanent disconnect if they disconnected and never reconnected
+		// But exclude disconnects within 20 seconds of game end
+		if playerDisconnected[steamID64] {
+			disconnectTick := playerDisconnectTick[steamID64]
+			// Check if disconnect happened within 20 seconds of game end
+			if data.TickRate > 0 && maxTick > 0 {
+				secondsFromEnd := float64(maxTick-disconnectTick) / data.TickRate
+				if secondsFromEnd > 20.0 {
+					// Disconnect happened more than 20 seconds before game end
+					player.PermanentDisconnect = true
+				}
+				// If disconnect was within 20 seconds of end, don't mark as permanent
+			} else {
+				// Fallback: if we can't calculate, mark as permanent
+				player.PermanentDisconnect = true
+			}
+			
+			// Store disconnect round
+			if disconnectRound, exists := playerDisconnectRound[steamID64]; exists {
+				roundNum := &disconnectRound
+				player.DisconnectRound = roundNum
+			}
+		}
+		
+		// Update connected_midgame flag and first connect round based on when they first connected
+		if firstConnectRound, exists := playerFirstConnectRound[steamID64]; exists {
+			if firstConnectRound > 0 {
+				player.ConnectedMidgame = true
+			}
+			player.FirstConnectRound = &firstConnectRound
+		}
+		
 		data.Players = append(data.Players, *player)
 	}
 

@@ -6,7 +6,7 @@ import ParsingModal from './ParsingModal'
 import VoicePlaybackModal from './VoicePlaybackModal'
 import Toast from './Toast'
 import { formatDisconnectReason } from '../utils/disconnectReason'
-import { Clock, Skull, Zap, WifiOff, ChevronDown, ChevronUp, Copy, Check, ArrowUp, ArrowDown, Trash2, X, Plus, Loader2, Mic, FolderOpen, Database, RefreshCw, Upload, Map as MapIcon } from 'lucide-react'
+import { Clock, Skull, Zap, WifiOff, ChevronDown, ChevronUp, Copy, Check, ArrowUp, ArrowDown, Trash2, X, Plus, Loader2, Mic, FolderOpen, Database, RefreshCw, Upload, Map as MapIcon, UserPlus, UserMinus } from 'lucide-react'
 
 interface Match {
   id: string
@@ -91,7 +91,15 @@ function MatchesScreen() {
   const [toast, setToast] = useState<{ message: string; type?: 'success' | 'error' | 'info' } | null>(null)
   const [activeTab, setActiveTab] = useState<'overview' | 'players' | 'rounds' | 'chat' | '2d-viewer'>('overview')
   const [allEvents, setAllEvents] = useState<any[]>([])
-  const [allPlayers, setAllPlayers] = useState<Array<{ steamId: string; name: string; team: string | null }>>([])
+  const [allPlayers, setAllPlayers] = useState<Array<{ 
+    steamId: string
+    name: string
+    team: string | null
+    connectedMidgame?: boolean
+    permanentDisconnect?: boolean
+    firstConnectRound?: number | null
+    disconnectRound?: number | null
+  }>>([])
   const [selectedPlayer, setSelectedPlayer] = useState<PlayerScore | null>(null)
   const [playerEvents, setPlayerEvents] = useState<PlayerEvent[]>([])
   const [loadingEvents, setLoadingEvents] = useState(false)
@@ -177,7 +185,99 @@ function MatchesScreen() {
 
     try {
       const chatData = await window.electronAPI.getMatchChat(matchId, steamid)
-      setChatMessages(chatData.messages || [])
+      const messages = chatData.messages || []
+      
+      // Also fetch disconnect events to enrich disconnect messages with reason
+      const disconnectEvents = await window.electronAPI.getMatchEvents(matchId, {
+        type: 'DISCONNECT',
+        steamid: steamid
+      })
+      
+      // Create a map of disconnect events by steamid and tick (for matching)
+      const disconnectEventMap = new Map<string, any>()
+      ;(disconnectEvents.events || []).forEach((event: any) => {
+        if (event.actorSteamId) {
+          // Parse meta if it's a string
+          if (event.meta && typeof event.meta === 'string') {
+            try {
+              event.meta = JSON.parse(event.meta)
+            } catch (e) {
+              console.warn('Failed to parse disconnect event meta:', e)
+            }
+          }
+          // Use steamid + tick as key for matching
+          const key = `${event.actorSteamId}-${event.startTick}`
+          disconnectEventMap.set(key, event)
+        }
+      })
+      
+      console.log('Disconnect events found:', disconnectEvents.events?.length || 0)
+      console.log('Disconnect messages in chat:', messages.filter((m: any) => m.message?.toLowerCase().includes('left the game')).length)
+      
+      // Update disconnect messages in chat with disconnect reason
+      const enrichedMessages = messages.map((msg: any) => {
+        // Check if this is a disconnect message (contains "left the game" or similar)
+        const isDisconnectMessage = msg.message && (
+          msg.message.toLowerCase().includes('left the game') ||
+          msg.message.toLowerCase().includes('disconnected') ||
+          msg.message.toLowerCase().includes('disconnect')
+        )
+        
+        if (isDisconnectMessage && msg.steamid) {
+          // Try to find matching disconnect event
+          // Match by steamid and tick (within ±500 ticks tolerance for better matching)
+          let matchingEvent: any = null
+          let closestTickDiff = Infinity
+          
+          for (const [key, event] of disconnectEventMap.entries()) {
+            if (key.startsWith(`${msg.steamid}-`)) {
+              const eventTick = event.startTick || 0
+              const msgTick = msg.tick || 0
+              const tickDiff = Math.abs(eventTick - msgTick)
+              // Match if within ±500 ticks and closer than previous match
+              if (tickDiff <= 500 && tickDiff < closestTickDiff) {
+                matchingEvent = event
+                closestTickDiff = tickDiff
+              }
+            }
+          }
+          
+          if (matchingEvent) {
+            // Parse meta if it's a string
+            let reason: any = null
+            if (matchingEvent.meta) {
+              if (typeof matchingEvent.meta === 'string') {
+                try {
+                  const parsedMeta = JSON.parse(matchingEvent.meta)
+                  reason = parsedMeta.reason
+                } catch {
+                  reason = matchingEvent.meta.reason
+                }
+              } else {
+                reason = matchingEvent.meta.reason
+              }
+            }
+            
+            if (reason) {
+              console.log('Found disconnect reason for', msg.steamid, ':', reason)
+              // Update message with disconnect reason
+              return {
+                ...msg,
+                message: `${msg.message} (${formatDisconnectReason(reason)})`
+              }
+            } else {
+              console.log('No reason found for disconnect event:', matchingEvent)
+            }
+          } else {
+            console.log('No matching disconnect event found for message:', msg.message, 'steamid:', msg.steamid, 'tick:', msg.tick)
+          }
+        }
+        return msg
+      })
+      
+      // Combine and sort by tick
+      const allMessages = enrichedMessages.sort((a, b) => a.tick - b.tick)
+      setChatMessages(allMessages)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load chat messages')
     } finally {
@@ -421,8 +521,21 @@ function MatchesScreen() {
     const merged = allPlayers.map(player => {
       const score = scoresMap.get(player.steamId)
       if (score) {
-        // Preserve team information from player data
-        return { ...score, team: player.team } as PlayerScore & { team: string | null }
+        // Preserve team information and status flags from player data
+        return { 
+          ...score, 
+          team: player.team,
+          connectedMidgame: player.connectedMidgame,
+          permanentDisconnect: player.permanentDisconnect,
+          firstConnectRound: player.firstConnectRound,
+          disconnectRound: player.disconnectRound,
+        } as PlayerScore & { 
+          team: string | null
+          connectedMidgame?: boolean
+          permanentDisconnect?: boolean
+          firstConnectRound?: number | null
+          disconnectRound?: number | null
+        }
       }
       // Player doesn't have scores, create a default entry
       return {
@@ -436,7 +549,17 @@ function MatchesScreen() {
         afkSeconds: 0,
         bodyBlockSeconds: 0,
         griefScore: 0,
-      } as PlayerScore & { team: string | null }
+        connectedMidgame: player.connectedMidgame,
+        permanentDisconnect: player.permanentDisconnect,
+        firstConnectRound: player.firstConnectRound,
+        disconnectRound: player.disconnectRound,
+      } as PlayerScore & { 
+        team: string | null
+        connectedMidgame?: boolean
+        permanentDisconnect?: boolean
+        firstConnectRound?: number | null
+        disconnectRound?: number | null
+      }
     })
     
     return merged
@@ -460,8 +583,14 @@ function MatchesScreen() {
     })
     
     // Sort function
-    const sortPlayers = (players: Array<PlayerScore & { team: string | null }>) => {
+    const sortPlayers = (players: Array<PlayerScore & { team: string | null; connectedMidgame?: boolean }>) => {
       return [...players].sort((a, b) => {
+        // First, sort by connectedMidgame (mid-game connected players last)
+        if (a.connectedMidgame !== b.connectedMidgame) {
+          if (a.connectedMidgame) return 1  // a is mid-game, put it last
+          if (b.connectedMidgame) return -1 // b is mid-game, put it last
+        }
+        
         let comparison = 0
         
         if (playerSortField === 'name') {
@@ -795,6 +924,10 @@ function MatchesScreen() {
 
   // Filter and group events by type
   const filteredEvents = playerEvents.filter((event) => {
+    // Exclude regular kills - only show team kills
+    if (event.type === 'KILL' || event.type === 'KILLS') {
+      return false
+    }
     // Filter AFK events by minimum duration
     if (event.type === 'AFK_STILLNESS') {
       const duration = event.meta?.seconds || (event.endTick && event.startTick
@@ -1161,7 +1294,7 @@ function MatchesScreen() {
                           <div className="flex items-center gap-1.5">
                             <span className="text-gray-500">Score:</span>
                             <span className="text-sm font-semibold text-gray-300">
-                              {stats.tWins}-{stats.ctWins}
+                              Team A {stats.tWins} - Team B {stats.ctWins}
                             </span>
                           </div>
                         )}
@@ -1368,11 +1501,15 @@ function MatchesScreen() {
                           ctWins = lastRound.ctWins || 0
                         }
                         if ((tWins || ctWins) && (tWins > 0 || ctWins > 0)) {
+                          // In the parser, first T team seen = Team A, first CT team seen = Team B
+                          // So T = Team A, CT = Team B
+                          const teamAWins = tWins || 0
+                          const teamBWins = ctWins || 0
                           return (
                             <div className="flex items-center gap-1">
-                              <span className="text-orange-400">T: {tWins || 0}</span>
+                              <span className="text-orange-400">Team A: {teamAWins}</span>
                               <span className="text-gray-500">-</span>
-                              <span className="text-blue-400">CT: {ctWins || 0}</span>
+                              <span className="text-blue-400">Team B: {teamBWins}</span>
                             </div>
                           )
                         }
@@ -2117,9 +2254,29 @@ function MatchesScreen() {
                               >
                                 <div className="flex items-center justify-between mb-2">
                                   <div 
-                                    className="font-medium text-white truncate flex-1"
+                                    className="font-medium text-white truncate flex-1 flex items-center gap-1.5"
                                     title={score.name || score.steamId}
                                   >
+                                    {score.connectedMidgame && (
+                                      <span
+                                        className="text-blue-400 flex-shrink-0 cursor-help"
+                                        title={score.firstConnectRound !== null && score.firstConnectRound !== undefined 
+                                          ? `Connected mid-game (Round ${score.firstConnectRound + 1})`
+                                          : "Connected mid-game"}
+                                      >
+                                        <UserPlus size={14} />
+                                      </span>
+                                    )}
+                                    {score.permanentDisconnect && (
+                                      <span
+                                        className="text-red-400 flex-shrink-0 cursor-help"
+                                        title={score.disconnectRound !== null && score.disconnectRound !== undefined 
+                                          ? `Disconnected and never returned (Round ${score.disconnectRound + 1})`
+                                          : "Disconnected and never returned"}
+                                      >
+                                        <UserMinus size={14} />
+                                      </span>
+                                    )}
                                     {score.name || (
                                       <button
                                         onClick={async (e) => {
@@ -2186,9 +2343,29 @@ function MatchesScreen() {
                               >
                                 <div className="flex items-center justify-between mb-2">
                                   <div 
-                                    className="font-medium text-white truncate flex-1"
+                                    className="font-medium text-white truncate flex-1 flex items-center gap-1.5"
                                     title={score.name || score.steamId}
                                   >
+                                    {score.connectedMidgame && (
+                                      <span
+                                        className="text-blue-400 flex-shrink-0 cursor-help"
+                                        title={score.firstConnectRound !== null && score.firstConnectRound !== undefined 
+                                          ? `Connected mid-game (Round ${score.firstConnectRound + 1})`
+                                          : "Connected mid-game"}
+                                      >
+                                        <UserPlus size={14} />
+                                      </span>
+                                    )}
+                                    {score.permanentDisconnect && (
+                                      <span
+                                        className="text-red-400 flex-shrink-0 cursor-help"
+                                        title={score.disconnectRound !== null && score.disconnectRound !== undefined 
+                                          ? `Disconnected and never returned (Round ${score.disconnectRound + 1})`
+                                          : "Disconnected and never returned"}
+                                      >
+                                        <UserMinus size={14} />
+                                      </span>
+                                    )}
                                     {score.name || (
                                       <button
                                         onClick={async (e) => {
@@ -2254,9 +2431,23 @@ function MatchesScreen() {
                             >
                               <div className="flex items-center justify-between mb-2">
                                 <div 
-                                  className="font-medium text-white truncate flex-1"
+                                  className="font-medium text-white truncate flex-1 flex items-center gap-1.5"
                                   title={score.name || score.steamId}
                                 >
+                                  {score.connectedMidgame && (
+                                    <UserPlus 
+                                      size={14} 
+                                      className="text-blue-400 flex-shrink-0" 
+                                      title="Connected mid-game"
+                                    />
+                                  )}
+                                  {score.permanentDisconnect && (
+                                    <UserMinus 
+                                      size={14} 
+                                      className="text-red-400 flex-shrink-0" 
+                                      title="Disconnected and never returned"
+                                    />
+                                  )}
                                   {score.name || (
                                     <button
                                       onClick={async (e) => {
@@ -2326,7 +2517,7 @@ function MatchesScreen() {
                                 <span className="mr-2">Winner: {round.winner}</span>
                               )}
                               <span>
-                                Score: {round.tWins} - {round.ctWins}
+                                Score: Team A {round.tWins} - Team B {round.ctWins}
                               </span>
                             </div>
                           </div>
@@ -2449,8 +2640,8 @@ function MatchesScreen() {
                       {/* All Chat Section */}
                       {(
                         <div className="bg-surface rounded-lg border border-border overflow-hidden">
-                          <div className="px-4 py-3 border-b border-border bg-green-900/20">
-                            <h3 className="text-lg font-semibold text-green-400">All Chat</h3>
+                          <div className="px-4 py-3 border-b border-border bg-accent/20">
+                            <h3 className="text-lg font-semibold text-accent">All Chat</h3>
                             <p className="text-xs text-gray-500">
                               {chatMessages.length} messages
                             </p>
@@ -2468,6 +2659,7 @@ function MatchesScreen() {
                                     const timeStr = `${minutes}:${seconds.toString().padStart(2, '0')}`
                                     
                                     const fullMessage = `${msg.name || msg.steamid}: ${msg.message}`
+                                    const isServer = (msg.name || msg.steamid || '').toLowerCase() === '*server*'
                                     
                                     return (
                                       <div key={`all-${idx}`} className="p-3 hover:bg-secondary/50 transition-colors group">
@@ -2481,7 +2673,7 @@ function MatchesScreen() {
                                           <div className="flex-1 min-w-0">
                                             <div className="flex items-center gap-2 mb-1">
                                               {msg.name ? (
-                                                <span className="font-medium text-green-400">
+                                                <span className={`font-medium text-accent ${isServer ? 'italic' : ''}`}>
                                                   {msg.name}
                                                 </span>
                                               ) : (
@@ -2493,7 +2685,7 @@ function MatchesScreen() {
                                                       window.open(`https://steamcommunity.com/profiles/${msg.steamid}`, '_blank')
                                                     }
                                                   }}
-                                                  className="font-medium text-green-400 hover:text-green-300 underline bg-transparent border-none cursor-pointer p-0"
+                                                  className="font-medium text-accent hover:text-accent/80 underline bg-transparent border-none cursor-pointer p-0"
                                                 >
                                                   {msg.steamid}
                                                 </button>
@@ -2515,7 +2707,14 @@ function MatchesScreen() {
                                                 <Copy size={14} className="text-gray-400 hover:text-accent" />
                                               </button>
                                             </div>
-                                            <div className="text-sm text-gray-300 break-words">{msg.message}</div>
+                                            <div className="text-sm text-gray-300 break-words">
+                                              {msg.message}
+                                              {(msg as any).isDisconnect && (msg as any).steamid && (
+                                                <span className="text-xs text-gray-500 ml-2">
+                                                  ({getPlayerName((msg as any).steamid)})
+                                                </span>
+                                              )}
+                                            </div>
                                           </div>
                                         </div>
                                       </div>
