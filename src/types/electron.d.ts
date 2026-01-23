@@ -1,9 +1,17 @@
+export interface Incident {
+  matchId?: string
+  tick: number
+  eventType?: string
+  offender: { name: string; steamId?: string; userId?: number; entityIndex?: number }
+  victim: { name: string; steamId?: string; userId?: number; entityIndex?: number }
+}
+
 export interface ElectronAPI {
   deleteDemo: (demoPath: string | null, deleteFile: boolean) => Promise<void>
   openFileDialog: (allowMultiple?: boolean) => Promise<string | null | string[]>
   parseDemo: (args: { demoPath: string }) => Promise<{ matchId: string; dbPath: string }>
   stopParser: () => Promise<void>
-  listMatches: () => Promise<Array<{ id: string; map: string; startedAt: string | null; playerCount: number; demoPath: string | null; isMissingDemo?: boolean; createdAtIso?: string | null }>>
+  listMatches: () => Promise<Array<{ id: string; map: string; startedAt: string | null; playerCount: number; demoPath: string | null; isMissingDemo?: boolean; createdAtIso?: string | null; source?: string | null }>>
   getMatchSummary: (matchId: string) => Promise<{ matchId: string; players: any[] }>
   getMatchPlayers: (matchId: string) => Promise<{ matchId: string; players: Array<{ steamId: string; name: string }> }>
   getMatchEvents: (matchId: string, filters?: { type?: string; steamid?: string; round?: number }) => Promise<any>
@@ -22,8 +30,8 @@ export interface ElectronAPI {
   listTables: (matchId: string) => Promise<string[]>
   getTableInfo: (matchId: string, tableName: string) => Promise<{ name: string; rowCount: number; schema: string }>
   runQuery: (matchId: string, sql: string) => Promise<{ columns: string[]; rows: any[][] }>
-  launchCS2: (demoPath: string, startTick?: number, playerName?: string) => Promise<{ success: boolean; tick: number; commands: string; alreadyRunning?: boolean }>
-  copyCS2Commands: (demoPath: string, startTick?: number, playerName?: string) => Promise<{ success: boolean; commands: string }>
+  launchCS2: (demoPath: string, startTick?: number, playerName?: string, confirmLoadDemo?: boolean) => Promise<{ success: boolean; tick: number; commands: string; alreadyRunning?: boolean; needsDemoLoad?: boolean; currentDemo?: string | null; newDemo?: string; error?: string }>
+  copyCS2Commands: (demoPath: string, startTick?: number, playerName?: string) => Promise<{ success: boolean; commands: string; error?: string }>
   getSetting: (key: string, defaultValue?: string) => Promise<string>
   setSetting: (key: string, value: string) => Promise<{ success: boolean }>
   getAllSettings: () => Promise<Record<string, string>>
@@ -65,6 +73,7 @@ export interface ElectronAPI {
   onParserError: (callback: (error: string) => void) => void
   onMatchesCleanup: (callback: (data: { deleted: number; details: Array<{ matchId: string; reason: string }> }) => void) => void
   onMatchesTrimmed: (callback: (data: { deleted: number; details: Array<{ matchId: string; reason: string }> }) => void) => void
+  onMatchesList: (callback: (matches: Array<{ id: string; map: string; startedAt: string | null; playerCount: number; demoPath: string | null; isMissingDemo?: boolean; createdAtIso?: string | null; source?: string | null }>) => void) => void
   onVoiceExtractionLog: (callback: (log: string) => void) => void
   onUpdateAvailable: (callback: (data: { version: string }) => void) => void
   onUpdateDownloaded: (callback: (data: { version: string }) => void) => void
@@ -79,6 +88,30 @@ export interface ElectronAPI {
   windowClose: () => Promise<void>
   windowIsMaximized: () => Promise<boolean>
   onWindowMaximized: (callback: (maximized: boolean) => void) => void
+  overlay: {
+    getInteractive: () => Promise<boolean>
+    setInteractive: (value: boolean) => Promise<boolean>
+    create: () => Promise<boolean>
+    close: () => Promise<boolean>
+    show: () => Promise<boolean>
+    hide: () => Promise<boolean>
+    onInteractive: (callback: (value: boolean) => void) => void
+    onIncident: (callback: (incident: Incident | null) => void) => void
+    onActionResult: (callback: (result: { success: boolean; action: string; player?: string; error?: string; clearLoadingOnly?: boolean }) => void) => void
+    onCommandLog: (callback: (log: Array<{ ts: number; cmd: string }>) => void) => void
+    sendIncident: (incident: Incident | null) => Promise<void>
+    actions: {
+      viewOffender: () => Promise<{ success: boolean; error?: string }>
+      viewVictim: () => Promise<{ success: boolean; error?: string }>
+    }
+  }
+  settings: {
+    getHotkey: () => Promise<string>
+    setHotkey: (accelerator: string) => Promise<{ success: boolean; error?: string }>
+    resetHotkey: () => Promise<{ success: boolean; error?: string }>
+    getDebugMode: () => Promise<boolean>
+    setDebugMode: (value: boolean) => Promise<{ success: boolean }>
+  }
 }
 
 declare global {

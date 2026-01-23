@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import Modal from './Modal'
 import WhatsNewModal from './WhatsNewModal'
+import OverlayHotkeySettings from './OverlayHotkeySettings'
 import { RefreshCw } from 'lucide-react'
 
 interface Settings {
@@ -21,6 +22,9 @@ interface Settings {
   voiceCacheSizeLimitMB: string
   autoUpdateEnabled: string
   manualVersion: string
+  debugMode: string
+  overlayEnabled: string
+  autoplayAfterSpectate: string
 }
 
 function SettingsScreen() {
@@ -42,6 +46,9 @@ function SettingsScreen() {
     voiceCacheSizeLimitMB: '50',
     autoUpdateEnabled: 'true',
     manualVersion: '',
+    debugMode: 'false',
+    overlayEnabled: 'false',
+    autoplayAfterSpectate: 'true',
   })
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -137,6 +144,9 @@ function SettingsScreen() {
         voiceCacheSizeLimitMB: allSettings.voiceCacheSizeLimitMB || '50',
         autoUpdateEnabled: allSettings.autoUpdateEnabled || 'true',
         manualVersion: allSettings.manualVersion || '',
+        debugMode: allSettings.debugMode || 'false',
+        overlayEnabled: allSettings.overlayEnabled !== undefined ? allSettings.overlayEnabled : 'false',
+        autoplayAfterSpectate: allSettings.autoplayAfterSpectate !== undefined ? allSettings.autoplayAfterSpectate : 'true',
       })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load settings')
@@ -345,6 +355,109 @@ function SettingsScreen() {
               >
                 {saving ? 'Saving...' : 'Save Window Settings'}
               </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Playback Settings */}
+        <div className="bg-secondary rounded-lg border border-border p-4">
+          <h3 className="text-lg font-semibold mb-4">Playback Settings</h3>
+          
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-1">
+                  Autoplay After Spectate
+                </label>
+                <p className="text-xs text-gray-500">
+                  Automatically resume demo playback after spectating a player
+                </p>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={settings.autoplayAfterSpectate === 'true'}
+                  onChange={async (e) => {
+                    const newValue = e.target.checked ? 'true' : 'false'
+                    setSettings((prev) => ({ ...prev, autoplayAfterSpectate: newValue }))
+                    await handleSaveSingleSetting('autoplayAfterSpectate', newValue)
+                  }}
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-gray-600 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        {/* Overlay Settings */}
+        <div className="bg-secondary rounded-lg border border-border p-4">
+          <h3 className="text-lg font-semibold mb-4">Overlay Settings</h3>
+          
+          <div className="space-y-4">
+            {/* Overlay Enable/Disable */}
+            <div className="flex items-center justify-between">
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-1">
+                  Enable Overlay
+                </label>
+                <p className="text-xs text-gray-500">
+                  Enable or disable the overlay window completely. When disabled, the overlay will not be created or shown.
+                </p>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={settings.overlayEnabled !== 'false'}
+                  onChange={async (e) => {
+                    const value = e.target.checked ? 'true' : 'false'
+                    setSettings((prev) => ({ ...prev, overlayEnabled: value }))
+                    await handleSaveSingleSetting('overlayEnabled', value)
+                    // Close overlay if disabling
+                    if (!e.target.checked && window.electronAPI?.overlay?.close) {
+                      await window.electronAPI.overlay.close()
+                    }
+                  }}
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-surface peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-accent"></div>
+              </label>
+            </div>
+
+            <div className="pt-2 border-t border-border">
+              {/* Overlay Hotkey Settings */}
+              <OverlayHotkeySettings />
+            </div>
+
+            <div className="pt-2 border-t border-border">
+              {/* Debug Mode */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-1">
+                    Debug Mode
+                  </label>
+                  <p className="text-xs text-gray-500">
+                    Show command log in overlay (top-right). Displays all CS2 commands sent via netcon.
+                  </p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.debugMode === 'true'}
+                    onChange={async (e) => {
+                      const value = e.target.checked ? 'true' : 'false'
+                      setSettings((prev) => ({ ...prev, debugMode: value }))
+                      await handleSaveSingleSetting('debugMode', value)
+                      // Also update via settings API for immediate overlay update
+                      if (window.electronAPI) {
+                        await window.electronAPI.settings.setDebugMode(e.target.checked)
+                      }
+                    }}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-surface peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-accent"></div>
+                </label>
+              </div>
             </div>
           </div>
         </div>

@@ -1,4 +1,4 @@
-import { X, Clock, Skull, Zap, WifiOff, ChevronDown, ChevronUp, Copy } from 'lucide-react'
+import { X, Clock, Skull, Zap, WifiOff, ChevronDown, ChevronUp, Play } from 'lucide-react'
 import { formatDisconnectReason } from '../utils/disconnectReason'
 
 interface PlayerEvent {
@@ -295,9 +295,9 @@ export default function PlayerModal({
                                       <button
                                         onClick={() => onCopyCommand(event)}
                                         className="p-1 hover:bg-accent/20 rounded transition-colors"
-                                        title="Copy CS2 console commands"
+                                        title="Watch this event in CS2"
                                       >
-                                        <Copy size={14} className="text-gray-400 hover:text-accent" />
+                                        <Play size={14} className="text-gray-400 hover:text-accent" />
                                       </button>
                                     </div>
                                   )}

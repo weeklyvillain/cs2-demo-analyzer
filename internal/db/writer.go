@@ -24,6 +24,7 @@ type Match struct {
 	Map       string
 	TickRate  float64
 	StartedAt *time.Time
+	Source    *string // Demo source (e.g., "faceit", "valve", "unknown")
 }
 
 // Player represents a player in a match.
@@ -67,15 +68,15 @@ type Event struct {
 // InsertMatch inserts or replaces a match record.
 func (w *Writer) InsertMatch(ctx context.Context, m Match) error {
 	query := `
-		INSERT OR REPLACE INTO matches (id, map, tick_rate, started_at)
-		VALUES (?, ?, ?, ?)
+		INSERT OR REPLACE INTO matches (id, map, tick_rate, started_at, source)
+		VALUES (?, ?, ?, ?, ?)
 	`
 	var startedAt *string
 	if m.StartedAt != nil {
 		s := m.StartedAt.Format(time.RFC3339)
 		startedAt = &s
 	}
-	_, err := w.db.ExecContext(ctx, query, m.ID, m.Map, m.TickRate, startedAt)
+	_, err := w.db.ExecContext(ctx, query, m.ID, m.Map, m.TickRate, startedAt, m.Source)
 	if err != nil {
 		return fmt.Errorf("failed to insert match: %w", err)
 	}

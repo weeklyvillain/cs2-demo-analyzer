@@ -6,7 +6,7 @@ import ParsingModal from './ParsingModal'
 import VoicePlaybackModal from './VoicePlaybackModal'
 import Toast from './Toast'
 import { formatDisconnectReason } from '../utils/disconnectReason'
-import { Clock, Skull, Zap, WifiOff, ChevronDown, ChevronUp, Copy, Check, ArrowUp, ArrowDown, Trash2, X, Plus, Loader2, Mic, FolderOpen, Database, RefreshCw, Upload, Map as MapIcon, UserPlus, UserMinus } from 'lucide-react'
+import { Clock, Skull, Zap, WifiOff, ChevronDown, ChevronUp, Copy, Play, Check, ArrowUp, ArrowDown, Trash2, X, Plus, Loader2, Mic, FolderOpen, Database, RefreshCw, Upload, Map as MapIcon, UserPlus, UserMinus } from 'lucide-react'
 
 interface Match {
   id: string
@@ -16,6 +16,7 @@ interface Match {
   demoPath?: string | null
   isMissingDemo?: boolean
   createdAtIso?: string | null
+  source?: string | null
 }
 
 interface MatchStats {
@@ -130,6 +131,8 @@ function MatchesScreen() {
   const [selectedMatches, setSelectedMatches] = useState<Set<string>>(new Set())
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [showDemoLoadModal, setShowDemoLoadModal] = useState(false)
+  const [pendingDemoAction, setPendingDemoAction] = useState<{ demoPath: string; startTick: number; playerName: string } | null>(null)
   const [showParsingModal, setShowParsingModal] = useState(false)
   const [demoToParse, setDemoToParse] = useState<string | null>(null)
   const [demosToParse, setDemosToParse] = useState<string[]>([])
@@ -371,6 +374,17 @@ function MatchesScreen() {
 
   useEffect(() => {
     fetchMatches()
+    
+    // Listen for matches list updates (e.g., after parsing completes)
+    if (window.electronAPI?.onMatchesList) {
+      window.electronAPI.onMatchesList((matches) => {
+        setMatches(matches)
+      })
+      
+      return () => {
+        window.electronAPI.removeAllListeners('matches:list')
+      }
+    }
   }, [])
 
   // Fetch stats for all matches
@@ -647,6 +661,40 @@ function MatchesScreen() {
     return player?.name || steamId
   }
 
+  const getSourceIcon = (source: string | null | undefined): string | null => {
+    if (!source || source === 'unknown') {
+      return null
+    }
+    
+    // Map source names to icon filenames (use white icons for dark theme)
+    const sourceIconMap: Record<string, string> = {
+      'faceit': 'faceit-white.png',
+      'cevo': 'cevo-white.png',
+      'challengermode': 'challengermode.png',
+      'esl': 'esl-white.png',
+      'ebot': 'ebot.png',
+      'esea': 'esea-white.png',
+      'popflash': 'popflash-white.png',
+      'esportal': 'esportal-white.png',
+      'fastcup': 'fastcup-white.png',
+      'gamersclub': 'gamersclub-white.png',
+      'renown': 'renown-white.png',
+      'matchzy': 'matchzy.png',
+      'valve': 'valve-white.png',
+      'perfectworld': 'perfectworld-white.png',
+      '5eplay': '5eplay.png',
+      'esplay': 'esplay.png',
+    }
+    
+    const iconName = sourceIconMap[source.toLowerCase()]
+    if (!iconName) {
+      return null
+    }
+    
+    // Return path to icon in resources/sources
+    return `resources/sources/${iconName}`
+  }
+
   const getMapThumbnail = (mapName: string | null | undefined) => {
     if (!mapName) return null
     // Normalize map name: de_cache_b -> de_cache
@@ -772,7 +820,30 @@ function MatchesScreen() {
 
     try {
       // Launch CS2 without jumping to a specific tick or player
-      const result = await window.electronAPI.launchCS2(demoPath, undefined, undefined)
+      // Check if CS2 is running and if we need to load a different demo
+      const result = await window.electronAPI.launchCS2(demoPath, undefined, undefined, false)
+      
+      // Check for errors (e.g., Akros running)
+      if (result.error) {
+        setToast({ message: result.error, type: 'error' })
+        return
+      }
+      
+      if (result.needsDemoLoad) {
+        // Need to confirm loading a different demo
+        setPendingDemoAction({ demoPath, startTick: 0, playerName: '' })
+        setShowDemoLoadModal(true)
+        return
+      }
+      
+      if (result.success) {
+        setError(null)
+        const message = result.alreadyRunning 
+          ? (result.needsDemoLoad === false ? 'Loading demo in CS2...' : 'Loading new demo in CS2...')
+          : 'Launching CS2 and loading demo...'
+        setToast({ message, type: 'success' })
+      }
+      
       if (result.commands) {
         // Show a notification that commands were copied to clipboard
         const message = result.alreadyRunning
@@ -859,7 +930,7 @@ function MatchesScreen() {
     }
   }
 
-  // Copy console commands to clipboard for a specific event (without launching CS2)
+  // Watch event in CS2 (launches CS2 if not running, loads demo, and jumps to event)
   const handleCopyCommand = async (event: any) => {
     if (!window.electronAPI) {
       setError('Electron API not available')
@@ -880,16 +951,101 @@ function MatchesScreen() {
       const previewTicks = previewSeconds * tickRate
       const targetTick = Math.max(0, event.startTick - previewTicks)
       
-      const result = await window.electronAPI.copyCS2Commands(demoPath, targetTick, playerName)
-      if (result.commands) {
-        // Commands are already copied to clipboard
+      // If this is a team kill event, send incident to overlay
+      if (event.type === 'TEAM_KILL' && event.actorSteamId && event.victimSteamId) {
+        const offenderName = getPlayerName(event.actorSteamId)
+        const victimName = getPlayerName(event.victimSteamId)
+        
+        // Send incident to overlay
+        if (window.electronAPI.overlay.sendIncident) {
+          await window.electronAPI.overlay.sendIncident({
+            matchId: selectedMatch,
+            tick: event.startTick,
+            eventType: event.type,
+            offender: {
+              name: offenderName,
+              steamId: event.actorSteamId,
+              // userId and entityIndex are optional and can be added later if available
+            },
+            victim: {
+              name: victimName,
+              steamId: event.victimSteamId,
+              // userId and entityIndex are optional and can be added later if available
+            },
+          })
+        }
+      }
+      
+      // Check if CS2 is running - if not, launch it; if yes, just send commands
+      // Use launchCS2 which handles both cases and waits for demo to load
+      const result = await window.electronAPI.launchCS2(demoPath, event.startTick, playerName, false)
+      
+      // Check for errors (e.g., Akros running)
+      if (result.error) {
+        setToast({ message: result.error, type: 'error' })
+        return
+      }
+      
+      if (result.needsDemoLoad) {
+        // Need to confirm loading a different demo
+        setPendingDemoAction({ demoPath, startTick: event.startTick, playerName })
+        setShowDemoLoadModal(true)
+        return
+      }
+      
+      if (result.success) {
         setError(null)
-        setToast({ message: 'Commands copied to clipboard!', type: 'success' })
+        const message = result.alreadyRunning 
+          ? (result.needsDemoLoad === false ? 'Jumping to event in CS2...' : 'Loading demo and jumping to event...')
+          : 'Launching CS2 and loading demo...'
+        setToast({ message, type: 'success' })
       }
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to copy commands'
+      const errorMessage = err instanceof Error ? err.message : 'Failed to launch CS2 or send commands'
       setError(errorMessage)
       setToast({ message: errorMessage, type: 'error' })
+    }
+  }
+
+  const handleConfirmDemoLoad = async () => {
+    if (!pendingDemoAction || !window.electronAPI) {
+      setShowDemoLoadModal(false)
+      setPendingDemoAction(null)
+      return
+    }
+
+    try {
+      const result = await window.electronAPI.launchCS2(
+        pendingDemoAction.demoPath,
+        pendingDemoAction.startTick,
+        pendingDemoAction.playerName,
+        true // confirmLoadDemo = true
+      )
+      
+      // Check for errors (e.g., Akros running)
+      if (result.error) {
+        setError(result.error)
+        setToast({ message: result.error, type: 'error' })
+        setShowDemoLoadModal(false)
+        setPendingDemoAction(null)
+        return
+      }
+      
+      if (result.success) {
+        setError(null)
+        // Show different message based on whether we're jumping to an event or loading from start
+        const message = pendingDemoAction.startTick > 0 
+          ? 'Loading new demo and jumping to event...'
+          : 'Loading new demo from start...'
+        setToast({ message, type: 'success' })
+      }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to load demo'
+      setError(errorMessage)
+      setToast({ message: errorMessage, type: 'error' })
+    } finally {
+      setShowDemoLoadModal(false)
+      setPendingDemoAction(null)
     }
   }
 
@@ -1090,11 +1246,6 @@ function MatchesScreen() {
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      {error && (
-        <div className="mb-4 p-4 bg-red-900/20 border border-red-500/50 rounded text-red-400">
-          {error}
-        </div>
-      )}
 
       {!showMatchOverview ? (
         <>
@@ -1261,10 +1412,22 @@ function MatchesScreen() {
                         </div>
                       )}
                       <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
-                      <div className="absolute bottom-3 left-3 right-3">
+                      <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between gap-2">
                         <div className="font-semibold text-white text-base truncate">
                           {match.map || 'Unknown Map'}
                         </div>
+                        {match.source && getSourceIcon(match.source) && (
+                          <img
+                            src={getSourceIcon(match.source)!}
+                            alt={match.source}
+                            className="h-5 w-5 flex-shrink-0 object-contain"
+                            title={match.source}
+                            onError={(e) => {
+                              // Hide icon on error
+                              e.currentTarget.style.display = 'none'
+                            }}
+                          />
+                        )}
                       </div>
                     </div>
                     <div className="p-4 bg-secondary border-t border-border/50">
@@ -1853,9 +2016,9 @@ function MatchesScreen() {
                                                   <button
                                                     onClick={() => handleCopyCommand(afk)}
                                                     className="p-1 hover:bg-accent/20 rounded transition-colors"
-                                                    title="Copy CS2 console commands"
+                                                    title="Watch this event in CS2"
                                                   >
-                                                    <Copy size={14} className="text-gray-400 hover:text-accent" />
+                                                    <Play size={14} className="text-gray-400 hover:text-accent" />
                                                   </button>
                                                 </div>
                                               )}
@@ -1946,9 +2109,9 @@ function MatchesScreen() {
                                             <button
                                               onClick={() => handleCopyCommand(dc)}
                                               className="p-1 hover:bg-accent/20 rounded transition-colors"
-                                              title="Copy CS2 console commands"
+                                              title="Watch this event in CS2"
                                             >
-                                              <Copy size={14} className="text-gray-400 hover:text-accent" />
+                                              <Play size={14} className="text-gray-400 hover:text-accent" />
                                             </button>
                                           </div>
                                         )}
@@ -2039,9 +2202,9 @@ function MatchesScreen() {
                                           <button
                                             onClick={() => handleCopyCommand(kill)}
                                             className="p-1 hover:bg-accent/20 rounded transition-colors"
-                                            title="Copy CS2 console commands"
+                                            title="Watch this event in CS2"
                                           >
-                                            <Copy size={14} className="text-gray-400 hover:text-accent" />
+                                            <Play size={14} className="text-gray-400 hover:text-accent" />
                                           </button>
                                         </div>
                                       )}
@@ -2115,9 +2278,9 @@ function MatchesScreen() {
                                               <button
                                                 onClick={() => handleCopyCommand(damage)}
                                                 className="p-1 hover:bg-accent/20 rounded transition-colors"
-                                                title="Copy CS2 console commands"
+                                                title="Watch this event in CS2"
                                               >
-                                                <Copy size={14} className="text-gray-400 hover:text-accent" />
+                                                <Play size={14} className="text-gray-400 hover:text-accent" />
                                               </button>
                                             </div>
                                           )}
@@ -2202,9 +2365,9 @@ function MatchesScreen() {
                                                 <button
                                                   onClick={() => handleCopyCommand(flash)}
                                                   className="p-1 hover:bg-accent/20 rounded transition-colors"
-                                                  title="Copy CS2 console commands"
+                                                  title="Watch this event in CS2"
                                                 >
-                                                  <Copy size={14} className="text-gray-400 hover:text-accent" />
+                                                  <Play size={14} className="text-gray-400 hover:text-accent" />
                                                 </button>
                                               </div>
                                             )}
@@ -2758,6 +2921,50 @@ function MatchesScreen() {
       )}
 
       <>
+        {/* Demo Load Confirmation Modal */}
+        <Modal
+          isOpen={showDemoLoadModal}
+          onClose={() => {
+            setShowDemoLoadModal(false)
+            setPendingDemoAction(null)
+          }}
+          title="Load Different Demo?"
+          size="md"
+        >
+          <div className="space-y-4">
+            <p className="text-gray-300">
+              CS2 is currently playing a different demo. Do you want to load the new demo?
+            </p>
+            {pendingDemoAction && (
+              <div className="bg-surface/50 rounded p-3 space-y-2 text-sm">
+                <div>
+                  <span className="text-gray-400">New demo:</span>
+                  <div className="text-white font-mono text-xs mt-1 break-all">
+                    {pendingDemoAction.demoPath.split(/[/\\]/).pop() || pendingDemoAction.demoPath}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+          <div className="flex justify-end gap-3 mt-6">
+            <button
+              onClick={() => {
+                setShowDemoLoadModal(false)
+                setPendingDemoAction(null)
+              }}
+              className="px-4 py-2 bg-surface hover:bg-surface/80 text-white rounded transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleConfirmDemoLoad}
+              className="px-4 py-2 bg-accent hover:bg-accent/80 text-white rounded transition-colors"
+            >
+              Load Demo
+            </button>
+          </div>
+        </Modal>
+
         {/* Player Details Modal */}
         {selectedPlayer && (
           <PlayerModal
@@ -2821,9 +3028,9 @@ function MatchesScreen() {
               setDemoToParse(null)
               setDemosToParse([])
             }}
-            onComplete={() => {
-              // Refresh matches list when parsing completes
-              fetchMatches()
+            onComplete={async () => {
+              // Refresh matches list after parsing completes
+              await fetchMatches()
               const message = demosToParse.length > 0 
                 ? `${demosToParse.length + 1} demos parsed successfully!`
                 : 'Demo parsed successfully!'

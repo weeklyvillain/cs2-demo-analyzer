@@ -5,6 +5,7 @@ import MatchesScreen from './components/MatchesScreen'
 import SettingsScreen from './components/SettingsScreen'
 import DBViewerScreen from './components/DBViewerScreen'
 import StatsScreen from './components/StatsScreen'
+import OverlayScreen from './components/OverlayScreen'
 import WhatsNewModal from './components/WhatsNewModal'
 import TitleBar from './components/TitleBar'
 
@@ -12,12 +13,21 @@ type Screen = 'matches' | 'settings' | 'dbviewer' | 'stats'
 
 function App() {
   const [currentScreen, setCurrentScreen] = useState<Screen>('matches')
+  const [isOverlay, setIsOverlay] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [enableDbViewer, setEnableDbViewer] = useState(false)
   const [showWhatsNew, setShowWhatsNew] = useState(false)
   const [appVersion, setAppVersion] = useState<string>('')
 
   useEffect(() => {
+    // Check if we're in overlay mode (via hash)
+    const hash = window.location.hash
+    if (hash === '#/overlay') {
+      setIsOverlay(true)
+      setIsLoading(false)
+      return
+    }
+
     // Check if electronAPI is available and app is ready
     const checkReady = async () => {
       if (window.electronAPI) {
@@ -66,6 +76,11 @@ function App() {
     window.addEventListener('navigateToDbViewer', handleNavigateToDbViewer)
     return () => window.removeEventListener('navigateToDbViewer', handleNavigateToDbViewer)
   }, [enableDbViewer])
+
+  // If overlay mode, render overlay screen
+  if (isOverlay) {
+    return <OverlayScreen />
+  }
 
   if (isLoading) {
     return (

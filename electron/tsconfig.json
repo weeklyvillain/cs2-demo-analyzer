@@ -12,9 +12,10 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "types": ["node"],
-    "allowSyntheticDefaultImports": true
+    "allowSyntheticDefaultImports": true,
+    "typeRoots": ["./types", "../node_modules/@types"]
   },
-  "include": ["**/*.ts"],
+  "include": ["**/*.ts", "types/**/*.ts"],
   "exclude": ["node_modules"]
 }
 

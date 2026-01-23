@@ -247,6 +247,22 @@ func runMigrations(ctx context.Context, db *sql.DB) error {
 		}
 	}
 	
+	// Check if matches table has source column
+	var hasSource bool
+	checkColumnQuery5 := `SELECT COUNT(*) FROM pragma_table_info('matches') WHERE name = 'source'`
+	var count5 int
+	if err := db.QueryRowContext(ctx, checkColumnQuery5).Scan(&count5); err == nil {
+		hasSource = count5 > 0
+	}
+	
+	if !hasSource {
+		_, err := db.ExecContext(ctx, `ALTER TABLE matches ADD COLUMN source TEXT`)
+		if err != nil && !strings.Contains(err.Error(), "duplicate column") {
+			// Ignore "duplicate column" errors, but log others
+			fmt.Printf("WARN: Failed to add source column: %v\n", err)
+		}
+	}
+	
 	return nil
 }
 

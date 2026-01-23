@@ -33,7 +33,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   runQuery: (matchId: string, sql: string) => ipcRenderer.invoke('db:runQuery', matchId, sql),
   
   // CS2 Launch
-  launchCS2: (demoPath: string, startTick?: number, playerName?: string) => ipcRenderer.invoke('cs2:launch', demoPath, startTick, playerName),
+  launchCS2: (demoPath: string, startTick?: number, playerName?: string, confirmLoadDemo?: boolean) => ipcRenderer.invoke('cs2:launch', demoPath, startTick, playerName, confirmLoadDemo),
   // CS2 Copy Commands (without launching)
   copyCS2Commands: (demoPath: string, startTick?: number, playerName?: string) => ipcRenderer.invoke('cs2:copyCommands', demoPath, startTick, playerName),
   
@@ -106,6 +106,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onMatchesTrimmed: (callback: (data: { deleted: number; details: Array<{ matchId: string; reason: string }> }) => void) => {
     ipcRenderer.on('matches:trimmed', (_, data) => callback(data))
   },
+  onMatchesList: (callback: (matches: Array<{ id: string; map: string; startedAt: string | null; playerCount: number; demoPath: string | null; isMissingDemo?: boolean; createdAtIso?: string | null; source?: string | null }>) => void) => {
+    ipcRenderer.on('matches:list', (_, matches) => callback(matches))
+  },
 
   // Voice extraction listeners
   onVoiceExtractionLog: (callback: (log: string) => void) => {
@@ -138,6 +141,42 @@ contextBridge.exposeInMainWorld('electronAPI', {
   windowIsMaximized: () => ipcRenderer.invoke('window:isMaximized'),
   onWindowMaximized: (callback: (maximized: boolean) => void) => {
     ipcRenderer.on('window:maximized', (_, maximized) => callback(maximized))
+  },
+
+  // Overlay API
+  overlay: {
+    getInteractive: () => ipcRenderer.invoke('overlay:getInteractive'),
+    setInteractive: (value: boolean) => ipcRenderer.invoke('overlay:setInteractive', value),
+    create: () => ipcRenderer.invoke('overlay:create'),
+    close: () => ipcRenderer.invoke('overlay:close'),
+    show: () => ipcRenderer.invoke('overlay:show'),
+    hide: () => ipcRenderer.invoke('overlay:hide'),
+    sendIncident: (incident: any) => ipcRenderer.invoke('overlay:sendIncident', incident),
+    onInteractive: (callback: (value: boolean) => void) => {
+      ipcRenderer.on('overlay:interactiveChanged', (_, value) => callback(value))
+    },
+    onIncident: (callback: (incident: any) => void) => {
+      ipcRenderer.on('overlay:incident', (_, incident) => callback(incident))
+    },
+    onActionResult: (callback: (result: { success: boolean; action: string; player?: string; error?: string }) => void) => {
+      ipcRenderer.on('overlay:actionResult', (_, result) => callback(result))
+    },
+    onCommandLog: (callback: (log: Array<{ ts: number; cmd: string }>) => void) => {
+      ipcRenderer.on('overlay:commandLog', (_, log) => callback(log))
+    },
+    actions: {
+      viewOffender: () => ipcRenderer.invoke('overlay:actions:viewOffender'),
+      viewVictim: () => ipcRenderer.invoke('overlay:actions:viewVictim'),
+    },
+  },
+
+  // Hotkey settings API
+  settings: {
+    getHotkey: () => ipcRenderer.invoke('settings:getHotkey'),
+    setHotkey: (accelerator: string) => ipcRenderer.invoke('settings:setHotkey', accelerator),
+    resetHotkey: () => ipcRenderer.invoke('settings:resetHotkey'),
+    getDebugMode: () => ipcRenderer.invoke('settings:getDebugMode'),
+    setDebugMode: (value: boolean) => ipcRenderer.invoke('settings:setDebugMode', value),
   },
 })
 

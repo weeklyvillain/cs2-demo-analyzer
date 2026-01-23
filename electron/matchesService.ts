@@ -13,6 +13,7 @@ export interface MatchInfo {
   demoPath: string | null
   isMissingDemo?: boolean
   createdAtIso?: string | null
+  source?: string | null
 }
 
 export interface TableInfo {
@@ -219,15 +220,6 @@ export async function listMatches(): Promise<MatchInfo[]> {
       const buffer = fs.readFileSync(dbPath)
       const db = new SQL.Database(buffer)
       
-      // Get match info
-      const matchStmt = db.prepare('SELECT map, started_at FROM matches WHERE id = ?')
-      matchStmt.bind([matchId])
-      const matchResult = matchStmt.step() ? {
-        map: matchStmt.get()[0],
-        started_at: matchStmt.get()[1]
-      } : null
-      matchStmt.free()
-      
       // Get player count
       const playerStmt = db.prepare('SELECT COUNT(*) FROM players WHERE match_id = ?')
       playerStmt.bind([matchId])
@@ -241,16 +233,61 @@ export async function listMatches(): Promise<MatchInfo[]> {
       // Check if demo is missing
       const isMissingDemo = !demoPath || !fs.existsSync(demoPath)
       
+      // Get match info
+      // Try to get source column, but handle case where it doesn't exist (older databases)
+      let matchResult: { map: any; started_at: any; source: string | null } | null = null
+      try {
+        const matchStmt = db.prepare('SELECT map, started_at, source FROM matches WHERE id = ?')
+        matchStmt.bind([matchId])
+        if (matchStmt.step()) {
+          const result = matchStmt.get()
+          matchStmt.free()
+          matchResult = {
+            map: result[0],
+            started_at: result[1],
+            source: result[2] || null
+          }
+        } else {
+          matchStmt.free()
+        }
+      } catch (err: any) {
+        // If source column doesn't exist, try without it
+        if (err?.message?.includes('no such column: source')) {
+          const matchStmt = db.prepare('SELECT map, started_at FROM matches WHERE id = ?')
+          matchStmt.bind([matchId])
+          if (matchStmt.step()) {
+            const result = matchStmt.get()
+            matchStmt.free()
+            matchResult = {
+              map: result[0],
+              started_at: result[1],
+              source: null // Source column doesn't exist in this database
+            }
+          } else {
+            matchStmt.free()
+          }
+        } else {
+          // Re-throw if it's a different error
+          throw err
+        }
+      }
+      
       db.close()
+      
+      if (!matchResult) {
+        // No match found, skip
+        continue
+      }
       
       matches.push({
         id: matchId,
-        map: matchResult?.map || matchId,
-        startedAt: matchResult?.started_at || null,
+        map: matchResult.map || matchId,
+        startedAt: matchResult.started_at || null,
         playerCount: playerCount || 0,
         demoPath: demoPath || null,
         isMissingDemo,
         createdAtIso: createdAtIso || null,
+        source: matchResult.source,
       })
     } catch (err) {
       // Skip corrupted databases (they should be cleaned up by integrity check)

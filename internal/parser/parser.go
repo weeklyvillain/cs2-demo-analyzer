@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -33,6 +35,7 @@ type MatchData struct {
 	Map         string
 	TickRate    float64
 	StartedAt   *time.Time
+	Source      string // Demo source (e.g., "faceit", "valve", "unknown")
 	Players     []PlayerData
 	Rounds      []RoundData
 	Events      []extractors.Event
@@ -221,6 +224,126 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 
 	// Track map name from ServerInfo event (v5)
 	var mapName string
+	var serverName string
+	
+	// Try to read server name from demo file header (best effort)
+	// For CS2 (Source 2), this requires protobuf parsing which is complex
+	// For CS:GO (Source 1), we can read it directly from the header
+	func() {
+		defer func() {
+			// Ignore any panics from header reading
+			_ = recover()
+		}()
+		
+		f, err := os.Open(p.path)
+		if err != nil {
+			return
+		}
+		defer f.Close()
+		
+		// Read first 8 bytes to check filestamp
+		buf := make([]byte, 8)
+		if _, err := f.ReadAt(buf, 0); err != nil {
+			return
+		}
+		
+		filestamp := string(buf)
+		if filestamp == "HL2DEMO" {
+			// Source 1 demo (CS:GO) - server name is at offset 16, 260 bytes
+			serverNameBytes := make([]byte, 260)
+			if _, err := f.ReadAt(serverNameBytes, 16); err == nil {
+				// Remove null bytes and trim
+				serverName = strings.TrimRight(string(serverNameBytes), "\x00")
+				serverName = strings.TrimSpace(serverName)
+			}
+		}
+		// For Source 2 (PBDEMS2), we'd need protobuf parsing - skip for now
+		// File name patterns should catch most cases
+	}()
+
+	// getDemoSource detects the demo source based on server name and file name
+	getDemoSource := func(serverName, fileName string) string {
+		faceitRegex := `\d+_team[\da-z-]+-team[\da-z-]+_de_[\da-z]+\.dem`
+		matched, _ := regexp.MatchString(faceitRegex, fileName)
+		
+		serverLower := strings.ToLower(serverName)
+		fileLower := strings.ToLower(fileName)
+		
+		if strings.Contains(serverLower, "faceit") || strings.Contains(serverLower, "blast") || matched {
+			return "faceit"
+		}
+		if strings.Contains(serverLower, "cevo") {
+			return "cevo"
+		}
+		if strings.Contains(serverLower, "challengermode") || strings.Contains(serverLower, "pgl major cs2") {
+			return "challengermode"
+		}
+		if strings.Contains(serverLower, "esl") {
+			return "esl"
+		}
+		ebotRegex := `(\d*)_(.*?)-(.*?)_(.*?)(\.dem)`
+		matched, _ = regexp.MatchString(ebotRegex, fileName)
+		if strings.Contains(serverLower, "ebot") || matched {
+			return "ebot"
+		}
+		if strings.Contains(serverLower, "esea") || strings.Contains(fileLower, "esea") {
+			return "esea"
+		}
+		if strings.Contains(serverLower, "popflash") || strings.Contains(fileLower, "popflash") {
+			return "popflash"
+		}
+		if strings.Contains(serverLower, "esportal") {
+			return "esportal"
+		}
+		if strings.Contains(serverLower, "fastcup") {
+			return "fastcup"
+		}
+		if strings.Contains(serverLower, "gamersclub") {
+			return "gamersclub"
+		}
+		if strings.Contains(fileLower, "renown") || strings.Contains(serverLower, "renown") {
+			return "renown"
+		}
+		matchZyRegex := `^(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})_(\d+)_([a-zA-Z0-9_]+)_(.+?)_vs_(.+)$`
+		matched, _ = regexp.MatchString(matchZyRegex, fileName)
+		if strings.Contains(serverLower, "matchzy") || matched {
+			return "matchzy"
+		}
+		if strings.Contains(serverLower, "valve") {
+			return "valve"
+		}
+		if strings.Contains(serverLower, "完美世界") {
+			return "perfectworld"
+		}
+		fiveEPlayRegex := `^g\d+-(.*)[a-zA-Z0-9_]*$`
+		matched, _ = regexp.MatchString(fiveEPlayRegex, fileName)
+		if matched {
+			return "5eplay"
+		}
+		if strings.Contains(serverLower, "esplay") {
+			return "esplay"
+		}
+		
+		// If server name is empty and file name doesn't match any pattern,
+		// check if it looks like a Valve matchmaking demo
+		// Valve demos often have specific patterns or are from Valve servers
+		if serverName == "" {
+			// Check for common Valve demo patterns
+			// Valve matchmaking demos often have timestamps and map names
+			valvePattern := `^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}.*\.dem$`
+			if matched, _ := regexp.MatchString(valvePattern, fileName); matched {
+				return "valve"
+			}
+			
+			// If server name contains "valve" (case-insensitive check already done above)
+			// But also check for common Valve server indicators in file name
+			if strings.Contains(fileLower, "valve") || strings.Contains(fileLower, "matchmaking") {
+				return "valve"
+			}
+		}
+		
+		return "unknown"
+	}
 
 	// Track Team A and Team B assignments
 	// Team A and Team B are consistent throughout the match (don't swap sides)
@@ -1674,6 +1797,8 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 	data.Events = append(data.Events, afkExtractor.GetEvents()...)
 
 	// Extract header information
+	// Note: Server name is not easily accessible in demoinfocs-golang v5
+	// We'll rely on file name patterns for source detection
 	// In v5, we get map name and other info from GameState after parsing
 	gs := p.parser.GameState()
 	if gs != nil {
@@ -1755,6 +1880,10 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 			return nil, fmt.Errorf("failed to flush final position buffer: %w", err)
 		}
 	}
+
+	// Set source (map is already set above)
+	demoFileName := filepath.Base(p.path)
+	data.Source = getDemoSource(serverName, demoFileName)
 
 	return data, nil
 }

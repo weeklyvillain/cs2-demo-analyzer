@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, shell, clipboard, protocol, Menu } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, shell, clipboard, protocol, Menu, globalShortcut, screen } from 'electron'
 import { autoUpdater, UpdateInfo } from 'electron-updater'
 import { spawn, ChildProcess, exec } from 'child_process'
 import * as path from 'path'
@@ -10,11 +10,29 @@ import { initSettingsDb, getSetting, setSetting, getAllSettings } from './settin
 import { initStatsDb, incrementStat, incrementMapParseCount, getAllStats, resetStats } from './stats'
 import * as matchesService from './matchesService'
 import { isCS2PluginInstalled, getPluginInstallPath, isGameInfoModified } from './cs2-plugin'
+import { pushCommand, getCommandLog } from './commandLog'
+import { cs2OverlayTracker } from './cs2OverlayTracker'
 
 let mainWindow: BrowserWindow | null = null
 let splashWindow: BrowserWindow | null = null
+let overlayWindow: BrowserWindow | null = null
 let parserProcess: ChildProcess | null = null
 let startupCleanupDeleted: Array<{ matchId: string; reason: string }> = []
+let overlayInteractive: boolean = false
+let currentDemoPath: string | null = null // Track currently loaded demo in CS2
+let currentHotkey: string = 'CommandOrControl+Shift+O'
+let currentIncident: {
+  matchId?: string
+  tick: number
+  eventType?: string
+  offender: { name: string; steamId?: string; userId?: number; entityIndex?: number }
+  victim: { name: string; steamId?: string; userId?: number; entityIndex?: number }
+} | null = null
+// Store timeout IDs for pause timers so we can cancel them
+let pauseTimerTimeout: NodeJS.Timeout | null = null
+
+// Command delay constant (ms)
+const COMMAND_DELAY_MS = 150
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
 
@@ -222,6 +240,156 @@ function createWindow() {
   })
 }
 
+// Helper function to update overlay opacity based on interactive state
+function updateOverlayOpacity(isClickThrough: boolean) {
+  if (!overlayWindow || overlayWindow.isDestroyed()) {
+    return
+  }
+  
+  // When click-through: higher opacity (more visible) - 0.95
+  // When interactive: lower opacity (less intrusive) - 0.85
+  const opacity = isClickThrough ? 0.95 : 0.85
+  overlayWindow.setOpacity(opacity)
+}
+
+// Helper function to set overlay interactive state with proper handoff sequence
+// IMPORTANT: Handoff to CS2 only happens when CLOSING interactive mode (turning OFF),
+// NOT when opening it (turning ON)
+function setOverlayInteractiveState(value: boolean) {
+  const wasInteractive = overlayInteractive
+  
+  // Only perform handoff when CLOSING (was ON, now OFF)
+  const isClosing = wasInteractive && !value
+  
+  // Update tracker first - this will handle handoff if closing
+  if (process.platform === 'win32') {
+    cs2OverlayTracker.setOverlayInteractive(value)
+  }
+  
+  // Update local state
+  overlayInteractive = value
+  
+  if (overlayWindow && !overlayWindow.isDestroyed()) {
+    // Make overlay click-through when not interactive
+    overlayWindow.setIgnoreMouseEvents(!value, { forward: true })
+    // Make overlay non-focusable when not interactive
+    overlayWindow.setFocusable(value)
+    // Update opacity: click-through (not interactive) = more opaque
+    updateOverlayOpacity(!value)
+    // Notify overlay window of state change
+    overlayWindow.webContents.send('overlay:interactiveChanged', value)
+  }
+  
+  if (isClosing) {
+    console.log('[Overlay] Interactive mode closed - handoff to CS2 performed')
+  }
+}
+
+// Create overlay window for CS2 demo playback
+function createOverlayWindow() {
+  // Check if overlay is enabled
+  const overlayEnabled = getSetting('overlayEnabled', 'false') !== 'false'
+  if (!overlayEnabled) {
+    console.log('[Overlay] Overlay is disabled in settings, skipping creation')
+    return null
+  }
+  if (overlayWindow && !overlayWindow.isDestroyed()) {
+    return overlayWindow
+  }
+
+  const primaryDisplay = screen.getPrimaryDisplay()
+  const { width, height } = primaryDisplay.workAreaSize
+
+  overlayWindow = new BrowserWindow({
+    width,
+    height,
+    x: 0,
+    y: 0,
+    frame: false,
+    transparent: true,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    closable: false,
+    focusable: false,
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      webSecurity: false,
+    },
+    backgroundColor: '#00000000', // Fully transparent
+  })
+
+  // Set overlay to stay on top with highest level
+  overlayWindow.setAlwaysOnTop(true, 'screen-saver', 1)
+  overlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  
+  // Set click-through by default
+  overlayWindow.setIgnoreMouseEvents(true, { forward: true })
+
+  // Load overlay route
+  if (isDev) {
+    overlayWindow.loadURL('http://localhost:5173/#/overlay')
+  } else {
+    overlayWindow.loadFile(path.join(__dirname, '../dist/index.html'), { hash: 'overlay' })
+  }
+
+  overlayWindow.on('closed', () => {
+    // Stop overlay tracking before closing
+    if (overlayWindow) {
+      cs2OverlayTracker.stopTrackingCs2(overlayWindow)
+    }
+    overlayWindow = null
+  })
+
+  overlayWindow.once('ready-to-show', () => {
+    if (overlayWindow && !overlayWindow.isDestroyed()) {
+      overlayWindow.showInactive() // Use showInactive to prevent stealing focus
+      // Set initial opacity based on interactive state (click-through = more opaque)
+      updateOverlayOpacity(!overlayInteractive)
+    }
+  })
+
+  // Overlay tracking will be started when demo playback begins
+  // (via cs2OverlayTracker.startTrackingCs2ForDemo)
+
+  return overlayWindow
+}
+
+// Wrapper function to send CS2 commands (for overlay use)
+function sendCsCmd(cmd: string): void {
+  // Log command if debug mode is enabled
+  const debugMode = getSetting('debugMode', 'false') === 'true'
+  if (debugMode) {
+    pushCommand(cmd)
+    // Send updated command log to overlay
+    sendCommandLogToOverlay()
+  }
+  
+  const netconPort = getSetting('cs2_netconport', '2121')
+  if (netconPort) {
+    sendCS2CommandsSequentially(parseInt(netconPort), [cmd]).catch(err => {
+      console.error('[overlay] Failed to send CS2 command:', err)
+    })
+  }
+}
+
+// Function to send command log to overlay
+function sendCommandLogToOverlay(): void {
+  const debugMode = getSetting('debugMode', 'false') === 'true'
+  if (!debugMode || !overlayWindow || overlayWindow.isDestroyed()) {
+    return
+  }
+  
+  const log = getCommandLog()
+  overlayWindow.webContents.send('overlay:commandLog', log)
+}
+
 app.whenReady().then(async () => {
   // Register protocol to serve map images (thumbnails for cards)
   protocol.registerFileProtocol('map', (request, callback) => {
@@ -345,6 +513,30 @@ app.whenReady().then(async () => {
 
   // Initialize settings database
   await initSettingsDb()
+  
+  // Register overlay hotkey on startup
+  const savedHotkey = getSetting('overlay_hotkey', 'CommandOrControl+Shift+O')
+  currentHotkey = savedHotkey
+  const registered = globalShortcut.register(savedHotkey, () => {
+    // Create overlay window if it doesn't exist
+    if (!overlayWindow || overlayWindow.isDestroyed()) {
+      createOverlayWindow()
+      // Wait a bit for window to be ready
+      setTimeout(() => {
+        if (overlayWindow && !overlayWindow.isDestroyed()) {
+        setOverlayInteractiveState(!overlayInteractive)
+        }
+      }, 500)
+    } else {
+        setOverlayInteractiveState(!overlayInteractive)
+    }
+  })
+  
+  if (!registered) {
+    console.error(`Failed to register overlay hotkey on startup: ${savedHotkey}`)
+  } else {
+    console.log(`Registered overlay hotkey: ${savedHotkey}`)
+  }
   
   // Initialize stats database
   await initStatsDb()
@@ -480,6 +672,14 @@ app.on('before-quit', () => {
   if (parserProcess) {
     parserProcess.kill()
     parserProcess = null
+  }
+  
+  // Unregister all global shortcuts
+  globalShortcut.unregisterAll()
+  
+  // Stop overlay tracking
+  if (overlayWindow) {
+    cs2OverlayTracker.stopTrackingCs2(overlayWindow)
   }
 })
 
@@ -691,8 +891,18 @@ ipcMain.handle('parser:parse', async (_, { demoPath }: { demoPath: string }) => 
     parserProcess = null
     mainWindow?.webContents.send('parser:exit', { code, signal })
     
-    // If parsing succeeded, track stats and apply match cap if enabled
+    // If parsing succeeded, refresh matches list and track stats
     if (code === 0) {
+      // Refresh matches list so the new match appears
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        try {
+          const matches = await matchesService.listMatches()
+          mainWindow.webContents.send('matches:list', matches)
+        } catch (err) {
+          console.error('[Main] Failed to refresh matches list after parsing:', err)
+        }
+      }
+      
       // Track demo parsed
       incrementStat('total_demos_parsed')
       
@@ -2318,6 +2528,496 @@ ipcMain.handle('window:isMaximized', () => {
   return mainWindow ? mainWindow.isMaximized() : false
 })
 
+// Overlay IPC handlers
+ipcMain.handle('overlay:getInteractive', () => {
+  return overlayInteractive
+})
+
+ipcMain.handle('overlay:setInteractive', (_, value: boolean) => {
+  setOverlayInteractiveState(value)
+  return value
+})
+
+ipcMain.handle('overlay:create', () => {
+  createOverlayWindow()
+  return true
+})
+
+ipcMain.handle('overlay:close', () => {
+  if (overlayWindow && !overlayWindow.isDestroyed()) {
+    // Make overlay click-through before closing to avoid stealing focus
+    overlayWindow.setIgnoreMouseEvents(true, { forward: true })
+    overlayWindow.setFocusable(false)
+    // Small delay to ensure focus returns to CS2 before closing
+    setTimeout(() => {
+      if (overlayWindow && !overlayWindow.isDestroyed()) {
+        overlayWindow.close()
+        overlayWindow = null
+      }
+    }, 100)
+  }
+  return true
+})
+
+ipcMain.handle('overlay:show', () => {
+  const overlayEnabled = getSetting('overlayEnabled', 'false') !== 'false'
+  if (!overlayEnabled) {
+    console.log('[Overlay] Overlay is disabled in settings, cannot show')
+    return false
+  }
+  
+  if (overlayWindow && !overlayWindow.isDestroyed()) {
+    overlayWindow.showInactive() // Use showInactive to prevent stealing focus
+  } else {
+    createOverlayWindow()
+  }
+  return true
+})
+
+ipcMain.handle('overlay:hide', () => {
+  if (overlayWindow && !overlayWindow.isDestroyed()) {
+    overlayWindow.hide()
+  }
+  return true
+})
+
+// Overlay action IPC handlers
+ipcMain.handle('overlay:actions:viewOffender', async () => {
+  if (!currentIncident) {
+    return { success: false, error: 'No incident available' }
+  }
+
+  // Cancel any pending pause timer
+  if (pauseTimerTimeout) {
+    clearTimeout(pauseTimerTimeout)
+    pauseTimerTimeout = null
+    console.log('[overlay] Cancelled pending pause timer for viewOffender')
+  }
+
+  const { tick, offender } = currentIncident
+  
+  // Determine best identifier for spec_player
+  let specTarget: string | null = null
+  if (offender.userId !== undefined) {
+    specTarget = offender.userId.toString()
+  } else if (offender.entityIndex !== undefined) {
+    specTarget = offender.entityIndex.toString()
+  } else if (offender.name) {
+    specTarget = `"${offender.name}"`
+  } else {
+    return { success: false, error: 'No valid identifier for offender' }
+  }
+
+  try {
+    const commands: string[] = []
+    
+    // Pause demo first
+    commands.push(`demo_pause`)
+    
+    // Calculate tick 5 seconds before the event (same as copy command button)
+    const tickRate = 64 // Default tick rate
+    const previewSeconds = 5
+    const previewTicks = previewSeconds * tickRate
+    const targetTick = tick > 0 ? Math.max(0, tick - previewTicks) : 0
+    
+    // Add tick jump if available
+    if (targetTick > 0) {
+      commands.push(`demo_gototick ${targetTick}`)
+    }
+    
+    // Add spec command
+    commands.push(`spec_player ${specTarget}`)
+    
+    // Send commands sequentially
+    const netconPort = getSetting('cs2_netconport', '2121')
+    if (!netconPort) {
+      return { success: false, error: 'CS2 netconport not configured' }
+    }
+
+    await sendCS2CommandsSequentially(parseInt(netconPort), commands)
+    
+    // Resume demo playback after spectating (if autoplay is enabled)
+    const autoplayAfterSpectate = getSetting('autoplayAfterSpectate', 'true') === 'true'
+    if (autoplayAfterSpectate) {
+      await sendCS2CommandsSequentially(parseInt(netconPort), ['demo_resume'])
+    }
+    
+    // Clear loading state immediately after resuming (no toast, just clear loading)
+    if (overlayWindow && !overlayWindow.isDestroyed()) {
+      overlayWindow.webContents.send('overlay:actionResult', { 
+        success: true, 
+        action: 'viewOffender',
+        player: offender.name,
+        clearLoadingOnly: true // Flag to indicate we should only clear loading, not show toast
+      })
+    }
+    
+    // Schedule pause 5 seconds after the event tick (skip for AFK events)
+    // We jumped to 5 seconds before the event, so we need to wait:
+    // 5 seconds (to reach the event) + 5 seconds (after the event) = 10 seconds total
+    // Don't set pause timer for AFK events
+    const isAfkEvent = currentIncident.eventType === 'AFK_STILLNESS'
+    if (!isAfkEvent) {
+      pauseTimerTimeout = setTimeout(async () => {
+        try {
+          await sendCS2CommandsSequentially(parseInt(netconPort), ['demo_pause'])
+          
+          // Notify overlay with "Event playback successful" message
+          if (overlayWindow && !overlayWindow.isDestroyed()) {
+            overlayWindow.webContents.send('overlay:actionResult', { 
+              success: true, 
+              action: 'viewOffender',
+              player: 'Event playback successful'
+            })
+          }
+        } catch (err) {
+          console.error('[overlay] Failed to pause demo after event:', err)
+          // Still notify success even if pause fails
+          if (overlayWindow && !overlayWindow.isDestroyed()) {
+            overlayWindow.webContents.send('overlay:actionResult', { 
+              success: true, 
+              action: 'viewOffender',
+              player: 'Event playback successful'
+            })
+          }
+        } finally {
+          pauseTimerTimeout = null // Clear timeout reference after execution
+        }
+      }, 10000) // 10 seconds total (5 seconds to event + 5 seconds after event)
+    }
+    
+    // Return success immediately (don't wait for the pause)
+    return { success: true }
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : 'Failed to spectate offender'
+    console.error('[overlay] Failed to view offender:', errorMsg)
+    
+    // Notify overlay of error
+    if (overlayWindow && !overlayWindow.isDestroyed()) {
+      overlayWindow.webContents.send('overlay:actionResult', { 
+        success: false, 
+        action: 'viewOffender',
+        error: errorMsg 
+      })
+    }
+    
+    return { success: false, error: errorMsg }
+  }
+})
+
+ipcMain.handle('overlay:actions:viewVictim', async () => {
+  if (!currentIncident) {
+    return { success: false, error: 'No incident available' }
+  }
+
+  // Cancel any pending pause timer
+  if (pauseTimerTimeout) {
+    clearTimeout(pauseTimerTimeout)
+    pauseTimerTimeout = null
+    console.log('[overlay] Cancelled pending pause timer for viewVictim')
+  }
+
+  const { tick, victim } = currentIncident
+  
+  // Determine best identifier for spec_player
+  let specTarget: string | null = null
+  if (victim.userId !== undefined) {
+    specTarget = victim.userId.toString()
+  } else if (victim.entityIndex !== undefined) {
+    specTarget = victim.entityIndex.toString()
+  } else if (victim.name) {
+    specTarget = `"${victim.name}"`
+  } else {
+    return { success: false, error: 'No valid identifier for victim' }
+  }
+
+  try {
+    const commands: string[] = []
+    
+    // Pause demo first
+    commands.push(`demo_pause`)
+    
+    // Calculate tick 5 seconds before the event (same as copy command button)
+    const tickRate = 64 // Default tick rate
+    const previewSeconds = 5
+    const previewTicks = previewSeconds * tickRate
+    const targetTick = tick > 0 ? Math.max(0, tick - previewTicks) : 0
+    
+    // Add tick jump if available
+    if (targetTick > 0) {
+      commands.push(`demo_gototick ${targetTick}`)
+    }
+    
+    // Add spec command
+    commands.push(`spec_player ${specTarget}`)
+    
+    // Send commands sequentially
+    const netconPort = getSetting('cs2_netconport', '2121')
+    if (!netconPort) {
+      return { success: false, error: 'CS2 netconport not configured' }
+    }
+
+    await sendCS2CommandsSequentially(parseInt(netconPort), commands)
+    
+    // Resume demo playback after spectating (if autoplay is enabled)
+    const autoplayAfterSpectate = getSetting('autoplayAfterSpectate', 'true') === 'true'
+    if (autoplayAfterSpectate) {
+      await sendCS2CommandsSequentially(parseInt(netconPort), ['demo_resume'])
+    }
+    
+    // Clear loading state immediately after resuming (no toast, just clear loading)
+    if (overlayWindow && !overlayWindow.isDestroyed()) {
+      overlayWindow.webContents.send('overlay:actionResult', { 
+        success: true, 
+        action: 'viewVictim',
+        player: victim.name,
+        clearLoadingOnly: true // Flag to indicate we should only clear loading, not show toast
+      })
+    }
+    
+    // Schedule pause 5 seconds after the event tick (skip for AFK events)
+    // We jumped to 5 seconds before the event, so we need to wait:
+    // 5 seconds (to reach the event) + 5 seconds (after the event) = 10 seconds total
+    // Don't set pause timer for AFK events
+    const isAfkEvent = currentIncident.eventType === 'AFK_STILLNESS'
+    if (!isAfkEvent) {
+      pauseTimerTimeout = setTimeout(async () => {
+        try {
+          await sendCS2CommandsSequentially(parseInt(netconPort), ['demo_pause'])
+          
+          // Notify overlay with "Event playback successful" message
+          if (overlayWindow && !overlayWindow.isDestroyed()) {
+            overlayWindow.webContents.send('overlay:actionResult', { 
+              success: true, 
+              action: 'viewVictim',
+              player: 'Event playback successful'
+            })
+          }
+        } catch (err) {
+          console.error('[overlay] Failed to pause demo after event:', err)
+          // Still notify success even if pause fails
+          if (overlayWindow && !overlayWindow.isDestroyed()) {
+            overlayWindow.webContents.send('overlay:actionResult', { 
+              success: true, 
+              action: 'viewVictim',
+              player: 'Event playback successful'
+            })
+          }
+        } finally {
+          pauseTimerTimeout = null // Clear timeout reference after execution
+        }
+      }, 10000) // 10 seconds total (5 seconds to event + 5 seconds after event)
+    }
+    
+    // Return success immediately (don't wait for the pause)
+    return { success: true }
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : 'Failed to spectate victim'
+    console.error('[overlay] Failed to view victim:', errorMsg)
+    
+    // Notify overlay of error
+    if (overlayWindow && !overlayWindow.isDestroyed()) {
+      overlayWindow.webContents.send('overlay:actionResult', { 
+        success: false, 
+        action: 'viewVictim',
+        error: errorMsg 
+      })
+    }
+    
+    return { success: false, error: errorMsg }
+  }
+})
+
+// Function to send incident update to overlay
+// Example usage:
+// sendIncidentToOverlay({
+//   tick: 12345,
+//   offender: { name: 'Player1', steamId: '76561198012345678', userId: 1 },
+//   victim: { name: 'Player2', steamId: '76561198087654321', userId: 2 }
+// })
+export function sendIncidentToOverlay(incident: {
+  matchId?: string
+  tick: number
+  eventType?: string
+  offender: { name: string; steamId?: string; userId?: number; entityIndex?: number }
+  victim: { name: string; steamId?: string; userId?: number; entityIndex?: number }
+} | null) {
+  currentIncident = incident
+  
+  if (overlayWindow && !overlayWindow.isDestroyed()) {
+    // Wait for overlay window to be ready before sending
+    if (overlayWindow.webContents.isLoading()) {
+      overlayWindow.webContents.once('did-finish-load', () => {
+        if (!overlayWindow || overlayWindow.isDestroyed()) return
+        
+        overlayWindow.webContents.send('overlay:incident', incident)
+        console.log('[Overlay] Sent incident to overlay (after load):', incident ? `${incident.offender.name} -> ${incident.victim.name}` : 'cleared')
+        
+        // If incident is sent and overlay is not interactive, make it interactive so user can see the events list
+        if (incident && !overlayInteractive) {
+          overlayInteractive = true
+          overlayWindow.setIgnoreMouseEvents(false, { forward: true })
+          overlayWindow.setFocusable(false) // Don't make it focusable to avoid stealing focus from CS2
+          updateOverlayOpacity(false) // Less opaque when interactive
+          overlayWindow.webContents.send('overlay:interactiveChanged', true)
+          // Update tracker with interactive state
+          if (process.platform === 'win32') {
+            cs2OverlayTracker.setOverlayInteractive(true)
+          }
+          // Ensure overlay is visible
+          if (!overlayWindow.isVisible()) {
+            overlayWindow.showInactive() // Use showInactive to not steal focus
+          }
+          console.log('[Overlay] Made overlay interactive to show events list')
+        }
+      })
+    } else {
+      overlayWindow.webContents.send('overlay:incident', incident)
+      console.log('[Overlay] Sent incident to overlay:', incident ? `${incident.offender.name} -> ${incident.victim.name}` : 'cleared')
+      
+      // If incident is sent and overlay is not interactive, make it interactive so user can see the events list
+      if (incident && !overlayInteractive) {
+        overlayInteractive = true
+        overlayWindow.setIgnoreMouseEvents(false, { forward: true })
+        overlayWindow.setFocusable(false) // Don't make it focusable to avoid stealing focus from CS2
+        updateOverlayOpacity(false) // Less opaque when interactive
+        overlayWindow.webContents.send('overlay:interactiveChanged', true)
+        // Ensure overlay is visible
+        if (!overlayWindow.isVisible()) {
+          overlayWindow.showInactive() // Use showInactive to not steal focus
+        }
+        console.log('[Overlay] Made overlay interactive to show events list')
+      }
+    }
+  } else {
+    console.warn('[Overlay] Overlay window not available, incident not sent')
+  }
+}
+
+// IPC handler for sending incident to overlay
+ipcMain.handle('overlay:sendIncident', async (_, incident: {
+  matchId?: string
+  tick: number
+  eventType?: string
+  offender: { name: string; steamId?: string; userId?: number; entityIndex?: number }
+  victim: { name: string; steamId?: string; userId?: number; entityIndex?: number }
+} | null) => {
+  sendIncidentToOverlay(incident)
+})
+
+// Example function showing how to push incident updates to overlay
+// This can be called from anywhere in the main process when an incident is detected
+function exampleSendIncident() {
+  sendIncidentToOverlay({
+    tick: 12345,
+    offender: {
+      name: 'GrieferPlayer',
+      steamId: '76561198012345678',
+      userId: 1,
+      entityIndex: 5
+    },
+    victim: {
+      name: 'VictimPlayer',
+      steamId: '76561198087654321',
+      userId: 2,
+      entityIndex: 10
+    }
+  })
+}
+
+// To clear the incident (hide the panel):
+// sendIncidentToOverlay(null)
+
+// Hotkey settings IPC handlers
+ipcMain.handle('settings:getHotkey', () => {
+  return getSetting('overlay_hotkey', 'CommandOrControl+Shift+O')
+})
+
+ipcMain.handle('settings:setHotkey', (_, accelerator: string) => {
+  const oldHotkey = currentHotkey
+  currentHotkey = accelerator
+  setSetting('overlay_hotkey', accelerator)
+  
+  // Unregister old hotkey
+  if (oldHotkey) {
+    globalShortcut.unregister(oldHotkey)
+  }
+  
+  // Register new hotkey
+  const registered = globalShortcut.register(accelerator, () => {
+    // Create overlay window if it doesn't exist
+    if (!overlayWindow || overlayWindow.isDestroyed()) {
+      createOverlayWindow()
+      // Wait a bit for window to be ready
+      setTimeout(() => {
+        if (overlayWindow && !overlayWindow.isDestroyed()) {
+        setOverlayInteractiveState(!overlayInteractive)
+        }
+      }, 500)
+    } else {
+        setOverlayInteractiveState(!overlayInteractive)
+    }
+  })
+  
+  if (!registered) {
+    console.error(`Failed to register hotkey: ${accelerator}`)
+    return { success: false, error: `Failed to register hotkey: ${accelerator}` }
+  }
+  
+  return { success: true }
+})
+
+// Debug mode settings IPC handlers
+ipcMain.handle('settings:getDebugMode', () => {
+  return getSetting('debugMode', 'false') === 'true'
+})
+
+ipcMain.handle('settings:setDebugMode', (_, value: boolean) => {
+  setSetting('debugMode', value ? 'true' : 'false')
+  
+  // If debug mode is enabled, send current command log to overlay
+  if (value && overlayWindow && !overlayWindow.isDestroyed()) {
+    sendCommandLogToOverlay()
+  }
+  
+  return { success: true }
+})
+
+ipcMain.handle('settings:resetHotkey', async () => {
+  const defaultHotkey = 'CommandOrControl+Shift+O'
+  const oldHotkey = currentHotkey
+  currentHotkey = defaultHotkey
+  setSetting('overlay_hotkey', defaultHotkey)
+  
+  // Unregister old hotkey
+  if (oldHotkey) {
+    globalShortcut.unregister(oldHotkey)
+  }
+  
+  // Register default hotkey
+  const registered = globalShortcut.register(defaultHotkey, () => {
+    // Create overlay window if it doesn't exist
+    if (!overlayWindow || overlayWindow.isDestroyed()) {
+      createOverlayWindow()
+      // Wait a bit for window to be ready
+      setTimeout(() => {
+        if (overlayWindow && !overlayWindow.isDestroyed()) {
+        setOverlayInteractiveState(!overlayInteractive)
+        }
+      }, 500)
+    } else {
+        setOverlayInteractiveState(!overlayInteractive)
+    }
+  })
+  
+  if (!registered) {
+    console.error(`Failed to register default hotkey: ${defaultHotkey}`)
+    return { success: false, error: `Failed to register default hotkey: ${defaultHotkey}` }
+  }
+  
+  return { success: true }
+})
+
 // IPC handler to show file in folder
 ipcMain.handle('file:showInFolder', async (_, filePath: string) => {
   if (!fs.existsSync(filePath)) {
@@ -2346,11 +3046,46 @@ function isCS2Running(): Promise<boolean> {
   })
 }
 
+function isAkrosRunning(): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (process.platform === 'win32') {
+      exec('tasklist /FI "IMAGENAME eq akros.exe"', (error, stdout) => {
+        if (error) {
+          resolve(false)
+          return
+        }
+        resolve(stdout.toLowerCase().includes('akros.exe'))
+      })
+    } else {
+      // For non-Windows, use ps command
+      exec('ps aux | grep -i akros | grep -v grep', (error, stdout) => {
+        resolve(!error && stdout.trim().length > 0)
+      })
+    }
+  })
+}
+
 // CS2 Launch handler
-ipcMain.handle('cs2:launch', async (_, demoPath: string, startTick?: number, playerName?: string) => {
+ipcMain.handle('cs2:launch', async (_, demoPath: string, startTick?: number, playerName?: string, confirmLoadDemo?: boolean): Promise<{ success: boolean; tick: number; commands: string; alreadyRunning?: boolean; pid?: number; needsDemoLoad?: boolean; currentDemo?: string | null; newDemo?: string; error?: string }> => {
+  // Check if Akros anti-cheat is running
+  const akrosRunning = await isAkrosRunning()
+  if (akrosRunning) {
+    const errorMsg = 'Akros anti-cheat is running, close it before you can continue'
+    console.error('[CS2]', errorMsg)
+    
+    return { 
+      success: false, 
+      tick: 0, 
+      commands: '', 
+      error: errorMsg 
+    }
+  }
+  
   if (!fs.existsSync(demoPath)) {
     throw new Error(`Demo file not found: ${demoPath}`)
   }
+
+  // Note: Overlay tracking will be started after CS2 is launched (see spawn section below)
 
   // Get CS2 path from settings, fallback to common paths
   let cs2Exe = getSetting('cs2_path', '')
@@ -2410,10 +3145,10 @@ ipcMain.handle('cs2:launch', async (_, demoPath: string, startTick?: number, pla
     consoleCommands.push(`mat_setvideomode ${windowWidth} ${windowHeight} ${fullscreen}`)
   }
   
-  // First, pause the demo to ensure we can jump to tick
-  consoleCommands.push(`demo_pause`)
-  
+  // If we're jumping to a specific tick, pause first, then jump
+  // If loading from start (targetTick === 0), don't pause - let it play automatically
   if (targetTick > 0) {
+    consoleCommands.push(`demo_pause`) // Pause before jumping to tick
     consoleCommands.push(`demo_gototick ${targetTick}`) // Jump to tick
   }
   
@@ -2429,6 +3164,28 @@ ipcMain.handle('cs2:launch', async (_, demoPath: string, startTick?: number, pla
   
   // Copy console commands to clipboard (always available as fallback)
   clipboard.writeText(commandsToCopy)
+
+  // Extract matchId from demo path (filename without extension)
+  const matchId = path.basename(demoPath, path.extname(demoPath))
+  
+  // Ensure overlay window exists before sending incident
+  if (process.platform === 'win32') {
+    if (!overlayWindow || overlayWindow.isDestroyed()) {
+      createOverlayWindow()
+    }
+    
+    // Send incident to overlay with matchId so event list can be shown
+    // Use placeholder offender/victim since we don't have specific event data yet
+    // Delay slightly to ensure overlay window is ready
+    setTimeout(() => {
+      sendIncidentToOverlay({
+        matchId: matchId,
+        tick: targetTick || 0,
+        offender: { name: 'Unknown' },
+        victim: { name: 'Unknown' },
+      })
+    }, 1000) // Increased delay to ensure overlay window is fully loaded
+  }
 
   // Check if CS Demo Analyzer plugin is installed
   const pluginInstalled = isCS2PluginInstalled(cs2Exe)
@@ -2523,7 +3280,7 @@ ipcMain.handle('cs2:launch', async (_, demoPath: string, startTick?: number, pla
     }
   }
 
-  // If CS2 is already running, send commands via netconport
+  // If CS2 is already running, check if we need to load a different demo
   if (cs2Running) {
     console.log('=== CS2 Already Running ===')
     console.log('Demo Path:', demoPath)
@@ -2532,15 +3289,148 @@ ipcMain.handle('cs2:launch', async (_, demoPath: string, startTick?: number, pla
     console.log('Player Name:', playerName)
     console.log('Console Commands (copied to clipboard):', commandsToCopy)
     
-    // Send commands via netconport
+    // Check if we're already playing the correct demo
     const netconPort = getSetting('cs2_netconport', '2121')
-    // Wait a bit before sending commands to ensure CS2 is ready
+    const normalizedDemoPath = path.resolve(demoPath).replace(/\\/g, '/')
+    const normalizedCurrentDemo = currentDemoPath ? path.resolve(currentDemoPath).replace(/\\/g, '/') : null
+    
+    // If we're already playing the same demo, skip loading it again
+    if (normalizedCurrentDemo === normalizedDemoPath) {
+      console.log('[CS2] Already playing the correct demo, skipping playdemo command')
+      
+      // Start overlay tracking for already-running CS2
+      if (process.platform === 'win32') {
+        // Ensure overlay window exists
+        if (!overlayWindow || overlayWindow.isDestroyed()) {
+          createOverlayWindow()
+        }
+        
+        // Start tracking (will find CS2 by process name)
+        setTimeout(async () => {
+          try {
+            if (overlayWindow && !overlayWindow.isDestroyed()) {
+              await cs2OverlayTracker.startTrackingCs2ForDemo(overlayWindow, {
+                processName: 'cs2.exe',
+                windowTimeout: 15000,
+                retryInterval: 200,
+              })
+            }
+          } catch (err) {
+            console.error('[Overlay] Failed to start tracking:', err)
+          }
+        }, 500) // Small delay to ensure overlay window is ready
+      }
+      
+      // Send only the navigation commands (skip playdemo)
+      const navigationCommands = consoleCommands.filter(cmd => !cmd.startsWith('playdemo'))
+      const waitTime = 1000 // 1 second delay before sending commands
+      
+      setTimeout(async () => {
+        try {
+          if (navigationCommands.length > 0) {
+            await sendCS2CommandsSequentially(parseInt(netconPort), navigationCommands)
+          }
+          console.log('[CS2] Navigation commands sent successfully')
+          
+          // Check if autoplay after spectate is enabled
+          const autoplayAfterSpectate = getSetting('autoplayAfterSpectate', 'true') === 'true'
+          if (autoplayAfterSpectate && playerName) {
+            // Wait a bit for spec_player to complete, then resume playback
+            setTimeout(async () => {
+              try {
+                await sendCS2CommandsSequentially(parseInt(netconPort), ['demo_resume'])
+                console.log('[CS2] Demo playback resumed (autoplay after spectate)')
+              } catch (err) {
+                console.error('Failed to resume demo playback:', err)
+              }
+            }, 2000) // 2 second delay after spec_player
+          }
+        } catch (err) {
+          console.error('Failed to send commands via netconport:', err)
+          console.log('Commands are still available in clipboard:', commandsToCopy)
+        }
+      }, waitTime)
+      
+      return { success: true, tick: targetTick, commands: commandsToCopy, alreadyRunning: true, needsDemoLoad: false }
+    }
+    
+    // Different demo - need to confirm with user (unless confirmLoadDemo is true)
+    if (!confirmLoadDemo) {
+      return { 
+        success: false, 
+        tick: targetTick, 
+        commands: commandsToCopy, 
+        alreadyRunning: true, 
+        needsDemoLoad: true,
+        currentDemo: currentDemoPath,
+        newDemo: demoPath
+      }
+    }
+    
+    // User confirmed - proceed with loading new demo
+    // Start overlay tracking for already-running CS2
+    if (process.platform === 'win32') {
+      // Ensure overlay window exists
+      if (!overlayWindow || overlayWindow.isDestroyed()) {
+        createOverlayWindow()
+      }
+      
+      // Start tracking (will find CS2 by process name)
+      setTimeout(async () => {
+        try {
+          if (overlayWindow && !overlayWindow.isDestroyed()) {
+            await cs2OverlayTracker.startTrackingCs2ForDemo(overlayWindow, {
+              processName: 'cs2.exe',
+              windowTimeout: 15000,
+              retryInterval: 200,
+            })
+          }
+        } catch (err) {
+          console.error('[Overlay] Failed to start tracking:', err)
+        }
+      }, 500) // Small delay to ensure overlay window is ready
+    }
+    
+    // Send commands via netconport
+    // Split commands: first send playdemo and wait for it to load, then send other commands
     const waitTime = 1000 // 1 second delay before sending commands
-    setTimeout(() => {
-      sendCS2CommandsSequentially(parseInt(netconPort), consoleCommands).catch(err => {
+    
+    setTimeout(async () => {
+      try {
+        // First, send playdemo command and wait for demo to load
+        await sendCS2CommandsSequentially(parseInt(netconPort), [`playdemo "${demoPath}"`])
+        
+        // Wait additional time for demo to fully load (demo loading can take time)
+        console.log('[CS2] Waiting for demo to load...')
+        await new Promise(resolve => setTimeout(resolve, 5000)) // Wait 5 seconds for demo to load
+        
+        // Now send the rest of the commands (pause, gototick, spec_player)
+        const remainingCommands = consoleCommands.filter(cmd => !cmd.startsWith('playdemo'))
+        if (remainingCommands.length > 0) {
+          await sendCS2CommandsSequentially(parseInt(netconPort), remainingCommands)
+        }
+        
+        // Check if autoplay after spectate is enabled
+        const autoplayAfterSpectate = getSetting('autoplayAfterSpectate', 'true') === 'true'
+        if (autoplayAfterSpectate && playerName) {
+          // Wait a bit for spec_player to complete, then resume playback
+          setTimeout(async () => {
+            try {
+              await sendCS2CommandsSequentially(parseInt(netconPort), ['demo_resume'])
+              console.log('[CS2] Demo playback resumed (autoplay after spectate)')
+            } catch (err) {
+              console.error('Failed to resume demo playback:', err)
+            }
+          }, 2000) // 2 second delay after spec_player
+        }
+        
+        // Update current demo path after successfully loading
+        currentDemoPath = demoPath
+        console.log('[CS2] All commands sent successfully')
+      } catch (err) {
         console.error('Failed to send commands via netconport:', err)
         console.log('Commands are still available in clipboard:', commandsToCopy)
-      })
+      }
     }, waitTime)
     
     if (jsonActionsFilePath) {
@@ -2554,7 +3444,7 @@ ipcMain.handle('cs2:launch', async (_, demoPath: string, startTick?: number, pla
     console.log('Commands will be sent via netconport')
     console.log('========================')
     
-    return { success: true, tick: targetTick, commands: commandsToCopy, alreadyRunning: true }
+    return { success: true, tick: targetTick, commands: commandsToCopy, alreadyRunning: true, needsDemoLoad: false }
   }
 
   // Build command line arguments for launching CS2
@@ -2594,18 +3484,72 @@ ipcMain.handle('cs2:launch', async (_, demoPath: string, startTick?: number, pla
       cwd: path.dirname(cs2Exe), // Set working directory to CS2 directory
     })
 
+    const cs2Pid = cs2Process.pid
     cs2Process.unref()
+    
+    // Start overlay tracking for CS2 window
+    if (process.platform === 'win32' && cs2Pid) {
+      // Ensure overlay window exists
+      if (!overlayWindow || overlayWindow.isDestroyed()) {
+        createOverlayWindow()
+      }
+      
+      // Wait a bit for CS2 to initialize, then start tracking
+      setTimeout(async () => {
+        try {
+          if (overlayWindow && !overlayWindow.isDestroyed()) {
+            await cs2OverlayTracker.startTrackingCs2ForDemo(overlayWindow, {
+              pid: cs2Pid,
+              processName: 'cs2.exe',
+              windowTimeout: 15000,
+              retryInterval: 200,
+            })
+          }
+        } catch (err) {
+          console.error('[Overlay] Failed to start tracking:', err)
+        }
+      }, 2000) // Wait 2 seconds for CS2 to start initializing
+    }
     
     // Wait a bit for CS2 to start, then send commands via netconport sequentially
     // Need to wait longer for CS2 to fully initialize and be ready for netconport
-    setTimeout(() => {
-      sendCS2CommandsSequentially(parseInt(netconPort), consoleCommands).catch(err => {
+    setTimeout(async () => {
+      try {
+        // First, send playdemo command and wait for demo to load
+        await sendCS2CommandsSequentially(parseInt(netconPort), [`playdemo "${demoPath}"`])
+        
+        // Wait additional time for demo to fully load (demo loading can take time)
+        console.log('[CS2] Waiting for demo to load...')
+        await new Promise(resolve => setTimeout(resolve, 5000)) // Wait 5 seconds for demo to load
+        
+        // Now send the rest of the commands (mat_setvideomode, pause, gototick, spec_player)
+        const remainingCommands = consoleCommands.filter(cmd => !cmd.startsWith('playdemo'))
+        if (remainingCommands.length > 0) {
+          await sendCS2CommandsSequentially(parseInt(netconPort), remainingCommands)
+        }
+        
+        // Check if autoplay after spectate is enabled
+        const autoplayAfterSpectate = getSetting('autoplayAfterSpectate', 'true') === 'true'
+        if (autoplayAfterSpectate && playerName) {
+          // Wait a bit for spec_player to complete, then resume playback
+          setTimeout(async () => {
+            try {
+              await sendCS2CommandsSequentially(parseInt(netconPort), ['demo_resume'])
+              console.log('[CS2] Demo playback resumed (autoplay after spectate)')
+            } catch (err) {
+              console.error('Failed to resume demo playback:', err)
+            }
+          }, 2000) // 2 second delay after spec_player
+        }
+        
+        console.log('[CS2] All commands sent successfully')
+      } catch (err) {
         console.error('Failed to send commands via netconport:', err)
         console.log('Commands are still available in clipboard:', commandsToCopy)
-      })
-    }, 3000) // Wait 3 seconds for CS2 to start (demo loading will add additional delay)
+      }
+    }, 3000) // Wait 3 seconds for CS2 to start
     
-    return { success: true, tick: targetTick, commands: commandsToCopy, alreadyRunning: false }
+    return { success: true, tick: targetTick, commands: commandsToCopy, alreadyRunning: false, pid: cs2Pid }
   } catch (err) {
     throw new Error(`Failed to launch CS2: ${err instanceof Error ? err.message : String(err)}`)
   }
@@ -2680,6 +3624,12 @@ async function sendCS2CommandsSequentially(port: number, commands: string[]): Pr
       const command = commands[commandIndex]
       console.log(`[netcon] Sending command ${commandIndex + 1}/${commands.length}: ${command}`)
       
+      // Log command if debug mode is enabled
+      const debugMode = getSetting('debugMode', 'false') === 'true'
+      if (debugMode) {
+        pushCommand(command)
+      }
+      
       // netcon expects newline-terminated commands
       socket.write(command.trimEnd() + '\n', (err) => {
         if (err) {
@@ -2702,6 +3652,12 @@ async function sendCS2CommandsSequentially(port: number, commands: string[]): Pr
           // If previous command was playdemo, wait longer for demo to load
           else if (previousCommand.startsWith('playdemo')) {
             delay = 3000 // 3 seconds delay after playdemo
+            // Update current demo path when playdemo is sent
+            const demoMatch = previousCommand.match(/playdemo\s+["']?([^"']+)["']?/i)
+            if (demoMatch && demoMatch[1]) {
+              currentDemoPath = demoMatch[1]
+              console.log(`[CS2] Updated current demo path: ${currentDemoPath}`)
+            }
           }
           // If previous command was demo_pause, shorter delay
           else if (previousCommand.startsWith('demo_pause')) {
@@ -2715,7 +3671,12 @@ async function sendCS2CommandsSequentially(port: number, commands: string[]): Pr
             sendNextCommand()
           }, delay)
         } else {
-          // All commands sent, wait a bit then close
+          // All commands sent, send updated log to overlay if debug mode is enabled
+          const debugMode = getSetting('debugMode', 'false') === 'true'
+          if (debugMode) {
+            setTimeout(() => sendCommandLogToOverlay(), 100)
+          }
+          // Close socket
           setTimeout(() => {
             socket.end()
           }, 500)
@@ -2726,7 +3687,20 @@ async function sendCS2CommandsSequentially(port: number, commands: string[]): Pr
 }
 
 // CS2 Copy Commands handler (generates and copies commands without launching)
-ipcMain.handle('cs2:copyCommands', async (_, demoPath: string, startTick?: number, playerName?: string) => {
+ipcMain.handle('cs2:copyCommands', async (_, demoPath: string, startTick?: number, playerName?: string): Promise<{ success: boolean; commands: string; error?: string }> => {
+  // Check if Akros anti-cheat is running
+  const akrosRunning = await isAkrosRunning()
+  if (akrosRunning) {
+    const errorMsg = 'Akros anti-cheat is running, close it before you can continue'
+    console.error('[CS2]', errorMsg)
+    
+    return { 
+      success: false, 
+      commands: '', 
+      error: errorMsg 
+    }
+  }
+  
   if (!fs.existsSync(demoPath)) {
     throw new Error(`Demo file not found: ${demoPath}`)
   }
@@ -2741,6 +3715,41 @@ ipcMain.handle('cs2:copyCommands', async (_, demoPath: string, startTick?: numbe
   const previewSeconds = 5
   const previewTicks = previewSeconds * tickRate
   const targetTick = startTick ? Math.max(0, startTick - previewTicks) : 0
+
+  // Extract matchId from demo path (filename without extension)
+  const matchId = path.basename(demoPath, path.extname(demoPath))
+  
+  // Send incident to overlay with matchId so event list can be shown
+  // Use placeholder offender/victim since we don't have specific event data yet
+  sendIncidentToOverlay({
+    matchId: matchId,
+    tick: targetTick || 0,
+    offender: { name: 'Unknown' },
+    victim: { name: 'Unknown' },
+  })
+
+  // Start overlay tracking when copying commands (CS2 might already be running)
+  if (process.platform === 'win32') {
+    // Ensure overlay window exists
+    if (!overlayWindow || overlayWindow.isDestroyed()) {
+      createOverlayWindow()
+    }
+    
+    // Start tracking (will find CS2 by process name)
+    setTimeout(async () => {
+      try {
+        if (overlayWindow && !overlayWindow.isDestroyed()) {
+          await cs2OverlayTracker.startTrackingCs2ForDemo(overlayWindow, {
+            processName: 'cs2.exe',
+            windowTimeout: 15000,
+            retryInterval: 200,
+          })
+        }
+      } catch (err) {
+        console.error('[Overlay] Failed to start tracking:', err)
+      }
+    }, 500) // Small delay to ensure overlay window is ready
+  }
 
   // Build console commands to send sequentially via netconport
   // When CS2 already running: demo_pause -> demo_gototick -> spec_player
