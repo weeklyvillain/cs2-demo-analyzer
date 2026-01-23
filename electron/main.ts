@@ -6,6 +6,7 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as crypto from 'crypto'
 import * as net from 'net'
+import { pathToFileURL } from 'url'
 import { initSettingsDb, getSetting, setSetting, getAllSettings } from './settings'
 import { initStatsDb, incrementStat, incrementMapParseCount, getAllStats, resetStats } from './stats'
 import * as matchesService from './matchesService'
@@ -27,6 +28,8 @@ let currentIncident: {
   eventType?: string
   offender: { name: string; steamId?: string; userId?: number; entityIndex?: number }
   victim: { name: string; steamId?: string; userId?: number; entityIndex?: number }
+  meta?: any
+  endTick?: number | null
 } | null = null
 // Store timeout IDs for pause timers so we can cancel them
 let pauseTimerTimeout: NodeJS.Timeout | null = null
@@ -336,7 +339,10 @@ function createOverlayWindow() {
   if (isDev) {
     overlayWindow.loadURL('http://localhost:5173/#/overlay')
   } else {
-    overlayWindow.loadFile(path.join(__dirname, '../dist/index.html'), { hash: 'overlay' })
+    // Use loadURL with file:// protocol to properly set the hash
+    const indexPath = path.join(__dirname, '../dist/index.html')
+    const fileUrl = pathToFileURL(indexPath).href + '#/overlay'
+    overlayWindow.loadURL(fileUrl)
   }
 
   overlayWindow.on('closed', () => {
@@ -2640,24 +2646,87 @@ ipcMain.handle('overlay:actions:viewOffender', async () => {
     const autoplayAfterSpectate = getSetting('autoplayAfterSpectate', 'true') === 'true'
     if (autoplayAfterSpectate) {
       await sendCS2CommandsSequentially(parseInt(netconPort), ['demo_resume'])
+      
+      // Show success toast with "Playing event" when demo resumes
+      if (overlayWindow && !overlayWindow.isDestroyed()) {
+        overlayWindow.webContents.send('overlay:actionResult', { 
+          success: true, 
+          action: 'viewOffender',
+          player: 'Playing event'
+        })
+      }
+    } else {
+      // If autoplay is disabled, just clear loading state
+      if (overlayWindow && !overlayWindow.isDestroyed()) {
+        overlayWindow.webContents.send('overlay:actionResult', { 
+          success: true, 
+          action: 'viewOffender',
+          player: offender.name,
+          clearLoadingOnly: true
+        })
+      }
     }
     
-    // Clear loading state immediately after resuming (no toast, just clear loading)
-    if (overlayWindow && !overlayWindow.isDestroyed()) {
-      overlayWindow.webContents.send('overlay:actionResult', { 
-        success: true, 
-        action: 'viewOffender',
-        player: offender.name,
-        clearLoadingOnly: true // Flag to indicate we should only clear loading, not show toast
-      })
-    }
-    
-    // Schedule pause 5 seconds after the event tick (skip for AFK events)
-    // We jumped to 5 seconds before the event, so we need to wait:
-    // 5 seconds (to reach the event) + 5 seconds (after the event) = 10 seconds total
-    // Don't set pause timer for AFK events
+    // Schedule pause logic based on event type
     const isAfkEvent = currentIncident.eventType === 'AFK_STILLNESS'
-    if (!isAfkEvent) {
+    
+    if (isAfkEvent) {
+      // For AFK events, wait until the end of the AFK period + 5 extra seconds
+      // We jumped to 5 seconds before the start, so we need to wait:
+      // 5 seconds (to reach start) + AFK duration (to reach end) + 5 seconds (after end)
+      let afkDurationSeconds = 5 // Default fallback
+      
+      if (currentIncident.meta) {
+        // Try to get duration from metadata
+        const meta = currentIncident.meta
+        if (meta.seconds !== undefined) {
+          afkDurationSeconds = meta.seconds
+        } else if (meta.afkDuration !== undefined) {
+          afkDurationSeconds = meta.afkDuration
+        } else if (currentIncident.endTick && currentIncident.tick) {
+          // Calculate from ticks if endTick is available
+          const afkTicks = currentIncident.endTick - currentIncident.tick
+          afkDurationSeconds = afkTicks / tickRate
+        }
+      } else if (currentIncident.endTick && currentIncident.tick) {
+        // Fallback: calculate from ticks
+        const afkTicks = currentIncident.endTick - currentIncident.tick
+        afkDurationSeconds = afkTicks / tickRate
+      }
+      
+      // Total wait time: 5 seconds (to reach start) + AFK duration (to reach end) + 5 seconds (after end)
+      const totalWaitMs = (5 + afkDurationSeconds + 5) * 1000
+      
+      pauseTimerTimeout = setTimeout(async () => {
+        try {
+          await sendCS2CommandsSequentially(parseInt(netconPort), ['demo_pause'])
+          
+          // Notify overlay with "Event playback successful" message
+          if (overlayWindow && !overlayWindow.isDestroyed()) {
+            overlayWindow.webContents.send('overlay:actionResult', { 
+              success: true, 
+              action: 'viewOffender',
+              player: 'Event playback successful'
+            })
+          }
+        } catch (err) {
+          console.error('[overlay] Failed to pause demo after AFK event:', err)
+          // Still notify success even if pause fails
+          if (overlayWindow && !overlayWindow.isDestroyed()) {
+            overlayWindow.webContents.send('overlay:actionResult', { 
+              success: true, 
+              action: 'viewOffender',
+              player: 'Event playback successful'
+            })
+          }
+        } finally {
+          pauseTimerTimeout = null // Clear timeout reference after execution
+        }
+      }, totalWaitMs)
+    } else {
+      // For non-AFK events, pause 5 seconds after the event tick
+      // We jumped to 5 seconds before the event, so we need to wait:
+      // 5 seconds (to reach the event) + 5 seconds (after the event) = 10 seconds total
       pauseTimerTimeout = setTimeout(async () => {
         try {
           await sendCS2CommandsSequentially(parseInt(netconPort), ['demo_pause'])
@@ -2763,24 +2832,87 @@ ipcMain.handle('overlay:actions:viewVictim', async () => {
     const autoplayAfterSpectate = getSetting('autoplayAfterSpectate', 'true') === 'true'
     if (autoplayAfterSpectate) {
       await sendCS2CommandsSequentially(parseInt(netconPort), ['demo_resume'])
+      
+      // Show success toast with "Playing event" when demo resumes
+      if (overlayWindow && !overlayWindow.isDestroyed()) {
+        overlayWindow.webContents.send('overlay:actionResult', { 
+          success: true, 
+          action: 'viewVictim',
+          player: 'Playing event'
+        })
+      }
+    } else {
+      // If autoplay is disabled, just clear loading state
+      if (overlayWindow && !overlayWindow.isDestroyed()) {
+        overlayWindow.webContents.send('overlay:actionResult', { 
+          success: true, 
+          action: 'viewVictim',
+          player: victim.name,
+          clearLoadingOnly: true
+        })
+      }
     }
     
-    // Clear loading state immediately after resuming (no toast, just clear loading)
-    if (overlayWindow && !overlayWindow.isDestroyed()) {
-      overlayWindow.webContents.send('overlay:actionResult', { 
-        success: true, 
-        action: 'viewVictim',
-        player: victim.name,
-        clearLoadingOnly: true // Flag to indicate we should only clear loading, not show toast
-      })
-    }
-    
-    // Schedule pause 5 seconds after the event tick (skip for AFK events)
-    // We jumped to 5 seconds before the event, so we need to wait:
-    // 5 seconds (to reach the event) + 5 seconds (after the event) = 10 seconds total
-    // Don't set pause timer for AFK events
+    // Schedule pause logic based on event type
     const isAfkEvent = currentIncident.eventType === 'AFK_STILLNESS'
-    if (!isAfkEvent) {
+    
+    if (isAfkEvent) {
+      // For AFK events, wait until the end of the AFK period + 5 extra seconds
+      // We jumped to 5 seconds before the start, so we need to wait:
+      // 5 seconds (to reach start) + AFK duration (to reach end) + 5 seconds (after end)
+      let afkDurationSeconds = 5 // Default fallback
+      
+      if (currentIncident.meta) {
+        // Try to get duration from metadata
+        const meta = currentIncident.meta
+        if (meta.seconds !== undefined) {
+          afkDurationSeconds = meta.seconds
+        } else if (meta.afkDuration !== undefined) {
+          afkDurationSeconds = meta.afkDuration
+        } else if (currentIncident.endTick && currentIncident.tick) {
+          // Calculate from ticks if endTick is available
+          const afkTicks = currentIncident.endTick - currentIncident.tick
+          afkDurationSeconds = afkTicks / tickRate
+        }
+      } else if (currentIncident.endTick && currentIncident.tick) {
+        // Fallback: calculate from ticks
+        const afkTicks = currentIncident.endTick - currentIncident.tick
+        afkDurationSeconds = afkTicks / tickRate
+      }
+      
+      // Total wait time: 5 seconds (to reach start) + AFK duration (to reach end) + 5 seconds (after end)
+      const totalWaitMs = (5 + afkDurationSeconds + 5) * 1000
+      
+      pauseTimerTimeout = setTimeout(async () => {
+        try {
+          await sendCS2CommandsSequentially(parseInt(netconPort), ['demo_pause'])
+          
+          // Notify overlay with "Event playback successful" message
+          if (overlayWindow && !overlayWindow.isDestroyed()) {
+            overlayWindow.webContents.send('overlay:actionResult', { 
+              success: true, 
+              action: 'viewVictim',
+              player: 'Event playback successful'
+            })
+          }
+        } catch (err) {
+          console.error('[overlay] Failed to pause demo after AFK event:', err)
+          // Still notify success even if pause fails
+          if (overlayWindow && !overlayWindow.isDestroyed()) {
+            overlayWindow.webContents.send('overlay:actionResult', { 
+              success: true, 
+              action: 'viewVictim',
+              player: 'Event playback successful'
+            })
+          }
+        } finally {
+          pauseTimerTimeout = null // Clear timeout reference after execution
+        }
+      }, totalWaitMs)
+    } else {
+      // For non-AFK events, pause 5 seconds after the event tick
+      // We jumped to 5 seconds before the event, so we need to wait:
+      // 5 seconds (to reach the event) + 5 seconds (after the event) = 10 seconds total
       pauseTimerTimeout = setTimeout(async () => {
         try {
           await sendCS2CommandsSequentially(parseInt(netconPort), ['demo_pause'])
@@ -2841,6 +2973,8 @@ export function sendIncidentToOverlay(incident: {
   eventType?: string
   offender: { name: string; steamId?: string; userId?: number; entityIndex?: number }
   victim: { name: string; steamId?: string; userId?: number; entityIndex?: number }
+  meta?: any
+  endTick?: number | null
 } | null) {
   currentIncident = incident
   

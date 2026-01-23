@@ -101,6 +101,8 @@ function OverlayScreen() {
       ...incident,
       tick: event.startTick,
       eventType: event.type, // Add event type
+      endTick: event.endTick, // Add end tick for events with duration
+      meta: event.meta, // Add event metadata (e.g., AFK duration)
       // Update offender/victim based on the event
       offender: event.actorSteamId
         ? {

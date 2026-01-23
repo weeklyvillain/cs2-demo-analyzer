@@ -4,6 +4,8 @@ export interface Incident {
   eventType?: string
   offender: { name: string; steamId?: string; userId?: number; entityIndex?: number }
   victim: { name: string; steamId?: string; userId?: number; entityIndex?: number }
+  meta?: any // Event metadata (e.g., AFK duration, damage amounts, etc.)
+  endTick?: number | null // End tick for events with duration
 }
 
 export interface ElectronAPI {
