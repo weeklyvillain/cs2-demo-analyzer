@@ -18,6 +18,8 @@ let mainWindow: BrowserWindow | null = null
 let splashWindow: BrowserWindow | null = null
 let overlayWindow: BrowserWindow | null = null
 let parserProcess: ChildProcess | null = null
+let extractorProcess: ChildProcess | null = null // Track voice extractor process
+let audiowaveformProcess: ChildProcess | null = null // Track audiowaveform process
 let startupCleanupDeleted: Array<{ matchId: string; reason: string }> = []
 let overlayInteractive: boolean = false
 let currentDemoPath: string | null = null // Track currently loaded demo in CS2
@@ -673,20 +675,104 @@ app.on('window-all-closed', () => {
   }
 })
 
-app.on('before-quit', () => {
+// Helper function to kill a process forcefully
+function killProcessForcefully(childProcess: ChildProcess | null, name: string): void {
+  if (!childProcess) return
+  
+  try {
+    if (childProcess.pid) {
+      console.log(`[App] Killing ${name} process (PID: ${childProcess.pid})`)
+      if (process.platform === 'win32') {
+        // On Windows, use taskkill for more reliable termination
+        exec(`taskkill /F /T /PID ${childProcess.pid}`, { windowsHide: true }, (error) => {
+          if (error) {
+            console.warn(`[App] taskkill failed for ${name}, trying kill():`, error.message)
+            try {
+              childProcess.kill('SIGKILL')
+            } catch (err) {
+              console.error(`[App] Failed to kill ${name}:`, err)
+            }
+          }
+        })
+      } else {
+        // On Unix, try SIGTERM first, then SIGKILL
+        try {
+          childProcess.kill('SIGTERM')
+          // If process doesn't exit quickly, force kill
+          setTimeout(() => {
+            if (childProcess && !childProcess.killed && childProcess.pid) {
+              try {
+                childProcess.kill('SIGKILL')
+              } catch (err) {
+                console.error(`[App] Failed to force kill ${name}:`, err)
+              }
+            }
+          }, 500)
+        } catch (err) {
+          console.error(`[App] Error killing ${name}:`, err)
+        }
+      }
+    } else {
+      // Fallback if no PID
+      try {
+        childProcess.kill('SIGKILL')
+      } catch (err) {
+        console.error(`[App] Failed to kill ${name} (no PID):`, err)
+      }
+    }
+  } catch (err) {
+    console.error(`[App] Error killing ${name}:`, err)
+  }
+}
+
+app.on('before-quit', (event) => {
+  console.log('[App] Cleaning up processes before quit...')
+  
   // Kill parser process if running
   if (parserProcess) {
-    parserProcess.kill()
+    killProcessForcefully(parserProcess, 'parser')
     parserProcess = null
+  }
+  
+  // Kill voice extractor process if running
+  if (extractorProcess) {
+    killProcessForcefully(extractorProcess, 'voice extractor')
+    extractorProcess = null
+  }
+  
+  // Kill audiowaveform process if running
+  if (audiowaveformProcess) {
+    killProcessForcefully(audiowaveformProcess, 'audiowaveform')
+    audiowaveformProcess = null
+  }
+  
+  // Clear pause timer if running
+  if (pauseTimerTimeout) {
+    console.log('[App] Clearing pause timer')
+    clearTimeout(pauseTimerTimeout)
+    pauseTimerTimeout = null
   }
   
   // Unregister all global shortcuts
   globalShortcut.unregisterAll()
   
-  // Stop overlay tracking
+  // Stop overlay tracking (this will also stop WinEvent hooks and health check interval)
   if (overlayWindow) {
+    console.log('[App] Stopping overlay tracking')
     cs2OverlayTracker.stopTrackingCs2(overlayWindow)
   }
+  
+  // Close all windows to ensure renderer processes terminate
+  const allWindows = BrowserWindow.getAllWindows()
+  console.log(`[App] Closing ${allWindows.length} window(s)`)
+  allWindows.forEach(win => {
+    if (!win.isDestroyed()) {
+      win.removeAllListeners('close') // Prevent close handlers from interfering
+      win.destroy()
+    }
+  })
+  
+  console.log('[App] Cleanup complete')
 })
 
 // Helper to get parser executable path
@@ -4236,7 +4322,12 @@ ipcMain.handle('voice:extract', async (_, options: { demoPath: string; outputPat
       return arg.includes(' ') && !arg.startsWith('"') ? `"${arg}"` : arg
     }
     
-    let extractorProcess: ChildProcess
+    // Kill any existing extractor process before starting a new one
+    if (extractorProcess) {
+      console.log('[Voice Extraction] Killing existing extractor process')
+      extractorProcess.kill('SIGTERM')
+      extractorProcess = null
+    }
     
     if (process.platform === 'win32') {
       // On Windows with shell: true, build full command string to handle spaces
@@ -4290,6 +4381,9 @@ ipcMain.handle('voice:extract', async (_, options: { demoPath: string; outputPat
     })
     
     extractorProcess.on('exit', (code) => {
+      // Clear the process reference
+      extractorProcess = null
+      
       if (code === 0) {
         // List extracted files with full paths
         const files = fs.readdirSync(outputPath)
@@ -4328,6 +4422,8 @@ ipcMain.handle('voice:extract', async (_, options: { demoPath: string; outputPat
     })
     
     extractorProcess.on('error', (error) => {
+      // Clear the process reference on error
+      extractorProcess = null
       console.error(`[Voice Extraction] Process error:`, error)
       reject(new Error(`Failed to start voice extractor: ${error.message}`))
     })
@@ -4427,7 +4523,14 @@ ipcMain.handle('voice:generateWaveform', async (_, filePath: string, audioDurati
     ]
 
     return new Promise<{ success: boolean; data?: string; error?: string; pixelsPerSecond?: number; actualWidth?: number }>((resolve) => {
-      const audiowaveformProcess = spawn(audiowaveformPath, args, {
+      // Kill any existing audiowaveform process before starting a new one
+      if (audiowaveformProcess) {
+        console.log('[Waveform] Killing existing audiowaveform process')
+        audiowaveformProcess.kill('SIGTERM')
+        audiowaveformProcess = null
+      }
+      
+      audiowaveformProcess = spawn(audiowaveformPath, args, {
         cwd: path.dirname(audiowaveformPath),
         windowsHide: true,
       })
@@ -4439,6 +4542,10 @@ ipcMain.handle('voice:generateWaveform', async (_, filePath: string, audioDurati
       })
 
       audiowaveformProcess.on('close', (code) => {
+        // Clear the process reference
+        const processRef = audiowaveformProcess
+        audiowaveformProcess = null
+        
         if (code === 0 && fs.existsSync(waveformPath)) {
           try {
             const imageBuffer = fs.readFileSync(waveformPath)
@@ -4466,6 +4573,8 @@ ipcMain.handle('voice:generateWaveform', async (_, filePath: string, audioDurati
       })
 
       audiowaveformProcess.on('error', (error) => {
+        // Clear the process reference on error
+        audiowaveformProcess = null
         resolve({ success: false, error: `Failed to spawn audiowaveform: ${error.message}` })
       })
     })
