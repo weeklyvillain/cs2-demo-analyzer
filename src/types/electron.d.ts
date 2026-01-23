@@ -97,6 +97,8 @@ export interface ElectronAPI {
     close: () => Promise<boolean>
     show: () => Promise<boolean>
     hide: () => Promise<boolean>
+    setInteractiveRegionHovered: (hovered: boolean) => Promise<void>
+    getInteractiveRegionHovered: () => Promise<boolean>
     onInteractive: (callback: (value: boolean) => void) => void
     onIncident: (callback: (incident: Incident | null) => void) => void
     onActionResult: (callback: (result: { success: boolean; action: string; player?: string; error?: string; clearLoadingOnly?: boolean }) => void) => void

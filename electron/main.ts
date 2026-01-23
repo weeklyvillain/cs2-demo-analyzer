@@ -13,6 +13,7 @@ import * as matchesService from './matchesService'
 import { isCS2PluginInstalled, getPluginInstallPath, isGameInfoModified } from './cs2-plugin'
 import { pushCommand, getCommandLog } from './commandLog'
 import { cs2OverlayTracker } from './cs2OverlayTracker'
+import { overlayHoverController } from './overlayHoverController'
 
 let mainWindow: BrowserWindow | null = null
 let splashWindow: BrowserWindow | null = null
@@ -22,6 +23,7 @@ let extractorProcess: ChildProcess | null = null // Track voice extractor proces
 let audiowaveformProcess: ChildProcess | null = null // Track audiowaveform process
 let startupCleanupDeleted: Array<{ matchId: string; reason: string }> = []
 let overlayInteractive: boolean = false
+let overlayExplicitlyShown: boolean = false // Track if user explicitly toggled overlay visibility
 let currentDemoPath: string | null = null // Track currently loaded demo in CS2
 let currentHotkey: string = 'CommandOrControl+Shift+O'
 let currentIncident: {
@@ -352,6 +354,7 @@ function createOverlayWindow() {
     if (overlayWindow) {
       cs2OverlayTracker.stopTrackingCs2(overlayWindow)
     }
+    overlayHoverController.setOverlayWindow(null)
     overlayWindow = null
   })
 
@@ -360,6 +363,8 @@ function createOverlayWindow() {
       overlayWindow.showInactive() // Use showInactive to prevent stealing focus
       // Set initial opacity based on interactive state (click-through = more opaque)
       updateOverlayOpacity(!overlayInteractive)
+      // Register overlay window with hover controller
+      overlayHoverController.setOverlayWindow(overlayWindow)
     }
   })
 
@@ -532,11 +537,39 @@ app.whenReady().then(async () => {
       // Wait a bit for window to be ready
       setTimeout(() => {
         if (overlayWindow && !overlayWindow.isDestroyed()) {
-        setOverlayInteractiveState(!overlayInteractive)
+          // Toggle show/hide instead of interactive state
+          overlayExplicitlyShown = !overlayExplicitlyShown
+          if (overlayExplicitlyShown) {
+            overlayWindow.showInactive()
+            // Notify tracker that overlay is explicitly shown
+            if (process.platform === 'win32') {
+              cs2OverlayTracker.setOverlayExplicitlyShown(true)
+            }
+          } else {
+            overlayWindow.hide()
+            // Notify tracker that overlay is explicitly hidden
+            if (process.platform === 'win32') {
+              cs2OverlayTracker.setOverlayExplicitlyShown(false)
+            }
+          }
         }
       }, 500)
     } else {
-        setOverlayInteractiveState(!overlayInteractive)
+      // Toggle show/hide instead of interactive state
+      overlayExplicitlyShown = !overlayExplicitlyShown
+      if (overlayExplicitlyShown) {
+        overlayWindow.showInactive()
+        // Notify tracker that overlay is explicitly shown
+        if (process.platform === 'win32') {
+          cs2OverlayTracker.setOverlayExplicitlyShown(true)
+        }
+      } else {
+        overlayWindow.hide()
+        // Notify tracker that overlay is explicitly hidden
+        if (process.platform === 'win32') {
+          cs2OverlayTracker.setOverlayExplicitlyShown(false)
+        }
+      }
     }
   })
   
@@ -2673,6 +2706,15 @@ ipcMain.handle('overlay:hide', () => {
   return true
 })
 
+// Overlay hover IPC handlers
+ipcMain.handle('overlay:hovered', async (_, hovered: boolean) => {
+  await overlayHoverController.setHovered(hovered)
+})
+
+ipcMain.handle('overlay:getHovered', () => {
+  return overlayHoverController.getHovered()
+})
+
 // Overlay action IPC handlers
 ipcMain.handle('overlay:actions:viewOffender', async () => {
   if (!currentIncident) {
@@ -3171,11 +3213,39 @@ ipcMain.handle('settings:setHotkey', (_, accelerator: string) => {
       // Wait a bit for window to be ready
       setTimeout(() => {
         if (overlayWindow && !overlayWindow.isDestroyed()) {
-        setOverlayInteractiveState(!overlayInteractive)
+          // Toggle show/hide instead of interactive state
+          overlayExplicitlyShown = !overlayExplicitlyShown
+          if (overlayExplicitlyShown) {
+            overlayWindow.showInactive()
+            // Notify tracker that overlay is explicitly shown
+            if (process.platform === 'win32') {
+              cs2OverlayTracker.setOverlayExplicitlyShown(true)
+            }
+          } else {
+            overlayWindow.hide()
+            // Notify tracker that overlay is explicitly hidden
+            if (process.platform === 'win32') {
+              cs2OverlayTracker.setOverlayExplicitlyShown(false)
+            }
+          }
         }
       }, 500)
     } else {
-        setOverlayInteractiveState(!overlayInteractive)
+      // Toggle show/hide instead of interactive state
+      overlayExplicitlyShown = !overlayExplicitlyShown
+      if (overlayExplicitlyShown) {
+        overlayWindow.showInactive()
+        // Notify tracker that overlay is explicitly shown
+        if (process.platform === 'win32') {
+          cs2OverlayTracker.setOverlayExplicitlyShown(true)
+        }
+      } else {
+        overlayWindow.hide()
+        // Notify tracker that overlay is explicitly hidden
+        if (process.platform === 'win32') {
+          cs2OverlayTracker.setOverlayExplicitlyShown(false)
+        }
+      }
     }
   })
   
@@ -3222,11 +3292,39 @@ ipcMain.handle('settings:resetHotkey', async () => {
       // Wait a bit for window to be ready
       setTimeout(() => {
         if (overlayWindow && !overlayWindow.isDestroyed()) {
-        setOverlayInteractiveState(!overlayInteractive)
+          // Toggle show/hide instead of interactive state
+          overlayExplicitlyShown = !overlayExplicitlyShown
+          if (overlayExplicitlyShown) {
+            overlayWindow.showInactive()
+            // Notify tracker that overlay is explicitly shown
+            if (process.platform === 'win32') {
+              cs2OverlayTracker.setOverlayExplicitlyShown(true)
+            }
+          } else {
+            overlayWindow.hide()
+            // Notify tracker that overlay is explicitly hidden
+            if (process.platform === 'win32') {
+              cs2OverlayTracker.setOverlayExplicitlyShown(false)
+            }
+          }
         }
       }, 500)
     } else {
-        setOverlayInteractiveState(!overlayInteractive)
+      // Toggle show/hide instead of interactive state
+      overlayExplicitlyShown = !overlayExplicitlyShown
+      if (overlayExplicitlyShown) {
+        overlayWindow.showInactive()
+        // Notify tracker that overlay is explicitly shown
+        if (process.platform === 'win32') {
+          cs2OverlayTracker.setOverlayExplicitlyShown(true)
+        }
+      } else {
+        overlayWindow.hide()
+        // Notify tracker that overlay is explicitly hidden
+        if (process.platform === 'win32') {
+          cs2OverlayTracker.setOverlayExplicitlyShown(false)
+        }
+      }
     }
   })
   

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import IncidentPanel from './IncidentPanel'
 import EventsList from './EventsList'
 import DebugCommandPanel from './DebugCommandPanel'
@@ -23,6 +23,36 @@ function OverlayScreen() {
   const [showEventsList, setShowEventsList] = useState(false)
   const [isLoadingFromEvent, setIsLoadingFromEvent] = useState(false)
   const [selectedPlayerFilter, setSelectedPlayerFilter] = useState<string>('all')
+  const [isHovered, setIsHovered] = useState(false)
+  const [hotkey, setHotkey] = useState<string>('Ctrl+Shift+O')
+  const hoverDebounceTimer = useRef<NodeJS.Timeout | null>(null)
+  const lastHoverState = useRef<boolean>(false)
+
+  // Debounced hover state update
+  const updateHoverState = useCallback((hovered: boolean) => {
+    // Only send if state changed
+    if (hovered === lastHoverState.current) {
+      return
+    }
+
+    // Clear existing timer
+    if (hoverDebounceTimer.current) {
+      clearTimeout(hoverDebounceTimer.current)
+    }
+
+    // Update local state immediately for UI responsiveness
+    setIsHovered(hovered)
+    lastHoverState.current = hovered
+
+    // Debounce sending to main process (50ms)
+    hoverDebounceTimer.current = setTimeout(() => {
+      if (window.electronAPI?.overlay.setInteractiveRegionHovered) {
+        window.electronAPI.overlay.setInteractiveRegionHovered(hovered).catch(err => {
+          console.error('[OverlayScreen] Failed to set hover state:', err)
+        })
+      }
+    }, 50)
+  }, [])
 
   useEffect(() => {
     // Load initial interactive state
@@ -30,6 +60,15 @@ function OverlayScreen() {
       if (window.electronAPI) {
         const interactive = await window.electronAPI.overlay.getInteractive()
         setIsInteractive(interactive)
+        
+        // Load initial hover state
+        try {
+          const hovered = await window.electronAPI.overlay.getInteractiveRegionHovered()
+          setIsHovered(hovered)
+          lastHoverState.current = hovered
+        } catch (err) {
+          console.error('[OverlayScreen] Failed to get hover state:', err)
+        }
       }
     }
 
@@ -54,15 +93,29 @@ function OverlayScreen() {
 
       // Load debug mode setting
       window.electronAPI.settings.getDebugMode().then(setDebugMode)
+      
+      // Load hotkey setting
+      window.electronAPI.settings.getHotkey().then(setHotkey).catch(() => {
+        // Fallback to default if failed
+        setHotkey('Ctrl+Shift+O')
+      })
+    }
+
+    // Cleanup on unmount
+    return () => {
+      if (hoverDebounceTimer.current) {
+        clearTimeout(hoverDebounceTimer.current)
+      }
     }
   }, [])
 
-  const toggleInteractive = async () => {
-    if (window.electronAPI) {
-      const newValue = !isInteractive
-      await window.electronAPI.overlay.setInteractive(newValue)
-      setIsInteractive(newValue)
-    }
+  // Format hotkey for display (convert CommandOrControl to Ctrl on Windows)
+  const formatHotkey = (key: string): string => {
+    return key
+      .replace(/CommandOrControl/gi, 'Ctrl')
+      .replace(/Command/gi, 'Cmd')
+      .replace(/Control/gi, 'Ctrl')
+      .replace(/\+/g, '+')
   }
 
   const handleEventSelect = async (event: Event) => {
@@ -162,11 +215,24 @@ function OverlayScreen() {
     setShowEventsList(true)
   }
 
+  // Handle hover for interactive regions
+  const handleInteractiveRegionEnter = useCallback(() => {
+    updateHoverState(true)
+  }, [updateHoverState])
+
+  const handleInteractiveRegionLeave = useCallback(() => {
+    updateHoverState(false)
+  }, [updateHoverState])
+
   return (
     <div className="w-full h-full bg-transparent pointer-events-none">
-      {/* Events list or Incident panel - only visible when interactive and there's an incident, top-left */}
-      {incident && isInteractive && (
-        <div className="absolute top-4 left-4 pointer-events-auto z-50">
+      {/* Events list or Incident panel - only visible when there's an incident, top-left */}
+      {incident && (
+        <div 
+          className={`absolute top-4 left-4 pointer-events-auto z-50 ${isHovered ? 'outline outline-2 outline-blue-500 outline-offset-2 rounded-lg' : ''}`}
+          onMouseEnter={handleInteractiveRegionEnter}
+          onMouseLeave={handleInteractiveRegionLeave}
+        >
           {showEventsList ? (
             <EventsList
               incident={incident}
@@ -187,26 +253,28 @@ function OverlayScreen() {
         </div>
       )}
 
-      {/* Debug command panel - top-right when debug mode is enabled and interactive */}
-      <DebugCommandPanel enabled={debugMode} />
-
-      {/* Overlay controls - only visible when interactive */}
-      {isInteractive && (
-        <div className="absolute bottom-4 right-4 pointer-events-auto z-50">
-          <div className="bg-primary/90 rounded-lg p-4 shadow-lg max-w-md">
-            <h2 className="text-white text-lg font-semibold mb-2">CS2 Demo Overlay</h2>
-            <p className="text-gray-300 text-sm mb-4">
-              Overlay is in interactive mode. Click outside to make it click-through again.
-            </p>
-            <button
-              onClick={toggleInteractive}
-              className="bg-accent hover:bg-accent/80 text-white px-4 py-2 rounded transition-colors"
-            >
-              Make Click-Through
-            </button>
-          </div>
+      {/* Debug command panel - top-right when debug mode is enabled */}
+      {debugMode && (
+        <div
+          className={`absolute top-4 right-4 pointer-events-auto z-40 ${isHovered ? 'outline outline-2 outline-blue-500 outline-offset-2 rounded-lg' : ''}`}
+          onMouseEnter={handleInteractiveRegionEnter}
+          onMouseLeave={handleInteractiveRegionLeave}
+        >
+          <DebugCommandPanel enabled={debugMode} />
         </div>
       )}
+
+      {/* Small hotkey indicator - always visible, click-through */}
+      <div className="absolute bottom-4 right-4 pointer-events-none z-30">
+        <div className="bg-primary/80 backdrop-blur-sm rounded px-3 py-1.5 shadow-lg border border-border/30">
+          <div className="text-white text-xs font-medium">
+            <span className="text-gray-300">Toggle overlay: </span>
+            <span className="font-mono bg-surface/50 px-1.5 py-0.5 rounded text-accent">
+              {formatHotkey(hotkey)}
+            </span>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }

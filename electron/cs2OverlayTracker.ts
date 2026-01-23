@@ -18,6 +18,7 @@ import {
   WindowBounds,
   WinEvent,
 } from './native-addon'
+import { overlayHoverController } from './overlayHoverController'
 
 export interface TrackingOptions {
   /** Process ID if we already know it (from launching CS2) */
@@ -38,6 +39,7 @@ interface TrackingState {
   pendingBoundsUpdate: NodeJS.Timeout | null
   lastBounds: WindowBounds | null
   lastUpdateTime: number
+  lastLogTime: number | null // Track last time we logged syncBounds to reduce logging overhead
   healthCheckInterval: NodeJS.Timeout | null
   isMoving: boolean
   isCs2Foreground: boolean // Track if CS2 is the foreground window
@@ -45,9 +47,12 @@ interface TrackingState {
   isInteractive: boolean // Track if overlay is interactive (not click-through)
   overlayPid: number | null // Track Electron process PID (for checking if overlay is foreground)
   handoffUntil: number | null // Timestamp until which overlay should stay visible during handoff (ms)
+  explicitlyShown: boolean // Track if user explicitly toggled overlay to be shown
 }
 
 const UPDATE_THROTTLE_MS = 8 // ~120fps max update rate for smoother tracking
+const UPDATE_THROTTLE_MS_ACTIVE = 16 // 60fps update rate when CS2 is actively rendering - balanced for responsiveness
+const LOCATION_CHANGE_THROTTLE_MS = 33 // Throttle locationchange events more (30fps) since they fire very frequently
 const HEALTH_CHECK_INTERVAL_MS = 1000 // Check every second if CS2 window still exists
 
 class CS2OverlayTracker {
@@ -59,6 +64,7 @@ class CS2OverlayTracker {
     pendingBoundsUpdate: null,
     lastBounds: null,
     lastUpdateTime: 0,
+    lastLogTime: null, // Track last log time to reduce logging overhead
     healthCheckInterval: null,
     isMoving: false,
     isCs2Foreground: false, // Will be set when tracking starts
@@ -66,9 +72,22 @@ class CS2OverlayTracker {
     isInteractive: false, // Track overlay interactive state
     overlayPid: null, // Electron process PID
     handoffUntil: null, // Grace period for overlay-to-CS2 handoff
+    explicitlyShown: false, // Track if user explicitly toggled overlay to be shown
   }
 
   private overlayWindow: BrowserWindow | null = null
+
+  /**
+   * Set overlay explicitly shown state (user toggled via hotkey)
+   */
+  setOverlayExplicitlyShown(explicitlyShown: boolean): void {
+    this.state.explicitlyShown = explicitlyShown
+    console.log(`[CS2OverlayTracker] Overlay explicitly shown state: ${explicitlyShown}`)
+    // If explicitly shown, ensure overlay is visible
+    if (explicitlyShown && this.overlayWindow && !this.overlayWindow.isDestroyed()) {
+      this.syncBounds()
+    }
+  }
 
   /**
    * Set overlay interactive state
@@ -277,39 +296,62 @@ class CS2OverlayTracker {
 
     // For foreground events, check PID instead of hwnd
     if (event.type === 'foreground') {
-      // Check if the foreground window is CS2 or the overlay itself (if interactive)
+      // Check if the foreground window is CS2 or the overlay itself
       const fgPid = event.pid !== undefined ? event.pid : null
       const isCs2Foreground = fgPid === this.state.pid
-      const isOverlayForeground = this.state.isInteractive && fgPid === this.state.overlayPid
+      const isOverlayForeground = fgPid === this.state.overlayPid
+      const isHovered = overlayHoverController.getHovered()
+      const inHoverGrace = overlayHoverController.isInHoverGracePeriod()
       const wasForeground = this.state.isCs2Foreground
       this.state.isCs2Foreground = isCs2Foreground
       
-      console.log(`[CS2OverlayTracker] Foreground event - PID: ${fgPid}, CS2 PID: ${this.state.pid}, Overlay PID: ${this.state.overlayPid}, isCs2Foreground: ${isCs2Foreground}, isOverlayForeground: ${isOverlayForeground}, isInteractive: ${this.state.isInteractive}`)
+      console.log(`[CS2OverlayTracker] Foreground event - PID: ${fgPid}, CS2 PID: ${this.state.pid}, Overlay PID: ${this.state.overlayPid}, isCs2Foreground: ${isCs2Foreground}, isOverlayForeground: ${isOverlayForeground}, isInteractive: ${this.state.isInteractive}, isHovered: ${isHovered}, inHoverGrace: ${inHoverGrace}`)
       
       if (this.overlayWindow && !this.overlayWindow.isDestroyed()) {
+        // Always update minimized state when we have a window handle
+        if (this.state.hwnd) {
+          this.state.cs2Minimized = isMinimized(this.state.hwnd)
+        }
+        
         if (isCs2Foreground) {
           // CS2 became foreground - show overlay if not minimized and not moving
-          // Update minimized state first
-          if (this.state.hwnd) {
-            this.state.cs2Minimized = isMinimized(this.state.hwnd)
-          }
           if (!this.state.cs2Minimized && !this.state.isMoving) {
             this.syncBounds()
             console.log('[CS2OverlayTracker] Overlay shown (CS2 became foreground)')
           } else {
-            console.log(`[CS2OverlayTracker] Overlay not shown (minimized: ${this.state.cs2Minimized}, moving: ${this.state.isMoving})`)
+            // CS2 is foreground but minimized or moving - hide overlay
+            if (this.overlayWindow.isVisible() && !this.state.explicitlyShown) {
+              this.overlayWindow.hide()
+              console.log(`[CS2OverlayTracker] Overlay hidden (CS2 minimized: ${this.state.cs2Minimized}, moving: ${this.state.isMoving})`)
+            } else if (this.state.explicitlyShown) {
+              console.log('[CS2OverlayTracker] Overlay kept visible (explicitly shown by user, even though CS2 is minimized/moving)')
+            }
           }
         } else if (isOverlayForeground) {
-          // Overlay itself became foreground (user clicked on it) - keep it visible if interactive
-          console.log('[CS2OverlayTracker] Overlay kept visible (overlay is foreground, interactive mode)')
-          // Don't hide, but also don't update bounds (CS2 is not foreground)
+          // Overlay itself became foreground (user clicked on it) - keep it visible
+          // But check if CS2 is minimized - if so, hide overlay unless explicitly shown
+          if (this.state.cs2Minimized && !this.state.explicitlyShown) {
+            if (this.overlayWindow.isVisible()) {
+              this.overlayWindow.hide()
+              console.log('[CS2OverlayTracker] Overlay hidden (CS2 is minimized, overlay lost focus)')
+            }
+          } else {
+            console.log('[CS2OverlayTracker] Overlay kept visible (overlay is foreground)')
+            // Sync bounds to keep it positioned correctly
+            this.syncBounds()
+          }
         } else {
-          // Another window became foreground - hide overlay if not interactive
-          if (!this.state.isInteractive && this.overlayWindow.isVisible()) {
-            this.overlayWindow.hide()
-            console.log('[CS2OverlayTracker] Overlay hidden (another window became foreground, click-through mode)')
-          } else if (this.state.isInteractive) {
-            console.log('[CS2OverlayTracker] Overlay kept visible (interactive mode, user might be using it)')
+          // Another window became foreground (not CS2, not overlay)
+          // Hide overlay if CS2 is minimized OR if not explicitly shown
+          if (this.state.cs2Minimized || !this.state.explicitlyShown) {
+            if (this.overlayWindow.isVisible()) {
+              this.overlayWindow.hide()
+              console.log(`[CS2OverlayTracker] Overlay hidden (another window became foreground, minimized: ${this.state.cs2Minimized}, explicitlyShown: ${this.state.explicitlyShown})`)
+            }
+          } else if (this.state.explicitlyShown && !this.state.cs2Minimized) {
+            console.log('[CS2OverlayTracker] Overlay kept visible (explicitly shown by user, CS2 not minimized)')
+            // Still sync bounds even when another window is foreground if explicitly shown
+            this.syncBounds()
           }
         }
       }
@@ -327,8 +369,26 @@ class CS2OverlayTracker {
       case 'locationchange':
         // Regular location change (not during move/resize)
         // Only update bounds if overlay should be visible (foreground & not minimized)
+        // Locationchange events fire very frequently during active playback, so throttle them more
         if (!this.state.isMoving && this.state.isCs2Foreground && !this.state.cs2Minimized) {
-          this.scheduleBoundsUpdate()
+          // Throttle locationchange events more aggressively (30fps) to reduce overhead
+          // This is the main source of frequent updates during active playback
+          // But don't block - schedule it so it happens soon, just not every single event
+          const now = Date.now()
+          const timeSinceLastUpdate = now - this.state.lastUpdateTime
+          if (timeSinceLastUpdate >= LOCATION_CHANGE_THROTTLE_MS) {
+            // Enough time has passed, update immediately
+            this.scheduleBoundsUpdate()
+          } else {
+            // Within throttle window - schedule for later, but don't skip entirely
+            // This ensures we still update, just not on every single locationchange event
+            if (!this.state.pendingBoundsUpdate) {
+              this.state.pendingBoundsUpdate = setTimeout(() => {
+                this.state.pendingBoundsUpdate = null
+                this.scheduleBoundsUpdate()
+              }, LOCATION_CHANGE_THROTTLE_MS - timeSinceLastUpdate)
+            }
+          }
         }
         break
 
@@ -355,18 +415,25 @@ class CS2OverlayTracker {
       case 'minimizestart':
         this.state.cs2Minimized = true
         if (this.overlayWindow && !this.overlayWindow.isDestroyed()) {
-          this.overlayWindow.hide()
-          console.log('[CS2OverlayTracker] Overlay hidden (CS2 minimized)')
+          // Always hide overlay when CS2 is minimized, even if explicitly shown
+          if (this.overlayWindow.isVisible()) {
+            this.overlayWindow.hide()
+            console.log('[CS2OverlayTracker] Overlay hidden (CS2 minimized)')
+          }
         }
         break
 
       case 'minimizeend':
         this.state.cs2Minimized = false
         if (this.overlayWindow && !this.overlayWindow.isDestroyed()) {
-          // Only show if CS2 is foreground
+          // Only show if CS2 is foreground and not moving
           if (this.state.isCs2Foreground && !this.state.isMoving) {
             this.syncBounds()
             console.log('[CS2OverlayTracker] Overlay shown (CS2 restored)')
+          } else if (this.state.explicitlyShown) {
+            // If explicitly shown, show it even if CS2 is not foreground
+            this.syncBounds()
+            console.log('[CS2OverlayTracker] Overlay shown (CS2 restored, explicitly shown)')
           }
         }
         break
@@ -396,20 +463,26 @@ class CS2OverlayTracker {
 
     const now = Date.now()
     const timeSinceLastUpdate = now - this.state.lastUpdateTime
+    
+    // Use slightly slower throttle when CS2 is foreground and actively rendering
+    // But keep it responsive (60fps) - only locationchange events get heavier throttling
+    const throttleMs = this.state.isCs2Foreground && !this.state.cs2Minimized 
+      ? UPDATE_THROTTLE_MS_ACTIVE 
+      : UPDATE_THROTTLE_MS
 
     const doUpdate = () => {
       this.state.pendingBoundsUpdate = null
       this.syncBounds()
     }
 
-    if (timeSinceLastUpdate >= UPDATE_THROTTLE_MS) {
+    if (timeSinceLastUpdate >= throttleMs) {
       // Update immediately
       doUpdate()
     } else {
       // Schedule update
       this.state.pendingBoundsUpdate = setTimeout(
         doUpdate,
-        UPDATE_THROTTLE_MS - timeSinceLastUpdate
+        throttleMs - timeSinceLastUpdate
       )
     }
   }
@@ -481,36 +554,44 @@ class CS2OverlayTracker {
       // Re-check foreground state to ensure we have the latest
       const fgPid = getForegroundPid()
       this.state.isCs2Foreground = fgPid === this.state.pid
-      const isOverlayForeground = this.state.isInteractive && fgPid === this.state.overlayPid
+      const isOverlayForeground = fgPid === this.state.overlayPid
       
       // Check if we're in handoff grace period
-      const now = Date.now()
-      const inHandoffPeriod = this.state.handoffUntil !== null && now < this.state.handoffUntil
-      if (this.state.handoffUntil !== null && now >= this.state.handoffUntil) {
+      const currentTime = Date.now()
+      const inHandoffPeriod = this.state.handoffUntil !== null && currentTime < this.state.handoffUntil
+      if (this.state.handoffUntil !== null && currentTime >= this.state.handoffUntil) {
         // Grace period expired, clear it
         this.state.handoffUntil = null
       }
 
       // Check if overlay should be visible
       // Overlay should be shown when:
-      // 1. CS2 is foreground (isCs2Foreground) AND CS2 is not minimized AND not moving
-      // OR
-      // 2. Overlay is interactive AND overlay itself is foreground (user clicked on it)
-      // OR
-      // 3. During handoff grace period AND CS2 exists and is not minimized (don't require foreground during grace period)
-      const shouldShow = (
-        (this.state.isCs2Foreground && !this.state.cs2Minimized && !this.state.isMoving) ||
-        (this.state.isInteractive && isOverlayForeground) ||
-        (inHandoffPeriod && !this.state.cs2Minimized && this.state.hwnd !== null)
+      // 1. CS2 is NOT minimized (always hide when minimized, regardless of other conditions)
+      // AND one of:
+      //    - User explicitly toggled it to be shown (via hotkey)
+      //    - CS2 is foreground (isCs2Foreground) AND not moving
+      //    - Overlay itself is foreground (user clicked on it)
+      //    - During handoff grace period (don't require foreground during grace period)
+      // Note: We ALWAYS hide overlay if CS2 is minimized, even if explicitly shown
+      const shouldShow = !this.state.cs2Minimized && (
+        this.state.explicitlyShown ||
+        (this.state.isCs2Foreground && !this.state.isMoving) ||
+        isOverlayForeground ||
+        (inHandoffPeriod && this.state.hwnd !== null)
       )
 
-      console.log(`[CS2OverlayTracker] syncBounds - shouldShow: ${shouldShow}, foreground: ${this.state.isCs2Foreground} (fgPid: ${fgPid}, cs2Pid: ${this.state.pid}), overlayForeground: ${isOverlayForeground}, minimized: ${this.state.cs2Minimized}, moving: ${this.state.isMoving}, interactive: ${this.state.isInteractive}, handoffPeriod: ${inHandoffPeriod}`)
+      // Only log syncBounds occasionally to reduce overhead (every 2 seconds)
+      const shouldLog = !this.state.lastLogTime || (currentTime - this.state.lastLogTime) > 2000
+      if (shouldLog) {
+        console.log(`[CS2OverlayTracker] syncBounds - shouldShow: ${shouldShow}, explicitlyShown: ${this.state.explicitlyShown}, foreground: ${this.state.isCs2Foreground} (fgPid: ${fgPid}, cs2Pid: ${this.state.pid}), overlayForeground: ${isOverlayForeground}, minimized: ${this.state.cs2Minimized}, moving: ${this.state.isMoving}, interactive: ${this.state.isInteractive}, handoffPeriod: ${inHandoffPeriod}`)
+        this.state.lastLogTime = currentTime
+      }
 
       if (!shouldShow) {
         // Hide overlay if it shouldn't be visible
         if (this.overlayWindow.isVisible()) {
           this.overlayWindow.hide()
-          console.log(`[CS2OverlayTracker] Overlay hidden (foreground: ${this.state.isCs2Foreground}, minimized: ${this.state.cs2Minimized}, moving: ${this.state.isMoving})`)
+          console.log(`[CS2OverlayTracker] Overlay hidden (foreground: ${this.state.isCs2Foreground}, minimized: ${this.state.cs2Minimized}, moving: ${this.state.isMoving}, explicitlyShown: ${this.state.explicitlyShown})`)
         }
         return // Don't update bounds if overlay is hidden
       }
@@ -527,15 +608,17 @@ class CS2OverlayTracker {
         return
       }
 
-      // Check if bounds actually changed
+      // Check if bounds actually changed (with tolerance to avoid unnecessary updates)
+      // Use larger tolerance during active playback to reduce update frequency
+      const TOLERANCE = this.state.isCs2Foreground && !this.state.cs2Minimized ? 2 : 1
       if (
         this.state.lastBounds &&
-        this.state.lastBounds.x === bounds.x &&
-        this.state.lastBounds.y === bounds.y &&
-        this.state.lastBounds.width === bounds.width &&
-        this.state.lastBounds.height === bounds.height
+        Math.abs(this.state.lastBounds.x - bounds.x) < TOLERANCE &&
+        Math.abs(this.state.lastBounds.y - bounds.y) < TOLERANCE &&
+        Math.abs(this.state.lastBounds.width - bounds.width) < TOLERANCE &&
+        Math.abs(this.state.lastBounds.height - bounds.height) < TOLERANCE
       ) {
-        return // No change
+        return // No significant change
       }
 
       // Convert to DIP (Electron uses DIP internally)
@@ -550,7 +633,11 @@ class CS2OverlayTracker {
       this.state.lastBounds = bounds
       this.state.lastUpdateTime = Date.now()
 
-      console.log(`[CS2OverlayTracker] Bounds synced: ${dipBounds.x},${dipBounds.y} ${dipBounds.width}x${dipBounds.height}`)
+      // Only log bounds sync occasionally to reduce overhead (reuse shouldLog from above)
+      if (shouldLog) {
+        console.log(`[CS2OverlayTracker] Bounds synced: ${dipBounds.x},${dipBounds.y} ${dipBounds.width}x${dipBounds.height}`)
+        this.state.lastLogTime = currentTime
+      }
     } catch (err) {
       console.error('[CS2OverlayTracker] Error syncing bounds:', err)
     }

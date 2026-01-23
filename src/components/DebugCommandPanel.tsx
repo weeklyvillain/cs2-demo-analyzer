@@ -50,8 +50,7 @@ function DebugCommandPanel({ enabled }: DebugCommandPanelProps) {
   }
 
   return (
-    <div className="absolute top-4 right-4 pointer-events-auto z-40">
-      <div className="bg-primary/95 backdrop-blur-sm rounded-lg border border-border/50 p-3 shadow-xl min-w-[320px] max-w-md max-h-[400px] flex flex-col">
+    <div className="bg-primary/95 backdrop-blur-sm rounded-lg border border-border/50 p-3 shadow-xl min-w-[320px] max-w-md max-h-[400px] flex flex-col">
         <h3 className="text-white text-sm font-semibold mb-2">Debug: Commands</h3>
         
         <div
@@ -88,7 +87,6 @@ function DebugCommandPanel({ enabled }: DebugCommandPanelProps) {
             {commandLog.length} command{commandLog.length !== 1 ? 's' : ''}
           </div>
         )}
-      </div>
     </div>
   )
 }

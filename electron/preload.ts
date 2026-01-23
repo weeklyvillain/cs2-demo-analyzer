@@ -152,6 +152,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     show: () => ipcRenderer.invoke('overlay:show'),
     hide: () => ipcRenderer.invoke('overlay:hide'),
     sendIncident: (incident: any) => ipcRenderer.invoke('overlay:sendIncident', incident),
+    setInteractiveRegionHovered: (hovered: boolean) => ipcRenderer.invoke('overlay:hovered', hovered),
+    getInteractiveRegionHovered: () => ipcRenderer.invoke('overlay:getHovered'),
     onInteractive: (callback: (value: boolean) => void) => {
       ipcRenderer.on('overlay:interactiveChanged', (_, value) => callback(value))
     },
