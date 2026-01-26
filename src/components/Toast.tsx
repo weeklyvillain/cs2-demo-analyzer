@@ -50,7 +50,7 @@ export default function Toast({
 
   return (
     <div
-      className={`fixed top-4 right-4 z-50 flex items-center gap-3 px-4 py-3 rounded-lg border shadow-lg ${bgColor} transition-all duration-300 ease-in-out`}
+      className={`fixed top-16 right-4 z-50 flex items-center gap-3 px-4 py-3 rounded-lg border shadow-lg ${bgColor} transition-all duration-300 ease-in-out`}
       style={{
         animation: 'slideDown 0.3s ease-out',
       }}

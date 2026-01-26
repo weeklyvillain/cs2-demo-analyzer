@@ -21,7 +21,9 @@ func NewTeamKillExtractor() *TeamKillExtractor {
 }
 
 // HandlePlayerDeath processes a Kill event and extracts team kills.
-func (e *TeamKillExtractor) HandlePlayerDeath(event events.Kill, roundIndex int, tick int) {
+// isVictimDisconnected is a function that checks if the victim was disconnected at the time of death.
+// isNearRoundEnd is a function that checks if the kill happened near the end of a round (should be excluded).
+func (e *TeamKillExtractor) HandlePlayerDeath(event events.Kill, roundIndex int, tick int, isVictimDisconnected func(steamID string, tick int) bool, isNearRoundEnd func(roundIndex int, tick int) bool) {
 	attacker := event.Killer
 	victim := event.Victim
 
@@ -30,8 +32,25 @@ func (e *TeamKillExtractor) HandlePlayerDeath(event events.Kill, roundIndex int,
 		return
 	}
 
-	// Check if this is a team kill
-	if !isTeamKill(attacker, victim) {
+	// Check if this kill happened near the end of a round - exclude these
+	// Players often die/disconnect when the server is closing down at round end
+	if isNearRoundEnd != nil && isNearRoundEnd(roundIndex, tick) {
+		return // Exclude kills near round end
+	}
+
+	// Check if victim was disconnected at the time of death - exclude these
+	if victim != nil && isVictimDisconnected != nil {
+		victimSteamID := getSteamID(victim)
+		if victimSteamID != nil && isVictimDisconnected(*victimSteamID, tick) {
+			return // Exclude kills where victim was disconnected
+		}
+	}
+
+	// Check if this is a team kill OR a suicide (attacker == victim)
+	isSuicide := attacker != nil && victim != nil && attacker.SteamID64 == victim.SteamID64
+	isTeamKillEvent := isTeamKill(attacker, victim)
+
+	if !isTeamKillEvent && !isSuicide {
 		return
 	}
 

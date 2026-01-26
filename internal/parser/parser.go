@@ -549,6 +549,9 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 	playerDisconnected := make(map[uint64]bool)     // steamid -> true if disconnected
 	playerDisconnectTick := make(map[uint64]int)    // steamid -> tick when disconnected
 	playerDisconnectRound := make(map[uint64]int)   // steamid -> round index when disconnected
+	
+	// Track round end ticks to filter out team kills near round end
+	roundEndTicks := make(map[int]int) // roundIndex -> round end tick
 
 	// Initialize event extractors
 	// Get tick rate - will be set after parsing header
@@ -788,6 +791,9 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 
 		// Notify disconnect extractor of round end (for filtering disconnects within 10s)
 		disconnectExtractor.SetLastRoundEndTick(tick)
+		
+		// Store round end tick for filtering team kills near round end
+		roundEndTicks[currentRound.RoundIndex] = tick
 
 		// Notify AFK extractor of round end (for filtering AFK periods that end at round end)
 		afkExtractor.HandleRoundEnd(currentRound.RoundIndex, tick)
@@ -1075,7 +1081,59 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 
 		updateTick()
 		tick := getCurrentTick()
-		teamKillExtractor.HandlePlayerDeath(e, currentRound.RoundIndex, tick)
+		
+		// Helper function to check if a player was disconnected at a given tick
+		// This checks if the player disconnected before or at the check tick and hasn't reconnected
+		isPlayerDisconnectedAtTick := func(steamID string, checkTick int) bool {
+			steamID64, err := strconv.ParseUint(steamID, 10, 64)
+			if err != nil {
+				return false
+			}
+			// Check if player is currently marked as disconnected
+			// If playerDisconnected[steamID64] is false, they reconnected
+			if disconnected, exists := playerDisconnected[steamID64]; !exists || !disconnected {
+				return false // Player is not disconnected (or never was)
+			}
+			
+			// Player is marked as disconnected - check if they disconnected before or at the check tick
+			disconnectTick := playerDisconnectTick[steamID64]
+			disconnectRound := playerDisconnectRound[steamID64]
+			
+			// If disconnected in the same round and before or at the check tick, they were disconnected
+			if disconnectRound == currentRound.RoundIndex && disconnectTick <= checkTick {
+				return true
+			}
+			// If disconnected in a previous round and still marked as disconnected, they're still disconnected
+			if disconnectRound < currentRound.RoundIndex {
+				return true
+			}
+			
+			return false
+		}
+		
+		// Helper function to check if a kill happened near the end of a round
+		// Exclude kills within 10 seconds of round end (similar to disconnect filtering)
+		isNearRoundEnd := func(checkRoundIndex int, checkTick int) bool {
+			roundEndTick, exists := roundEndTicks[checkRoundIndex]
+			if !exists {
+				// Round hasn't ended yet, but check if we're in the current round and it's about to end
+				// We can't know the exact end tick yet, so we'll only filter after round end is known
+				return false
+			}
+			
+			// Check if kill happened within 10 seconds before round end
+			ticksBeforeRoundEnd := roundEndTick - checkTick
+			if ticksBeforeRoundEnd < 0 {
+				// Kill happened after round end (shouldn't happen, but handle gracefully)
+				return false
+			}
+			
+			secondsBeforeRoundEnd := float64(ticksBeforeRoundEnd) / tickRate
+			// Exclude kills within 10 seconds of round end
+			return secondsBeforeRoundEnd < 10.0
+		}
+		
+		teamKillExtractor.HandlePlayerDeath(e, currentRound.RoundIndex, tick, isPlayerDisconnectedAtTick, isNearRoundEnd)
 		killExtractor.HandlePlayerDeath(e, currentRound.RoundIndex, tick)
 
 		// In JSON mode, flush events immediately to avoid accumulation
@@ -1182,6 +1240,8 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 			playerDisconnected[steamID64] = true
 			playerDisconnectTick[steamID64] = tick
 			playerDisconnectRound[steamID64] = roundIndex
+			// Clear first connect round since they disconnected
+			delete(playerFirstConnectRound, steamID64)
 
 			steamID := fmt.Sprintf("%d", steamID64)
 			playerName := player.Name
