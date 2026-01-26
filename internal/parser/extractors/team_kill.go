@@ -93,3 +93,7 @@ func (e *TeamKillExtractor) GetEvents() []Event {
 	return e.events
 }
 
+// ClearEvents clears all extracted events from memory.
+func (e *TeamKillExtractor) ClearEvents() {
+	e.events = e.events[:0]
+}

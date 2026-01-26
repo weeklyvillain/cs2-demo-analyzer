@@ -67,6 +67,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Player images (for 2D viewer)
   getPlayerImage: (team: 'T' | 'CT') => ipcRenderer.invoke('player:getImage', team),
   
+  // Keyboard icons (for overlay hotkey display)
+  getKeyboardIcon: (iconName: string) => ipcRenderer.invoke('keyboard:getIcon', iconName),
+  
   // Splash screen logo
   getLogoPath: () => ipcRenderer.invoke('splash:getLogoPath'),
   

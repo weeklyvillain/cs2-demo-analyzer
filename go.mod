@@ -3,14 +3,14 @@ module cs-griefer-electron
 go 1.24.0
 
 require (
-	github.com/markus-wa/demoinfocs-golang/v5 v5.1.0
+	github.com/golang/geo v0.0.0-20230421003525-6adc56603217
+	github.com/markus-wa/demoinfocs-golang/v5 v5.1.2
 	github.com/mattn/go-sqlite3 v1.14.16
 	modernc.org/sqlite v1.44.1
 )
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
-	github.com/golang/geo v0.0.0-20230421003525-6adc56603217 // indirect
 	github.com/golang/snappy v1.0.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/markus-wa/go-unassert v0.1.3 // indirect

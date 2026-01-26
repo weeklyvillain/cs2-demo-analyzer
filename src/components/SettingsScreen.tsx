@@ -19,6 +19,7 @@ interface Settings {
   default_sort_direction: string
   voice_skip_time: string
   position_extraction_interval: string
+  ram_only_parsing: string
   voiceCacheSizeLimitMB: string
   autoUpdateEnabled: string
   manualVersion: string
@@ -43,6 +44,7 @@ function SettingsScreen() {
     default_sort_direction: 'desc',
     voice_skip_time: '10',
     position_extraction_interval: '4',
+    ram_only_parsing: 'false',
     voiceCacheSizeLimitMB: '50',
     autoUpdateEnabled: 'true',
     manualVersion: '',
@@ -141,6 +143,7 @@ function SettingsScreen() {
         default_sort_direction: allSettings.default_sort_direction || 'desc',
         voice_skip_time: allSettings.voice_skip_time || '10',
         position_extraction_interval: allSettings.position_extraction_interval || '4',
+        ram_only_parsing: allSettings.ram_only_parsing || 'false',
         voiceCacheSizeLimitMB: allSettings.voiceCacheSizeLimitMB || '50',
         autoUpdateEnabled: allSettings.autoUpdateEnabled || 'true',
         manualVersion: allSettings.manualVersion || '',
@@ -626,6 +629,27 @@ function SettingsScreen() {
               </select>
               <p className="text-xs text-gray-500 mt-1">
                 Controls how often player positions are stored. Lower values = more accurate but slower parsing. (default: 1/4)
+              </p>
+            </div>
+
+            <div>
+              <label className="flex items-center gap-2 mb-2">
+                <input
+                  type="checkbox"
+                  checked={settings.ram_only_parsing === 'true'}
+                  onChange={async (e) => {
+                    const value = e.target.checked ? 'true' : 'false'
+                    setSettings((prev) => ({ ...prev, ram_only_parsing: value }))
+                    await handleSaveSingleSetting('ram_only_parsing', value)
+                  }}
+                  className="w-4 h-4 text-accent bg-surface border-border rounded focus:ring-accent focus:ring-2"
+                />
+                <span className="text-sm font-medium text-gray-300">
+                  RAM-Only Parsing (No Disk Writes During Parsing)
+                </span>
+              </label>
+              <p className="text-xs text-gray-500 ml-6">
+                Accumulate all data in memory before writing to disk. This can use a lot of RAM for large demos, but may be faster for smaller demos. (Default: disabled)
               </p>
             </div>
 

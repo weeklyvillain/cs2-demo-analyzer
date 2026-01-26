@@ -12,31 +12,31 @@ import (
 // TeamDamageExtractor extracts team damage events from PlayerHurt events.
 // It merges events within a time window (2 seconds).
 type TeamDamageExtractor struct {
-	pending map[string]*pendingDamage // key: roundIndex_attackerSteamID_victimSteamID
+	pending  map[string]*pendingDamage // key: roundIndex_attackerSteamID_victimSteamID
 	tickRate float64
-	events  []Event
+	events   []Event
 }
 
 type pendingDamage struct {
-	roundIndex    int
+	roundIndex      int
 	attackerSteamID string
 	victimSteamID   string
-	startTick     int
-	lastTick      int
-	totalHealth   int
-	totalArmor    int
-	hitCount      int
-	hitgroups     map[string]int // hitgroup -> count
-	weapons       map[string]bool // weapon -> exists
-	isUtility     bool
+	startTick       int
+	lastTick        int
+	totalHealth     int
+	totalArmor      int
+	hitCount        int
+	hitgroups       map[string]int  // hitgroup -> count
+	weapons         map[string]bool // weapon -> exists
+	isUtility       bool
 }
 
 // NewTeamDamageExtractor creates a new team damage extractor.
 func NewTeamDamageExtractor(tickRate float64) *TeamDamageExtractor {
 	return &TeamDamageExtractor{
-		pending: make(map[string]*pendingDamage),
+		pending:  make(map[string]*pendingDamage),
 		tickRate: tickRate,
-		events:  make([]Event, 0),
+		events:   make([]Event, 0),
 	}
 }
 
@@ -139,17 +139,17 @@ func (e *TeamDamageExtractor) HandlePlayerHurt(event events.PlayerHurt, roundInd
 		}
 
 		e.pending[key] = &pendingDamage{
-			roundIndex:     roundIndex,
+			roundIndex:      roundIndex,
 			attackerSteamID: *attackerSteamID,
 			victimSteamID:   *victimSteamID,
-			startTick:      tick,
-			lastTick:       tick,
-			totalHealth:    event.HealthDamage,
-			totalArmor:     event.ArmorDamage,
-			hitCount:       1,
-			hitgroups:      hitgroups,
-			weapons:        weapons,
-			isUtility:      isUtility,
+			startTick:       tick,
+			lastTick:        tick,
+			totalHealth:     event.HealthDamage,
+			totalArmor:      event.ArmorDamage,
+			hitCount:        1,
+			hitgroups:       hitgroups,
+			weapons:         weapons,
+			isUtility:       isUtility,
 		}
 	}
 }
@@ -220,3 +220,7 @@ func (e *TeamDamageExtractor) GetEvents() []Event {
 	return e.events
 }
 
+// ClearEvents clears all extracted events from memory.
+func (e *TeamDamageExtractor) ClearEvents() {
+	e.events = e.events[:0]
+}

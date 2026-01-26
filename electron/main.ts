@@ -505,6 +505,36 @@ app.whenReady().then(async () => {
     }
   })
 
+  // Keyboard icon handler (for overlay hotkey display)
+  ipcMain.handle('keyboard:getIcon', async (_, iconName: string) => {
+    try {
+      // iconName should be like "keyboard_ctrl" or "keyboard_o" (without extension)
+      // Path is in resources/keyboard folder
+      const iconFileName = `${iconName}.svg`
+      const iconPath = path.join(__dirname, '../resources/keyboard', iconFileName)
+      
+      if (fs.existsSync(iconPath)) {
+        const iconBuffer = fs.readFileSync(iconPath)
+        const base64 = iconBuffer.toString('base64')
+        return { success: true, data: `data:image/svg+xml;base64,${base64}` }
+      } else {
+        // Try outline version as fallback
+        const outlineFileName = `${iconName}_outline.svg`
+        const outlinePath = path.join(__dirname, '../resources/keyboard', outlineFileName)
+        if (fs.existsSync(outlinePath)) {
+          const iconBuffer = fs.readFileSync(outlinePath)
+          const base64 = iconBuffer.toString('base64')
+          return { success: true, data: `data:image/svg+xml;base64,${base64}` }
+        }
+        console.warn(`[KeyboardIcon] Icon not found: ${iconName} (tried ${iconPath} and ${outlinePath})`)
+        return { success: false, error: `Keyboard icon not found: ${iconName}` }
+      }
+    } catch (error) {
+      console.error('Error loading keyboard icon:', error)
+      return { success: false, error: String(error) }
+    }
+  })
+
   // Player images (for 2D viewer)
   ipcMain.handle('player:getImage', async (_, team: 'T' | 'CT') => {
     try {
@@ -528,9 +558,22 @@ app.whenReady().then(async () => {
   await initSettingsDb()
   
   // Register overlay hotkey on startup
-  const savedHotkey = getSetting('overlay_hotkey', 'CommandOrControl+Shift+O')
+  let savedHotkey = getSetting('overlay_hotkey', 'CommandOrControl+Shift+O')
+  // Normalize arrow keys to Electron format (in case old format is stored)
+  savedHotkey = savedHotkey.replace(/ArrowUp/gi, 'Up')
+  savedHotkey = savedHotkey.replace(/ArrowDown/gi, 'Down')
+  savedHotkey = savedHotkey.replace(/ArrowLeft/gi, 'Left')
+  savedHotkey = savedHotkey.replace(/ArrowRight/gi, 'Right')
+  // Update stored value if it was normalized
+  const originalHotkey = getSetting('overlay_hotkey', 'CommandOrControl+Shift+O')
+  if (savedHotkey !== originalHotkey) {
+    setSetting('overlay_hotkey', savedHotkey)
+  }
   currentHotkey = savedHotkey
-  const registered = globalShortcut.register(savedHotkey, () => {
+  
+  // Register hotkey with error handling
+  try {
+    const registered = globalShortcut.register(savedHotkey, () => {
     // Create overlay window if it doesn't exist
     if (!overlayWindow || overlayWindow.isDestroyed()) {
       createOverlayWindow()
@@ -571,12 +614,58 @@ app.whenReady().then(async () => {
         }
       }
     }
-  })
-  
-  if (!registered) {
-    console.error(`Failed to register overlay hotkey on startup: ${savedHotkey}`)
-  } else {
-    console.log(`Registered overlay hotkey: ${savedHotkey}`)
+    })
+    
+    if (!registered) {
+      console.error(`[Hotkey] Failed to register hotkey on startup: ${savedHotkey}`)
+    } else {
+      console.log(`[Hotkey] Registered overlay hotkey: ${savedHotkey}`)
+    }
+  } catch (error) {
+    console.error(`[Hotkey] Error registering hotkey on startup: ${savedHotkey}`, error)
+    // Reset to default on error
+    const defaultHotkey = 'CommandOrControl+Shift+O'
+    currentHotkey = defaultHotkey
+    setSetting('overlay_hotkey', defaultHotkey)
+    try {
+      globalShortcut.register(defaultHotkey, () => {
+        if (!overlayWindow || overlayWindow.isDestroyed()) {
+          createOverlayWindow()
+          setTimeout(() => {
+            if (overlayWindow && !overlayWindow.isDestroyed()) {
+              overlayExplicitlyShown = !overlayExplicitlyShown
+              if (overlayExplicitlyShown) {
+                overlayWindow.showInactive()
+                if (process.platform === 'win32') {
+                  cs2OverlayTracker.setOverlayExplicitlyShown(true)
+                }
+              } else {
+                overlayWindow.hide()
+                if (process.platform === 'win32') {
+                  cs2OverlayTracker.setOverlayExplicitlyShown(false)
+                }
+              }
+            }
+          }, 500)
+        } else {
+          overlayExplicitlyShown = !overlayExplicitlyShown
+          if (overlayExplicitlyShown) {
+            overlayWindow.showInactive()
+            if (process.platform === 'win32') {
+              cs2OverlayTracker.setOverlayExplicitlyShown(true)
+            }
+          } else {
+            overlayWindow.hide()
+            if (process.platform === 'win32') {
+              cs2OverlayTracker.setOverlayExplicitlyShown(false)
+            }
+          }
+        }
+      })
+      console.log(`[Hotkey] Registered default hotkey after error: ${defaultHotkey}`)
+    } catch (defaultError) {
+      console.error(`[Hotkey] Failed to register default hotkey: ${defaultHotkey}`, defaultError)
+    }
   }
   
   // Initialize stats database
@@ -987,13 +1076,35 @@ ipcMain.handle('parser:parse', async (_, { demoPath }: { demoPath: string }) => 
   // Get position interval setting (default to 4 for 1/4th positions)
   const positionInterval = getSetting('position_extraction_interval', '4')
   
-  // Spawn parser process
-  parserProcess = spawn(parserPath, [
+  // Get RAM-only parsing setting (default to false)
+  const ramOnlyParsing = getSetting('ram_only_parsing', 'false') === 'true'
+  
+  // Build parser arguments
+  const parserArgs = [
     '--demo', demoPath,
     '--out', dbPath,
     '--match-id', matchId,
     '--position-interval', positionInterval,
-  ])
+  ]
+  
+  // If RAM-only parsing is enabled, pass empty matchID to force in-memory mode
+  // This makes the parser accumulate all data in memory before writing
+  if (ramOnlyParsing) {
+    // Remove --match-id to force in-memory mode (writer != nil but matchID == "")
+    // This triggers the in-memory mode in ParseWithDB
+    parserArgs.splice(parserArgs.indexOf('--match-id'), 2)
+    // Note: The parser will still write to the database, but only after parsing completes
+    // All data will be accumulated in memory during parsing
+  }
+  
+  // Spawn parser process with descriptive name
+  parserProcess = spawn(parserPath, parserArgs, {
+    env: {
+      ...process.env,
+      // Set process name via environment variable for identification
+      PROCESS_NAME: 'CS2 Demo Parser',
+    },
+  })
 
   // Handle stdout (NDJSON)
   parserProcess.stdout?.on('data', (data: Buffer) => {
@@ -3196,62 +3307,76 @@ ipcMain.handle('settings:getHotkey', () => {
 })
 
 ipcMain.handle('settings:setHotkey', (_, accelerator: string) => {
+  // Normalize arrow keys to Electron format
+  let normalizedAccelerator = accelerator
+  // Handle arrow keys in various formats
+  normalizedAccelerator = normalizedAccelerator.replace(/ArrowUp/gi, 'Up')
+  normalizedAccelerator = normalizedAccelerator.replace(/ArrowDown/gi, 'Down')
+  normalizedAccelerator = normalizedAccelerator.replace(/ArrowLeft/gi, 'Left')
+  normalizedAccelerator = normalizedAccelerator.replace(/ArrowRight/gi, 'Right')
+  
   const oldHotkey = currentHotkey
-  currentHotkey = accelerator
-  setSetting('overlay_hotkey', accelerator)
+  currentHotkey = normalizedAccelerator
+  setSetting('overlay_hotkey', normalizedAccelerator)
   
   // Unregister old hotkey
   if (oldHotkey) {
     globalShortcut.unregister(oldHotkey)
   }
   
-  // Register new hotkey
-  const registered = globalShortcut.register(accelerator, () => {
-    // Create overlay window if it doesn't exist
-    if (!overlayWindow || overlayWindow.isDestroyed()) {
-      createOverlayWindow()
-      // Wait a bit for window to be ready
-      setTimeout(() => {
-        if (overlayWindow && !overlayWindow.isDestroyed()) {
-          // Toggle show/hide instead of interactive state
-          overlayExplicitlyShown = !overlayExplicitlyShown
-          if (overlayExplicitlyShown) {
-            overlayWindow.showInactive()
-            // Notify tracker that overlay is explicitly shown
-            if (process.platform === 'win32') {
-              cs2OverlayTracker.setOverlayExplicitlyShown(true)
-            }
-          } else {
-            overlayWindow.hide()
-            // Notify tracker that overlay is explicitly hidden
-            if (process.platform === 'win32') {
-              cs2OverlayTracker.setOverlayExplicitlyShown(false)
+  // Register new hotkey with error handling
+  let registered = false
+  try {
+    registered = globalShortcut.register(normalizedAccelerator, () => {
+      // Create overlay window if it doesn't exist
+      if (!overlayWindow || overlayWindow.isDestroyed()) {
+        createOverlayWindow()
+        // Wait a bit for window to be ready
+        setTimeout(() => {
+          if (overlayWindow && !overlayWindow.isDestroyed()) {
+            // Toggle show/hide instead of interactive state
+            overlayExplicitlyShown = !overlayExplicitlyShown
+            if (overlayExplicitlyShown) {
+              overlayWindow.showInactive()
+              // Notify tracker that overlay is explicitly shown
+              if (process.platform === 'win32') {
+                cs2OverlayTracker.setOverlayExplicitlyShown(true)
+              }
+            } else {
+              overlayWindow.hide()
+              // Notify tracker that overlay is explicitly hidden
+              if (process.platform === 'win32') {
+                cs2OverlayTracker.setOverlayExplicitlyShown(false)
+              }
             }
           }
-        }
-      }, 500)
-    } else {
-      // Toggle show/hide instead of interactive state
-      overlayExplicitlyShown = !overlayExplicitlyShown
-      if (overlayExplicitlyShown) {
-        overlayWindow.showInactive()
-        // Notify tracker that overlay is explicitly shown
-        if (process.platform === 'win32') {
-          cs2OverlayTracker.setOverlayExplicitlyShown(true)
-        }
+        }, 500)
       } else {
-        overlayWindow.hide()
-        // Notify tracker that overlay is explicitly hidden
-        if (process.platform === 'win32') {
-          cs2OverlayTracker.setOverlayExplicitlyShown(false)
+        // Toggle show/hide instead of interactive state
+        overlayExplicitlyShown = !overlayExplicitlyShown
+        if (overlayExplicitlyShown) {
+          overlayWindow.showInactive()
+          // Notify tracker that overlay is explicitly shown
+          if (process.platform === 'win32') {
+            cs2OverlayTracker.setOverlayExplicitlyShown(true)
+          }
+        } else {
+          overlayWindow.hide()
+          // Notify tracker that overlay is explicitly hidden
+          if (process.platform === 'win32') {
+            cs2OverlayTracker.setOverlayExplicitlyShown(false)
+          }
         }
       }
-    }
-  })
+    })
+  } catch (error) {
+    console.error(`Error registering hotkey: ${normalizedAccelerator} (original: ${accelerator})`, error)
+    return { success: false, error: `Failed to register hotkey: ${normalizedAccelerator}. ${error instanceof Error ? error.message : String(error)}` }
+  }
   
   if (!registered) {
-    console.error(`Failed to register hotkey: ${accelerator}`)
-    return { success: false, error: `Failed to register hotkey: ${accelerator}` }
+    console.error(`Failed to register hotkey: ${normalizedAccelerator} (original: ${accelerator})`)
+    return { success: false, error: `Failed to register hotkey: ${normalizedAccelerator}` }
   }
   
   return { success: true }
@@ -3800,6 +3925,11 @@ ipcMain.handle('cs2:launch', async (_, demoPath: string, startTick?: number, pla
       detached: true,
       stdio: 'ignore',
       cwd: path.dirname(cs2Exe), // Set working directory to CS2 directory
+      env: {
+        ...process.env,
+        // Set process name via environment variable for identification
+        PROCESS_NAME: 'CS2 (Launched by CS2 Demo Analyzer)',
+      },
     })
 
     const cs2Pid = cs2Process.pid
@@ -4438,6 +4568,8 @@ ipcMain.handle('voice:extract', async (_, options: { demoPath: string; outputPat
         env: {
           ...process.env,
           [libraryPathVarName]: extractorDir,
+          // Set process name via environment variable for identification
+          PROCESS_NAME: 'CS2 Voice Extractor',
         },
         windowsHide: true,
       }) as ChildProcess
@@ -4448,6 +4580,8 @@ ipcMain.handle('voice:extract', async (_, options: { demoPath: string; outputPat
         env: {
           ...process.env,
           [libraryPathVarName]: extractorDir,
+          // Set process name via environment variable for identification
+          PROCESS_NAME: 'CS2 Voice Extractor',
         },
         shell: false,
       })
@@ -4631,6 +4765,11 @@ ipcMain.handle('voice:generateWaveform', async (_, filePath: string, audioDurati
       audiowaveformProcess = spawn(audiowaveformPath, args, {
         cwd: path.dirname(audiowaveformPath),
         windowsHide: true,
+        env: {
+          ...process.env,
+          // Set process name via environment variable for identification
+          PROCESS_NAME: 'CS2 Audio Waveform Generator',
+        },
       })
 
       let stderr = ''

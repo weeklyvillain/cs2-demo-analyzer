@@ -10,13 +10,13 @@ import (
 // TeamFlashExtractor extracts team flash events from flash/blind events.
 // Creates individual events per thrower-victim pair (similar to cs2-web-replay).
 type TeamFlashExtractor struct {
-	events  []Event
+	events []Event
 }
 
 // NewTeamFlashExtractor creates a new team flash extractor.
 func NewTeamFlashExtractor() *TeamFlashExtractor {
 	return &TeamFlashExtractor{
-		events:  make([]Event, 0),
+		events: make([]Event, 0),
 	}
 }
 
@@ -45,7 +45,7 @@ func (e *TeamFlashExtractor) HandlePlayerFlashed(event events.PlayerFlashed, rou
 	// In demoinfocs-golang v5, PlayerFlashed has a FlashDuration() method
 	// that returns a time.Duration (nanoseconds), which we convert to seconds
 	duration := 0.0
-	
+
 	// Try to get flash duration from the event
 	// PlayerFlashed event should have FlashDuration() method
 	flashDuration := event.FlashDuration()
@@ -57,7 +57,7 @@ func (e *TeamFlashExtractor) HandlePlayerFlashed(event events.PlayerFlashed, rou
 		// Most flashes last 2-4 seconds, use 3.0 as default
 		duration = 3.0
 	}
-	
+
 	// Filter out very short flashes (< 1 second) as they're not significant team flashes
 	// This matches cs2-web-replay's approach
 	if duration < 1.0 {
@@ -100,3 +100,7 @@ func (e *TeamFlashExtractor) GetEvents() []Event {
 	return e.events
 }
 
+// ClearEvents clears all extracted events from memory.
+func (e *TeamFlashExtractor) ClearEvents() {
+	e.events = e.events[:0]
+}

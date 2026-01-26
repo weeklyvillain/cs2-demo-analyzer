@@ -142,6 +142,7 @@ function MatchesScreen() {
   const [voicePlayerName, setVoicePlayerName] = useState<string>('')
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; match: Match } | null>(null)
   const [enableDbViewer, setEnableDbViewer] = useState(false)
+  const [searchQuery, setSearchQuery] = useState<string>('')
 
   // Load DB viewer setting
   useEffect(() => {
@@ -473,9 +474,33 @@ function MatchesScreen() {
     fetchAllMatchStats()
   }, [matches])
 
+  // Filter matches by search query
+  const filteredMatches = useMemo(() => {
+    if (!searchQuery.trim()) {
+      return matches
+    }
+    
+    const query = searchQuery.toLowerCase().trim()
+    return matches.filter(match => {
+      // Search in match ID
+      if (match.id.toLowerCase().includes(query)) {
+        return true
+      }
+      // Search in map name
+      if (match.map?.toLowerCase().includes(query)) {
+        return true
+      }
+      // Search in source
+      if (match.source?.toLowerCase().includes(query)) {
+        return true
+      }
+      return false
+    })
+  }, [matches, searchQuery])
+
   // Sort matches based on current sort settings
   const sortedMatches = useMemo(() => {
-    return [...matches].sort((a, b) => {
+    return [...filteredMatches].sort((a, b) => {
       let comparison = 0
       
       if (sortField === 'id') {
@@ -524,7 +549,7 @@ function MatchesScreen() {
       
       return sortDirection === 'asc' ? comparison : -comparison
     })
-  }, [matches, sortField, sortDirection, matchStats])
+  }, [filteredMatches, sortField, sortDirection, matchStats])
 
   // Merge all players with their scores to show all players in the tab
   const allPlayersWithScores = useMemo(() => {
@@ -1304,11 +1329,55 @@ function MatchesScreen() {
             </div>
           </div>
 
-          {/* Sorting Controls */}
+          {/* Search and Sorting Controls */}
           {matches.length > 0 && (
-            <div className="mb-4 flex items-center gap-4 flex-wrap">
-              <span className="text-sm text-gray-400">Sort by:</span>
-              <div className="flex gap-2">
+            <div className="mb-4 space-y-3">
+              {/* Search Bar */}
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder="Search matches by ID, map, or source..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full px-4 py-2 pl-10 bg-surface border border-border rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent"
+                />
+                <div className="absolute left-3 top-1/2 transform -translate-y-1/2">
+                  <svg
+                    className="w-5 h-5 text-gray-500"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                    />
+                  </svg>
+                </div>
+                {searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery('')}
+                    className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500 hover:text-white transition-colors"
+                    title="Clear search"
+                  >
+                    <X size={18} />
+                  </button>
+                )}
+              </div>
+              
+              {/* Results count */}
+              {searchQuery && (
+                <div className="text-sm text-gray-400">
+                  Showing {sortedMatches.length} of {matches.length} matches
+                </div>
+              )}
+              
+              {/* Sort Controls */}
+              <div className="flex items-center gap-4 flex-wrap">
+                <span className="text-sm text-gray-400">Sort by:</span>
+                <div className="flex gap-2">
                 {(['date', 'id', 'length', 'map'] as const).map((field) => (
                   <button
                     key={field}
@@ -1335,6 +1404,7 @@ function MatchesScreen() {
                     )}
                   </button>
                 ))}
+                </div>
               </div>
             </div>
           )}
@@ -1343,6 +1413,19 @@ function MatchesScreen() {
             <div className="flex flex-col items-center justify-center py-16 gap-4">
               <Loader2 className="w-8 h-8 text-accent animate-spin" />
               <div className="text-gray-400">Loading matches...</div>
+            </div>
+          ) : (searchQuery && sortedMatches.length === 0) ? (
+            <div className="flex flex-col items-center justify-center py-16 gap-4">
+              <div className="text-center text-gray-400">
+                <p className="text-lg mb-2">No matches found</p>
+                <p className="text-sm">No matches match your search query "{searchQuery}"</p>
+                <button
+                  onClick={() => setSearchQuery('')}
+                  className="mt-4 px-4 py-2 bg-accent hover:bg-accent/80 text-white rounded transition-colors text-sm"
+                >
+                  Clear search
+                </button>
+              </div>
             </div>
           ) : matches.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 gap-4">

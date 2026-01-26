@@ -100,3 +100,8 @@ func (e *KillExtractor) HandlePlayerDeath(event events.Kill, roundIndex int, tic
 func (e *KillExtractor) GetEvents() []Event {
 	return e.events
 }
+
+// ClearEvents clears all extracted events from memory.
+func (e *KillExtractor) ClearEvents() {
+	e.events = e.events[:0]
+}

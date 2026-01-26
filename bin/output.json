@@ -1,0 +1,9 @@
+[
+  {"Type":"TEAM_FLASH","RoundIndex":4,"StartTick":31006,"EndTick":null,"ActorSteamID":"76561198418139750","VictimSteamID":"76561198833101249"},
+  {"Type":"TEAM_DAMAGE","RoundIndex":10,"StartTick":59707,"EndTick":59733,"ActorSteamID":"76561198833101249","VictimSteamID":"76561198418139750"},
+  {"Type":"TEAM_DAMAGE","RoundIndex":11,"StartTick":60886,"EndTick":60886,"ActorSteamID":"76561198418139750","VictimSteamID":"76561198833101249"},
+  {"Type":"TEAM_KILL","RoundIndex":11,"StartTick":63321,"EndTick":null,"ActorSteamID":"76561198833101249","VictimSteamID":"76561198418139750"},
+  {"Type":"TEAM_DAMAGE","RoundIndex":11,"StartTick":63321,"EndTick":63321,"ActorSteamID":"76561198833101249","VictimSteamID":"76561198418139750"},
+  {"Type":"TEAM_FLASH","RoundIndex":13,"StartTick":74588,"EndTick":null,"ActorSteamID":"76561198418139750","VictimSteamID":"76561198833101249"},
+  {"Type":"TEAM_DAMAGE","RoundIndex":14,"StartTick":81887,"EndTick":81897,"ActorSteamID":"76561199245437886","VictimSteamID":"76561198833101249"}
+]

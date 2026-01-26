@@ -187,6 +187,11 @@ func (e *DisconnectExtractor) GetEvents() []Event {
 	return e.events
 }
 
+// ClearEvents clears all extracted events from memory.
+func (e *DisconnectExtractor) ClearEvents() {
+	e.events = e.events[:0]
+}
+
 // StoreDisconnectReason stores a reason code from a GenericGameEvent for later use.
 func (e *DisconnectExtractor) StoreDisconnectReason(steamID string, tick int, reason interface{}) {
 	reasonKey := fmt.Sprintf("%s-%d", steamID, tick)

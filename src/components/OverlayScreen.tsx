@@ -3,6 +3,7 @@ import IncidentPanel from './IncidentPanel'
 import EventsList from './EventsList'
 import DebugCommandPanel from './DebugCommandPanel'
 import type { Incident } from '../types/electron'
+import { parseAcceleratorToIcons, getKeyboardIconDataUrl } from '../utils/keyboardIcons'
 
 interface Event {
   type: string
@@ -25,6 +26,7 @@ function OverlayScreen() {
   const [selectedPlayerFilter, setSelectedPlayerFilter] = useState<string>('all')
   const [isHovered, setIsHovered] = useState(false)
   const [hotkey, setHotkey] = useState<string>('Ctrl+Shift+O')
+  const [keyboardIcons, setKeyboardIcons] = useState<Map<string, string>>(new Map())
   const hoverDebounceTimer = useRef<NodeJS.Timeout | null>(null)
   const lastHoverState = useRef<boolean>(false)
 
@@ -95,9 +97,15 @@ function OverlayScreen() {
       window.electronAPI.settings.getDebugMode().then(setDebugMode)
       
       // Load hotkey setting
-      window.electronAPI.settings.getHotkey().then(setHotkey).catch(() => {
+      window.electronAPI.settings.getHotkey().then(async (loadedHotkey) => {
+        setHotkey(loadedHotkey)
+        // Load keyboard icons for the hotkey
+        await loadKeyboardIcons(loadedHotkey)
+      }).catch(() => {
         // Fallback to default if failed
-        setHotkey('Ctrl+Shift+O')
+        const defaultHotkey = 'CommandOrControl+Shift+O'
+        setHotkey(defaultHotkey)
+        loadKeyboardIcons(defaultHotkey)
       })
     }
 
@@ -109,14 +117,33 @@ function OverlayScreen() {
     }
   }, [])
 
-  // Format hotkey for display (convert CommandOrControl to Ctrl on Windows)
-  const formatHotkey = (key: string): string => {
-    return key
-      .replace(/CommandOrControl/gi, 'Ctrl')
-      .replace(/Command/gi, 'Cmd')
-      .replace(/Control/gi, 'Ctrl')
-      .replace(/\+/g, '+')
-  }
+  // Load keyboard icons for a hotkey accelerator
+  const loadKeyboardIcons = useCallback(async (accelerator: string) => {
+    if (!window.electronAPI?.getKeyboardIcon) {
+      return
+    }
+    
+    const iconNames = parseAcceleratorToIcons(accelerator)
+    const iconMap = new Map<string, string>()
+    
+    // Load all icons in parallel
+    const iconPromises = iconNames.map(async (iconName) => {
+      const dataUrl = await getKeyboardIconDataUrl(iconName)
+      if (dataUrl) {
+        iconMap.set(iconName, dataUrl)
+      }
+    })
+    
+    await Promise.all(iconPromises)
+    setKeyboardIcons(iconMap)
+  }, [])
+  
+  // Reload icons when hotkey changes
+  useEffect(() => {
+    if (hotkey) {
+      loadKeyboardIcons(hotkey)
+    }
+  }, [hotkey, loadKeyboardIcons])
 
   const handleEventSelect = async (event: Event) => {
     if (!incident || !incident.matchId) return
@@ -267,11 +294,39 @@ function OverlayScreen() {
       {/* Small hotkey indicator - always visible, click-through */}
       <div className="absolute bottom-4 right-4 pointer-events-none z-30">
         <div className="bg-primary/80 backdrop-blur-sm rounded px-3 py-1.5 shadow-lg border border-border/30">
-          <div className="text-white text-xs font-medium">
-            <span className="text-gray-300">Toggle overlay: </span>
-            <span className="font-mono bg-surface/50 px-1.5 py-0.5 rounded text-accent">
-              {formatHotkey(hotkey)}
-            </span>
+          <div className="flex items-center gap-2">
+            <span className="text-white text-xs font-medium text-gray-300">Toggle overlay:</span>
+            <div className="flex items-center gap-1">
+              {parseAcceleratorToIcons(hotkey).map((iconName, index) => {
+                const iconDataUrl = keyboardIcons.get(iconName)
+                const iconNames = parseAcceleratorToIcons(hotkey)
+                // Modifier keys should be larger
+                const isModifier = ['keyboard_ctrl', 'keyboard_shift', 'keyboard_alt', 'keyboard_command', 'keyboard_win'].includes(iconName)
+                const iconSize = isModifier ? 'h-8 w-8' : 'h-6 w-6'
+                return (
+                  <span key={`${iconName}-${index}`} className="flex items-center">
+                    {iconDataUrl ? (
+                      <img
+                        src={iconDataUrl}
+                        alt={iconName}
+                        className={`${iconSize} object-contain`}
+                        style={{ 
+                          filter: 'brightness(0) invert(1)',
+                          imageRendering: 'crisp-edges'
+                        }}
+                      />
+                    ) : (
+                      <span className="text-sm text-white font-mono bg-surface/50 px-1.5 py-0.5 rounded min-w-[24px] text-center">
+                        {iconName.replace('keyboard_', '').replace('_outline', '').toUpperCase()}
+                      </span>
+                    )}
+                    {index < iconNames.length - 1 && (
+                      <span className="text-gray-400 mx-0.5 text-xs font-medium">+</span>
+                    )}
+                  </span>
+                )
+              })}
+            </div>
           </div>
         </div>
       </div>
