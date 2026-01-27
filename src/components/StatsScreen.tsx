@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { BarChart3, RefreshCw, Trash2 } from 'lucide-react'
 import Modal from './Modal'
 import Toast from './Toast'
+import { t, getLanguage } from '../utils/translations'
 
 interface Stats {
   total_demos_parsed: number
@@ -17,9 +18,20 @@ function StatsScreen() {
   const [loading, setLoading] = useState(true)
   const [showResetConfirm, setShowResetConfirm] = useState(false)
   const [toast, setToast] = useState<{ message: string; type?: 'success' | 'error' | 'info' } | null>(null)
+  const [, forceUpdate] = useState(0)
 
   useEffect(() => {
     loadStats()
+  }, [])
+
+  // Subscribe to language changes
+  useEffect(() => {
+    const checkLanguage = () => {
+      forceUpdate((prev) => prev + 1)
+    }
+    // Check language every second (simple polling approach)
+    const interval = setInterval(checkLanguage, 1000)
+    return () => clearInterval(interval)
   }, [])
 
   const loadStats = async () => {
@@ -33,7 +45,7 @@ function StatsScreen() {
       setStats(allStats)
     } catch (err) {
       console.error('Failed to load stats:', err)
-      setToast({ message: 'Failed to load stats', type: 'error' })
+      setToast({ message: t('stats.loadFailed'), type: 'error' })
     } finally {
       setLoading(false)
     }
@@ -46,10 +58,10 @@ function StatsScreen() {
       await window.electronAPI.resetStats()
       await loadStats()
       setShowResetConfirm(false)
-      setToast({ message: 'Stats reset successfully', type: 'success' })
+      setToast({ message: t('stats.resetSuccess'), type: 'success' })
     } catch (err) {
       console.error('Failed to reset stats:', err)
-      setToast({ message: 'Failed to reset stats', type: 'error' })
+      setToast({ message: t('stats.resetFailed'), type: 'error' })
     }
   }
 
@@ -75,7 +87,7 @@ function StatsScreen() {
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center">
-        <div className="text-gray-400">Loading stats...</div>
+        <div className="text-gray-400">{t('stats.loading')}</div>
       </div>
     )
   }
@@ -93,24 +105,24 @@ function StatsScreen() {
       <div className="mb-6 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <BarChart3 size={24} className="text-accent" />
-          <h1 className="text-2xl font-bold text-white">Statistics</h1>
+          <h1 className="text-2xl font-bold text-white">{t('stats.title')}</h1>
         </div>
         <div className="flex items-center gap-2">
           <button
             onClick={loadStats}
             className="px-4 py-2 bg-surface hover:bg-surface/80 text-white rounded transition-colors flex items-center gap-2"
-            title="Refresh stats"
+            title={t('stats.refreshTitle')}
           >
             <RefreshCw size={16} />
-            Refresh
+            {t('stats.refresh')}
           </button>
           <button
             onClick={() => setShowResetConfirm(true)}
             className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded transition-colors flex items-center gap-2"
-            title="Reset all stats"
+            title={t('stats.resetTitle')}
           >
             <Trash2 size={16} />
-            Reset Stats
+            {t('stats.resetStats')}
           </button>
         </div>
       </div>
@@ -118,14 +130,14 @@ function StatsScreen() {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Overall Stats */}
         <div className="bg-secondary rounded-lg border border-border p-6">
-          <h2 className="text-lg font-semibold text-white mb-4">Overall Statistics</h2>
+          <h2 className="text-lg font-semibold text-white mb-4">{t('stats.overallStatistics')}</h2>
           <div className="space-y-4">
             <div className="flex items-center justify-between p-4 bg-surface rounded">
-              <span className="text-gray-300">Total Demos Parsed</span>
+              <span className="text-gray-300">{t('stats.totalDemosParsed')}</span>
               <span className="text-2xl font-bold text-accent">{stats.total_demos_parsed || 0}</span>
             </div>
             <div className="flex items-center justify-between p-4 bg-surface rounded">
-              <span className="text-gray-300">Total Voices Extracted</span>
+              <span className="text-gray-300">{t('stats.totalVoicesExtracted')}</span>
               <span className="text-2xl font-bold text-accent">{stats.total_voices_extracted || 0}</span>
             </div>
           </div>
@@ -133,9 +145,9 @@ function StatsScreen() {
 
         {/* Map Statistics */}
         <div className="bg-secondary rounded-lg border border-border p-6">
-          <h2 className="text-lg font-semibold text-white mb-4">Maps Parsed</h2>
+          <h2 className="text-lg font-semibold text-white mb-4">{t('stats.mapsParsed')}</h2>
           {mapStats.length === 0 ? (
-            <div className="text-center text-gray-400 py-8">No map statistics available</div>
+            <div className="text-center text-gray-400 py-8">{t('stats.noMapStatistics')}</div>
           ) : (
             <div className="space-y-2 max-h-96 overflow-y-auto">
               {mapStats.map(({ map, count }) => (
@@ -157,25 +169,25 @@ function StatsScreen() {
         <Modal
           isOpen={showResetConfirm}
           onClose={() => setShowResetConfirm(false)}
-          title="Reset Statistics"
+          title={t('stats.resetConfirmTitle')}
           canClose={true}
         >
           <div className="p-6">
             <p className="text-gray-300 mb-6">
-              Are you sure you want to reset all statistics? This action cannot be undone.
+              {t('stats.resetConfirmMessage')}
             </p>
             <div className="flex items-center justify-end gap-3">
               <button
                 onClick={() => setShowResetConfirm(false)}
                 className="px-4 py-2 bg-surface hover:bg-surface/80 text-white rounded transition-colors"
               >
-                Cancel
+                {t('settings.cancel')}
               </button>
               <button
                 onClick={handleReset}
                 className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded transition-colors"
               >
-                Reset Stats
+                {t('stats.resetStats')}
               </button>
             </div>
           </div>

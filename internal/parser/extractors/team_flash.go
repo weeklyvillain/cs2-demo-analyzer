@@ -45,7 +45,7 @@ func (e *TeamFlashExtractor) HandlePlayerFlashed(event events.PlayerFlashed, rou
 	// In demoinfocs-golang v5, PlayerFlashed has a FlashDuration() method
 	// that returns a time.Duration (nanoseconds), which we convert to seconds
 	duration := 0.0
-
+	
 	// Try to get flash duration from the event
 	// PlayerFlashed event should have FlashDuration() method
 	flashDuration := event.FlashDuration()
@@ -57,7 +57,7 @@ func (e *TeamFlashExtractor) HandlePlayerFlashed(event events.PlayerFlashed, rou
 		// Most flashes last 2-4 seconds, use 3.0 as default
 		duration = 3.0
 	}
-
+	
 	// Filter out very short flashes (< 1 second) as they're not significant team flashes
 	// This matches cs2-web-replay's approach
 	if duration < 1.0 {

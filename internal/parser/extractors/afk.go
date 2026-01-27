@@ -92,14 +92,14 @@ func (e *AFKExtractor) HandleRoundStart(roundIndex int, tick int) {
 	for _, key := range keysToDelete {
 		delete(e.playerStates, key)
 	}
-
+	
 	// Clear freeze end tick for previous rounds
 	for rIdx := range e.freezeEndTicks {
 		if rIdx < roundIndex {
 			delete(e.freezeEndTicks, rIdx)
 		}
 	}
-
+	
 	// Clear round end tick for previous rounds
 	for rIdx := range e.roundEndTicks {
 		if rIdx < roundIndex {
@@ -128,7 +128,7 @@ func (e *AFKExtractor) HandleRoundEnd(roundIndex int, roundEndTick int) {
 // AFK tracking will only start after this tick.
 func (e *AFKExtractor) HandleFreezeTimeEnd(roundIndex int, freezeEndTick int) {
 	e.freezeEndTicks[roundIndex] = freezeEndTick
-
+	
 	// Query all player positions from the database at freeze time end
 	// to initialize AFK tracking for all players
 	e.initializePlayersFromDatabase(roundIndex, freezeEndTick)
@@ -254,7 +254,7 @@ func (e *AFKExtractor) UpdatePlayerPosition(player *common.Player, roundIndex in
 			gracePeriodTicks := int(math.Ceil(gracePeriodSeconds * e.tickRate))
 			gracePeriodEndTick = freezeEndTick + gracePeriodTicks
 		}
-
+		
 		e.playerStates[key] = &playerAFKState{
 			roundIndex:         roundIndex,
 			steamID:            *steamID,
@@ -316,12 +316,12 @@ func (e *AFKExtractor) ProcessAFKFromDatabase(matchID string, roundIndex int, fr
 
 	// Record round end tick
 	e.roundEndTicks[roundIndex] = roundEndTick
-
+	
 	// Define grace period: 5 seconds starting at freezeEndTick (roundStart)
 	gracePeriodSeconds := 5.0
 	gracePeriodTicks := int(math.Ceil(gracePeriodSeconds * e.tickRate))
 	gracePeriodEndTick := freezeEndTick + gracePeriodTicks
-
+	
 	// Movement threshold: 2-5 units (using 3.0 as middle ground)
 	moveEps := 3.0
 
@@ -428,7 +428,7 @@ func (e *AFKExtractor) ProcessAFKFromDatabase(matchID string, roundIndex int, fr
 		deathTick         *int
 		firstMovementTick *int
 	}
-
+	
 	playerStates := make(map[string]*afkPlayerState)
 
 	for rows.Next() {
@@ -537,7 +537,7 @@ func (e *AFKExtractor) ProcessAFKFromDatabase(matchID string, roundIndex int, fr
 				firstMovementTick: nil,
 			}
 			playerStates[steamID] = state
-
+			
 			// If player first appears during grace period, they could be AFK
 			// If they appear after grace period, they're not considered for round-start AFK
 			// Only start AFK tracking if they're not disconnected/dead at round start
@@ -608,7 +608,7 @@ func (e *AFKExtractor) ProcessAFKFromDatabase(matchID string, roundIndex int, fr
 			state.lastPositionTick = tick
 		} else {
 			// Player hasn't moved significantly
-
+			
 			// If they moved during grace period, they're NOT_AFK - skip
 			if state.movedDuringGrace {
 				state.lastPosition = currentPos
@@ -635,7 +635,7 @@ func (e *AFKExtractor) ProcessAFKFromDatabase(matchID string, roundIndex int, fr
 					state.afkStartTick = &afkStart
 				}
 			}
-
+			
 			// Continue tracking position (player is still stationary)
 			state.lastPosition = currentPos
 			state.lastPositionTick = tick
@@ -730,7 +730,7 @@ func (e *AFKExtractor) CheckAllPlayersAFK(roundIndex int, tick int, playerPositi
 			gracePeriodSeconds := 5.0
 			gracePeriodTicks := int(math.Ceil(gracePeriodSeconds * e.tickRate))
 			gracePeriodEndTick := freezeEndTick + gracePeriodTicks
-
+			
 			e.playerStates[key] = &playerAFKState{
 				roundIndex:         roundIndex,
 				steamID:            steamID,
@@ -828,7 +828,7 @@ func (e *AFKExtractor) discoverNewPlayers(roundIndex int, freezeEndTick int, cur
 	if e.lastDiscoveryTick == nil {
 		e.lastDiscoveryTick = make(map[string]int)
 	}
-
+	
 	if lastTick, exists := e.lastDiscoveryTick[discoveryKey]; exists && currentTick-lastTick < 64 {
 		return // Skip if we just discovered
 	}

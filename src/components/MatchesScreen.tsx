@@ -6,6 +6,7 @@ import ParsingModal from './ParsingModal'
 import VoicePlaybackModal from './VoicePlaybackModal'
 import Toast from './Toast'
 import { formatDisconnectReason } from '../utils/disconnectReason'
+import { t } from '../utils/translations'
 import { Clock, Skull, Zap, WifiOff, ChevronDown, ChevronUp, Copy, Play, Check, ArrowUp, ArrowDown, Trash2, X, Plus, Loader2, Mic, FolderOpen, Database, RefreshCw, Upload, Map as MapIcon, UserPlus, UserMinus } from 'lucide-react'
 
 interface Match {
@@ -143,6 +144,17 @@ function MatchesScreen() {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; match: Match } | null>(null)
   const [enableDbViewer, setEnableDbViewer] = useState(false)
   const [searchQuery, setSearchQuery] = useState<string>('')
+  const [, forceUpdate] = useState(0) // Force re-render when language changes
+
+  // Listen for language changes
+  useEffect(() => {
+    const checkLanguage = () => {
+      forceUpdate((prev) => prev + 1)
+    }
+    // Check language every second (simple polling approach)
+    const interval = setInterval(checkLanguage, 1000)
+    return () => clearInterval(interval)
+  }, [])
 
   // Load DB viewer setting
   useEffect(() => {
@@ -161,7 +173,7 @@ function MatchesScreen() {
 
   const fetchMatches = async () => {
     if (!window.electronAPI) {
-      setError('Electron API not available')
+      setError(t('matches.electronApiNotAvailable'))
       return
     }
 
@@ -172,7 +184,7 @@ function MatchesScreen() {
       const data = await window.electronAPI.listMatches()
       setMatches(data)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load matches')
+      setError(err instanceof Error ? err.message : t('matches.failedToLoadMatches'))
     } finally {
       setLoading(false)
     }
@@ -180,7 +192,7 @@ function MatchesScreen() {
 
   const fetchChatMessages = async (matchId: string, steamid?: string) => {
     if (!window.electronAPI) {
-      setError('Electron API not available')
+      setError(t('matches.electronApiNotAvailable'))
       return
     }
 
@@ -291,7 +303,7 @@ function MatchesScreen() {
 
   const fetchMatchData = async (matchId: string) => {
     if (!window.electronAPI) {
-      setError('Electron API not available')
+      setError(t('matches.electronApiNotAvailable'))
       return
     }
 
@@ -673,7 +685,7 @@ function MatchesScreen() {
   const groupedMatches = matches.reduce((acc, match) => {
     const date = match.startedAt
       ? new Date(match.startedAt).toLocaleDateString()
-      : 'Unknown Date'
+      : t('matches.unknownDate')
     if (!acc[date]) {
       acc[date] = []
     }
@@ -771,7 +783,7 @@ function MatchesScreen() {
       try {
         await window.electronAPI?.showFileInFolder(match.demoPath)
       } catch (err) {
-        setToast({ message: 'Failed to open file location', type: 'error' })
+        setToast({ message: t('matches.failedToOpenFileLocation'), type: 'error' })
       }
     } else if (action === 'showInDb') {
       // Store match ID in localStorage for DBViewerScreen to pick up
@@ -826,7 +838,7 @@ function MatchesScreen() {
   // Launch CS2 from overview (without specific event)
   const handleWatchInCS2 = async () => {
     if (!window.electronAPI) {
-      setError('Electron API not available')
+      setError(t('matches.electronApiNotAvailable'))
       return
     }
     
@@ -864,32 +876,32 @@ function MatchesScreen() {
       if (result.success) {
         setError(null)
         const message = result.alreadyRunning 
-          ? (result.needsDemoLoad === false ? 'Loading demo in CS2...' : 'Loading new demo in CS2...')
-          : 'Launching CS2 and loading demo...'
+          ? (result.needsDemoLoad === false ? t('matches.loadingDemo') : t('matches.loadingNewDemo'))
+          : t('matches.launchingCS2')
         setToast({ message, type: 'success' })
       }
       
       if (result.commands) {
         // Show a notification that commands were copied to clipboard
         const message = result.alreadyRunning
-          ? `CS2 is already running! Console commands copied to clipboard:\n${result.commands}\n\nPaste into CS2 console (press ~).`
-          : `CS2 launched! Console commands copied to clipboard:\n${result.commands}\n\nPaste into CS2 console (press ~) after demo loads.`
+          ? t('matches.cs2AlreadyRunning').replace('{commands}', result.commands)
+          : t('matches.cs2Launched').replace('{commands}', result.commands)
         // You could show a toast notification here if you add a toast library
         console.log(message)
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to launch CS2')
+      setError(err instanceof Error ? err.message : t('matches.failedToLaunchCS2'))
     }
   }
 
   const handleDeleteDemo = async () => {
-    const userConfirmed = window.confirm("Are you sure you want to delete this demo?");
+    const userConfirmed = window.confirm(t('matches.deleteDemoConfirm'));
     if (!userConfirmed) return;
 
-    const deleteFile = window.confirm("Do you also want to delete the demo file?");
+    const deleteFile = window.confirm(t('matches.deleteDemoFileConfirm'));
 
     if (!window.electronAPI) {
-      setError('Electron API not available')
+      setError(t('matches.electronApiNotAvailable'))
       return
     }
 
@@ -899,7 +911,7 @@ function MatchesScreen() {
       setMatches((prevMatches) => prevMatches.filter(match => match.id !== selectedMatch));
       setSelectedMatch(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete demo')
+      setError(err instanceof Error ? err.message : t('matches.failedToDeleteDemo'))
     }
   }
 
@@ -907,10 +919,10 @@ function MatchesScreen() {
   const handleCopyChatMessage = async (message: string) => {
     try {
       await navigator.clipboard.writeText(message)
-      setToast({ message: 'Chat message copied to clipboard!', type: 'success' })
+      setToast({ message: t('matches.chatMessageCopied'), type: 'success' })
     } catch (err) {
       console.error('Failed to copy chat message:', err)
-      setToast({ message: 'Failed to copy chat message', type: 'error' })
+      setToast({ message: t('matches.failedToCopyChat'), type: 'error' })
     }
   }
 
@@ -933,7 +945,7 @@ function MatchesScreen() {
       })
       
       if (filteredMessages.length === 0) {
-        setToast({ message: 'No chat messages to copy (all filtered)', type: 'info' })
+        setToast({ message: t('matches.noChatToCopy'), type: 'info' })
         return
       }
       
@@ -947,18 +959,18 @@ function MatchesScreen() {
       await navigator.clipboard.writeText(chatText)
       const playerName = chatFilterSteamId 
         ? scores.find(s => s.steamId === chatFilterSteamId)?.name || chatFilterSteamId
-        : 'All Players'
-      setToast({ message: `Chat for ${playerName} copied to clipboard!`, type: 'success' })
+        : t('matches.allPlayers')
+      setToast({ message: t('matches.chatForPlayerCopied').replace('{name}', playerName), type: 'success' })
     } catch (err) {
       console.error('Failed to copy player chat:', err)
-      setToast({ message: 'Failed to copy chat', type: 'error' })
+      setToast({ message: t('matches.failedToCopyPlayerChat'), type: 'error' })
     }
   }
 
   // Watch event in CS2 (launches CS2 if not running, loads demo, and jumps to event)
   const handleCopyCommand = async (event: any) => {
     if (!window.electronAPI) {
-      setError('Electron API not available')
+      setError(t('matches.electronApiNotAvailable'))
       return
     }
     
@@ -1021,12 +1033,12 @@ function MatchesScreen() {
       if (result.success) {
         setError(null)
         const message = result.alreadyRunning 
-          ? (result.needsDemoLoad === false ? 'Jumping to event in CS2...' : 'Loading demo and jumping to event...')
-          : 'Launching CS2 and loading demo...'
+          ? (result.needsDemoLoad === false ? t('matches.jumpingToEvent') : t('matches.loadingDemoAndJumping'))
+          : t('matches.launchingCS2')
         setToast({ message, type: 'success' })
       }
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to launch CS2 or send commands'
+      const errorMessage = err instanceof Error ? err.message : t('matches.failedToLaunchOrSend')
       setError(errorMessage)
       setToast({ message: errorMessage, type: 'error' })
     }
@@ -1065,7 +1077,7 @@ function MatchesScreen() {
         setToast({ message, type: 'success' })
       }
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to load demo'
+      const errorMessage = err instanceof Error ? err.message : t('matches.failedToLoadDemo')
       setError(errorMessage)
       setToast({ message: errorMessage, type: 'error' })
     } finally {
@@ -1092,7 +1104,7 @@ function MatchesScreen() {
     e?.stopPropagation() // Prevent row click
     
     if (!demoPath || !selectedMatch) {
-      setToast({ message: 'Demo file path is required to extract voice', type: 'error' })
+      setToast({ message: t('matches.demoFileRequired'), type: 'error' })
       return
     }
 
@@ -1200,18 +1212,18 @@ function MatchesScreen() {
         setSelectedMatch(null)
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete matches')
+      setError(err instanceof Error ? err.message : t('matches.failedToDeleteMatches'))
     } finally {
       setDeleting(false)
     }
   }
 
   const eventTypeLabels: Record<string, string> = {
-    TEAM_KILL: 'Team Kills',
-    TEAM_DAMAGE: 'Team Damage',
-    TEAM_FLASH: 'Team Flashes',
-    AFK_STILLNESS: 'AFK Periods',
-    DISCONNECT: 'Disconnects',
+    TEAM_KILL: t('matches.sections.teamKills'),
+    TEAM_DAMAGE: t('matches.sections.teamDamage'),
+    TEAM_FLASH: t('matches.sections.teamFlashes'),
+    AFK_STILLNESS: t('matches.sections.afk'),
+    DISCONNECT: t('matches.sections.disconnects'),
   }
 
   // Drag and drop handlers for parsing demos
@@ -1241,7 +1253,7 @@ function MatchesScreen() {
     const demoFiles = files.filter(file => file.name.endsWith('.dem'))
     
     if (demoFiles.length === 0) {
-      setError('Please drop .dem files')
+      setError(t('matches.dropFiles'))
       return
     }
 
@@ -1275,25 +1287,25 @@ function MatchesScreen() {
       {!showMatchOverview ? (
         <>
           <div className="flex justify-between items-center mb-6">
-            <h2 className="text-2xl font-bold">Matches</h2>
+            <h2 className="text-2xl font-bold">{t('matches.title')}</h2>
             <div className="flex gap-2">
               {selectedMatches.size > 0 && (
                 <div className="flex items-center gap-2">
                   <span className="text-sm text-gray-400">
-                    {selectedMatches.size} match{selectedMatches.size !== 1 ? 'es' : ''} selected
+                    {t('matches.selected').replace('{count}', selectedMatches.size.toString()).replace('{plural}', selectedMatches.size !== 1 ? 'es' : '')}
                   </span>
                   <button
                     onClick={() => setShowDeleteModal(true)}
                     className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition-colors flex items-center gap-2"
                   >
                     <Trash2 size={16} />
-                    Delete Selected
+                    {t('matches.deleteSelected')}
                   </button>
                   <button
                     onClick={deselectAllMatches}
                     className="px-4 py-2 bg-surface border border-border text-white rounded hover:bg-surface/80 transition-colors text-sm"
                   >
-                    Deselect All
+                    {t('matches.deselectAll')}
                   </button>
                 </div>
               )}
@@ -1318,13 +1330,13 @@ function MatchesScreen() {
                       }
                     }
                   } catch (err) {
-                    setError(err instanceof Error ? err.message : 'Failed to open file dialog')
+                    setError(err instanceof Error ? err.message : t('matches.failedToOpenFileDialog'))
                   }
                 }}
                 className="px-4 py-2 bg-accent text-white rounded hover:bg-accent/80 transition-colors flex items-center gap-2"
               >
                 <Plus size={16} />
-                Add Demo{/*(s)*/}
+                {t('matches.addDemo')}
               </button>
             </div>
           </div>
@@ -1336,7 +1348,7 @@ function MatchesScreen() {
               <div className="relative">
                 <input
                   type="text"
-                  placeholder="Search matches by ID, map, or source..."
+                  placeholder={t('matches.searchPlaceholder')}
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-full px-4 py-2 pl-10 bg-surface border border-border rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent"
@@ -1360,7 +1372,7 @@ function MatchesScreen() {
                   <button
                     onClick={() => setSearchQuery('')}
                     className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500 hover:text-white transition-colors"
-                    title="Clear search"
+                    title={t('matches.clearSearch')}
                   >
                     <X size={18} />
                   </button>
@@ -1370,13 +1382,13 @@ function MatchesScreen() {
               {/* Results count */}
               {searchQuery && (
                 <div className="text-sm text-gray-400">
-                  Showing {sortedMatches.length} of {matches.length} matches
+                  {t('matches.showingResults').replace('{showing}', sortedMatches.length.toString()).replace('{total}', matches.length.toString())}
                 </div>
               )}
               
               {/* Sort Controls */}
               <div className="flex items-center gap-4 flex-wrap">
-                <span className="text-sm text-gray-400">Sort by:</span>
+                <span className="text-sm text-gray-400">{t('matches.sortBy')}</span>
                 <div className="flex gap-2">
                 {(['date', 'id', 'length', 'map'] as const).map((field) => (
                   <button
@@ -1397,7 +1409,7 @@ function MatchesScreen() {
                     }`}
                   >
                     <span className="capitalize">
-                      {field === 'length' ? 'Duration' : field === 'id' ? 'ID' : field === 'date' ? 'Date' : 'Map'}
+                      {field === 'length' ? t('matches.duration') : field === 'id' ? t('settings.id') : field === 'date' ? t('settings.date') : t('settings.map')}
                     </span>
                     {sortField === field && (
                       sortDirection === 'asc' ? <ArrowUp size={14} /> : <ArrowDown size={14} />
@@ -1412,18 +1424,18 @@ function MatchesScreen() {
           {loading && matches.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 gap-4">
               <Loader2 className="w-8 h-8 text-accent animate-spin" />
-              <div className="text-gray-400">Loading matches...</div>
+              <div className="text-gray-400">{t('matches.loading')}</div>
             </div>
           ) : (searchQuery && sortedMatches.length === 0) ? (
             <div className="flex flex-col items-center justify-center py-16 gap-4">
               <div className="text-center text-gray-400">
-                <p className="text-lg mb-2">No matches found</p>
-                <p className="text-sm">No matches match your search query "{searchQuery}"</p>
+                <p className="text-lg mb-2">{t('matches.noMatches')}</p>
+                <p className="text-sm">{t('matches.noMatchesSearch').replace('{query}', searchQuery)}</p>
                 <button
                   onClick={() => setSearchQuery('')}
                   className="mt-4 px-4 py-2 bg-accent hover:bg-accent/80 text-white rounded transition-colors text-sm"
                 >
-                  Clear search
+                  {t('matches.clearSearch')}
                 </button>
               </div>
             </div>
@@ -1431,12 +1443,12 @@ function MatchesScreen() {
             <div className="flex flex-col items-center justify-center py-16 gap-4">
               <div className="text-center text-gray-400">
                 <Upload className="w-16 h-16 mx-auto mb-4 text-gray-500 opacity-50" />
-                <p className="text-lg mb-2">No matches found</p>
-                <p className="text-sm mb-4">Parse a demo to get started.</p>
+                <p className="text-lg mb-2">{t('matches.noMatches')}</p>
+                <p className="text-sm mb-4">{t('matches.parseToStart')}</p>
                 <div className="mt-6 p-4 bg-surface/50 rounded-lg border border-gray-700/50 max-w-md">
-                  <p className="text-sm text-gray-300 mb-2 font-medium">Drag & Drop Demo Files</p>
+                  <p className="text-sm text-gray-300 mb-2 font-medium">{t('matches.dragDrop')}</p>
                   <p className="text-xs text-gray-400">
-                    Drag and drop one or more <code className="px-1 py-0.5 bg-gray-800 rounded text-gray-300">.dem</code> files here to parse them and add matches to your collection.
+                    {t('matches.dragDropDesc')}
                   </p>
                 </div>
               </div>
@@ -1482,7 +1494,7 @@ function MatchesScreen() {
                       {thumbnail ? (
                         <img
                           src={thumbnail}
-                          alt={match.map || 'Unknown Map'}
+                          alt={match.map || t('matches.unknownMap')}
                           className="w-full h-full object-cover object-center group-hover:scale-110 transition-transform duration-300"
                           onError={(e) => {
                             // Hide image on error
@@ -1522,7 +1534,7 @@ function MatchesScreen() {
                       <div className="flex items-center gap-3 flex-wrap text-xs">
                         {stats && stats.roundCount > 0 && (
                           <div className="flex items-center gap-1.5">
-                            <span className="text-gray-500">Rounds:</span>
+                            <span className="text-gray-500">{t('matches.rounds')}:</span>
                             <span className="text-sm font-semibold text-accent">
                               {stats.roundCount}
                             </span>
@@ -1530,7 +1542,7 @@ function MatchesScreen() {
                         )}
                         {stats && stats.duration > 0 && (
                           <div className="flex items-center gap-1.5">
-                            <span className="text-gray-500">Duration:</span>
+                            <span className="text-gray-500">{t('matches.duration')}:</span>
                             <span className="text-sm font-semibold text-accent">
                               {formatDuration(stats.duration)}
                             </span>
@@ -1538,14 +1550,14 @@ function MatchesScreen() {
                         )}
                         {stats && (stats.tWins > 0 || stats.ctWins > 0) && (
                           <div className="flex items-center gap-1.5">
-                            <span className="text-gray-500">Score:</span>
+                            <span className="text-gray-500">{t('matches.score')}:</span>
                             <span className="text-sm font-semibold text-gray-300">
-                              Team A {stats.tWins} - Team B {stats.ctWins}
+                              {t('matches.teamA')} {stats.tWins} - {t('matches.teamB')} {stats.ctWins}
                             </span>
                           </div>
                         )}
                         <div className="flex items-center gap-1.5">
-                          <span className="text-gray-500">Players:</span>
+                          <span className="text-gray-500">{t('matches.players')}:</span>
                           <span className="text-sm font-semibold text-gray-300">
                             {match.playerCount}
                           </span>
@@ -1575,7 +1587,7 @@ function MatchesScreen() {
                 className="w-full text-left px-4 py-2 text-sm text-white hover:bg-surface disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
               >
                 <FolderOpen className="w-4 h-4" />
-                Open folder for demo
+                {t('matches.openFolder')}
               </button>
               <button
                 onClick={() => handleContextMenuAction('reparse', contextMenu.match)}
@@ -1583,7 +1595,7 @@ function MatchesScreen() {
                 className="w-full text-left px-4 py-2 text-sm text-white hover:bg-surface disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
               >
                 <RefreshCw className="w-4 h-4" />
-                Reparse Demo
+                {t('matches.reparseDemo')}
               </button>
               {enableDbViewer && (
                 <button
@@ -1591,7 +1603,7 @@ function MatchesScreen() {
                   className="w-full text-left px-4 py-2 text-sm text-white hover:bg-surface transition-colors flex items-center gap-2"
                 >
                   <Database className="w-4 h-4" />
-                  Show in DB Viewer
+                  {t('matches.showInDb')}
                 </button>
               )}
               {selectedMatches.has(contextMenu.match.id) ? (
@@ -1600,7 +1612,7 @@ function MatchesScreen() {
                   className="w-full text-left px-4 py-2 text-sm text-white hover:bg-surface transition-colors flex items-center gap-2"
                 >
                   <X className="w-4 h-4" />
-                  Deselect
+                  {t('matches.deselect')}
                 </button>
               ) : (
                 <button
@@ -1608,7 +1620,7 @@ function MatchesScreen() {
                   className="w-full text-left px-4 py-2 text-sm text-white hover:bg-surface transition-colors flex items-center gap-2"
                 >
                   <Check className="w-4 h-4" />
-                  Select (CTRL + Click)
+                  {t('matches.select')} (CTRL + Click)
                 </button>
               )}
               <div className="border-t border-border my-1" />
@@ -1626,7 +1638,7 @@ function MatchesScreen() {
           <Modal
             isOpen={showDeleteModal}
             onClose={() => !deleting && setShowDeleteModal(false)}
-            title="Ta bort matcher"
+            title={t('matches.deleteMatches')}
             size="md"
             footer={
               <div className="flex justify-end gap-2">
@@ -1635,14 +1647,14 @@ function MatchesScreen() {
                   disabled={deleting}
                   className="px-4 py-2 bg-surface border border-border text-white rounded hover:bg-surface/80 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm"
                 >
-                  Avbryt
+                  {t('settings.cancel')}
                 </button>
                 <button
                   onClick={handleDeleteSelected}
                   disabled={deleting}
                   className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm"
                 >
-                  {deleting ? 'Raderar...' : `Ja, radera ${selectedMatches.size} match${selectedMatches.size > 1 ? 'er' : ''}`}
+                  {deleting ? t('settings.deleting') : t('matches.deleteButton').replace('{count}', selectedMatches.size.toString()).replace('{plural}', selectedMatches.size > 1 ? 'er' : '')}
                 </button>
               </div>
             }
@@ -1654,13 +1666,13 @@ function MatchesScreen() {
                 </div>
                 <div className="flex-1">
                   <h3 className="text-lg font-semibold text-white mb-2">
-                    Är du säker?
+                    {t('matches.deleteConfirmTitle')}
                   </h3>
                   <p className="text-sm text-gray-400 mb-2">
-                    Detta kommer att radera {selectedMatches.size} match{selectedMatches.size > 1 ? 'er' : ''} permanent från databasen.
+                    {t('matches.deleteConfirmDesc').replace('{count}', selectedMatches.size.toString()).replace('{plural}', selectedMatches.size > 1 ? 'er' : '')}
                   </p>
                   <p className="text-sm text-red-400 font-medium">
-                    Denna åtgärd kan inte ångras.
+                    {t('matches.deleteConfirmWarning')}
                   </p>
                 </div>
               </div>
@@ -1723,7 +1735,7 @@ function MatchesScreen() {
                         if (roundCount > 0) {
                           return (
                             <div className="flex items-center gap-1">
-                              <span>Rounds: {roundCount}</span>
+                              <span>{t('matches.rounds')}: {roundCount}</span>
                             </div>
                           )
                         }
@@ -1732,7 +1744,7 @@ function MatchesScreen() {
                       {/* Players */}
                       {allPlayers.length > 0 && (
                         <div className="flex items-center gap-1">
-                          <span>Players: {allPlayers.length}</span>
+                          <span>{t('matches.players')}: {allPlayers.length}</span>
                         </div>
                       )}
                       {/* Score */}
@@ -1795,7 +1807,7 @@ function MatchesScreen() {
                         : 'text-gray-400 hover:text-white'
                     }`}
                   >
-                    Overview
+                    {t('matches.tabs.overview')}
                   </button>
                   <button
                     onClick={() => setActiveTab('players')}
@@ -1805,7 +1817,7 @@ function MatchesScreen() {
                         : 'text-gray-400 hover:text-white'
                     }`}
                   >
-                    Players
+                    {t('matches.tabs.players')}
                   </button>
                   <button
                     onClick={() => {
@@ -1817,7 +1829,7 @@ function MatchesScreen() {
                         : 'text-gray-400 hover:text-white'
                     }`}
                   >
-                    Round Details
+                    {t('matches.tabs.rounds')}
                   </button>
                   <button
                     onClick={() => {
@@ -1832,7 +1844,7 @@ function MatchesScreen() {
                         : 'text-gray-400 hover:text-white'
                     }`}
                   >
-                    Chat Logs
+                    {t('matches.tabs.chat')}
                   </button>
                   <button
                     onClick={() => {
@@ -1845,7 +1857,7 @@ function MatchesScreen() {
                     }`}
                   >
                     <span className="flex items-center gap-2">
-                      2D Viewer
+                      {t('matches.tabs.viewer2d')}
                       <span className="px-1.5 py-0.5 text-xs bg-yellow-900/30 text-yellow-400 rounded border border-yellow-500/30">
                         WIP
                       </span>
@@ -1855,7 +1867,7 @@ function MatchesScreen() {
               </div>
 
               {loading ? (
-                <div className="text-center text-gray-400 py-8">Loading...</div>
+                <div className="text-center text-gray-400 py-8">{t('matches.loading')}</div>
               ) : activeTab === 'overview' ? (
                 (() => {
                   // Aggregate statistics from all events
@@ -1874,7 +1886,7 @@ function MatchesScreen() {
                   const totalFlashSeconds = teamFlashes.reduce((sum, e) => sum + (e.meta?.blind_duration || 0), 0)
 
                   const getPlayerName = (steamId: string | null | undefined) => {
-                    if (!steamId) return 'Unknown'
+                    if (!steamId) return t('matches.unknown')
                     // First try to find in allPlayers (complete list)
                     const player = allPlayers.find(p => p.steamId === steamId)
                     if (player) return player.name
@@ -1960,10 +1972,10 @@ function MatchesScreen() {
                         <div className="bg-surface border border-border rounded-lg p-4">
                           <div className="flex items-center gap-2 mb-2 text-gray-400">
                             <Zap size={16} />
-                            <span className="text-sm font-medium">Team Damage</span>
+                            <span className="text-sm font-medium">{t('matches.sections.teamDamage')}</span>
                           </div>
                           <div className="text-3xl font-bold mb-1 text-accent">{teamDamage.length}</div>
-                          <div className="text-xs text-gray-500">Friendly fire damage events</div>
+                          <div className="text-xs text-gray-500">{t('matches.friendlyFireDamage')}</div>
                         </div>
                         <div className="bg-surface border border-border rounded-lg p-4">
                           <div className="flex items-center gap-2 mb-2 text-gray-400">
@@ -1976,10 +1988,10 @@ function MatchesScreen() {
                         <div className="bg-surface border border-border rounded-lg p-4">
                           <div className="flex items-center gap-2 mb-2 text-gray-400">
                             <Zap size={16} />
-                            <span className="text-sm font-medium">Team Flashes</span>
+                            <span className="text-sm font-medium">{t('matches.sections.teamFlashes')}</span>
                           </div>
                           <div className="text-3xl font-bold mb-1 text-accent">{filteredTeamFlashes.length}</div>
-                          <div className="text-xs text-gray-500">Friendly flashbang detonations</div>
+                          <div className="text-xs text-gray-500">{t('matches.friendlyFlashbangs')}</div>
                         </div>
                       </div>
 
@@ -1992,23 +2004,23 @@ function MatchesScreen() {
                               className="flex items-center gap-2 text-lg font-semibold text-white hover:text-accent transition-colors"
                             >
                               <Clock size={18} />
-                              AFK Players at Round Start
+                              {t('matches.afkPlayersAtRoundStart')}
                               {expandedSections.afk ? <ChevronDown size={18} className="text-gray-500" /> : <ChevronUp size={18} className="text-gray-500" />}
                             </button>
                             <div className="flex items-center gap-4">
                               <div className="flex items-center gap-2">
-                                <label className="text-xs text-gray-400">Sort by:</label>
+                                <label className="text-xs text-gray-400">{t('matches.sortBy')}</label>
                                 <select
                                   value={afkSortBy}
                                   onChange={(e) => setAfkSortBy(e.target.value as 'round' | 'duration')}
                                   className="px-2 py-1 bg-secondary border border-border rounded text-white text-xs"
                                 >
-                                  <option value="round">Round</option>
-                                  <option value="duration">Duration</option>
+                                  <option value="round">{t('matches.round')}</option>
+                                  <option value="duration">{t('matches.duration')}</option>
                                 </select>
                               </div>
                               <div className="flex items-center gap-2">
-                                <label className="text-xs text-gray-400">Min duration:</label>
+                                <label className="text-xs text-gray-400">{t('matches.minDuration')}</label>
                                 <input
                                   type="number"
                                   min="0"
@@ -2017,7 +2029,7 @@ function MatchesScreen() {
                                   onChange={(e) => setAfkMinSeconds(parseFloat(e.target.value) || 0)}
                                   className="w-20 px-2 py-1 bg-secondary border border-border rounded text-white text-xs"
                                 />
-                                <span className="text-xs text-gray-500">s</span>
+                                <span className="text-xs text-gray-500">{t('matches.seconds')}</span>
                                 <span className="text-xs text-gray-500">
                                   ({filteredAfkDetections.length}/{afkDetections.length})
                                 </span>
@@ -2066,7 +2078,7 @@ function MatchesScreen() {
                                   <div key={playerId} className="bg-secondary border border-border rounded p-4">
                                     <div className="flex items-center justify-between mb-3">
                                       <span className="font-semibold text-white text-base">{playerName}</span>
-                                      <span className="text-xs text-gray-400">{afks.length} AFK period{afks.length !== 1 ? 's' : ''}</span>
+                                      <span className="text-xs text-gray-400">{afks.length} {afks.length !== 1 ? t('matches.afkPeriods') : t('matches.afkPeriod')}</span>
                                     </div>
                                     <div className="flex flex-wrap gap-3">
                                       {afks.map((afk, idx) => {
@@ -2078,7 +2090,7 @@ function MatchesScreen() {
                                         return (
                                           <div key={idx} className={`bg-surface border-l-4 ${borderColor} border border-border rounded p-3 min-w-[280px]`}>
                                             <div className="flex items-center justify-between mb-2">
-                                              <span className="text-xs text-gray-400">Round {afk.roundIndex + 1}</span>
+                                              <span className="text-xs text-gray-400">{t('matches.round')} {afk.roundIndex + 1}</span>
                                               {demoPath && (
                                                 <div className="flex items-center gap-1">
                                                   <button
@@ -2092,14 +2104,14 @@ function MatchesScreen() {
                                                       }
                                                     }}
                                                     className="p-1 hover:bg-accent/20 rounded transition-colors"
-                                                    title="View in 2D"
+                                                    title={t('matches.viewIn2D')}
                                                   >
                                                     <MapIcon size={14} className="text-gray-400 hover:text-accent" />
                                                   </button>
                                                   <button
                                                     onClick={() => handleCopyCommand(afk)}
                                                     className="p-1 hover:bg-accent/20 rounded transition-colors"
-                                                    title="Watch this event in CS2"
+                                                    title={t('matches.watchInCS2')}
                                                   >
                                                     <Play size={14} className="text-gray-400 hover:text-accent" />
                                                   </button>
@@ -2109,16 +2121,16 @@ function MatchesScreen() {
                                             <div className="text-xs text-gray-400 space-y-1">
                                               <div className="flex items-center gap-2">
                                                 <Clock size={12} />
-                                                <span>{duration.toFixed(1)}s AFK</span>
+                                                <span>{t('matches.afkDuration').replace('{duration}', duration.toFixed(1))}</span>
                                               </div>
                                               {diedWhileAFK ? (
                                                 <div className="flex items-center gap-2 text-red-400">
                                                   <Skull size={12} />
-                                                  <span>Ended when player died</span>
+                                                  <span>{t('matches.endedWhenDied')}</span>
                                                 </div>
                                               ) : timeToFirstMovement !== undefined ? (
                                                 <div className="flex items-center gap-2 text-yellow-400">
-                                                  <span>Ended when player started moving</span>
+                                                  <span>{t('matches.endedWhenMoving')}</span>
                                                 </div>
                                               ) : (
                                                 <div className="flex items-center gap-2 text-gray-500">
@@ -2135,7 +2147,7 @@ function MatchesScreen() {
                               </div>
                             ) : (
                               <div className="text-center text-gray-400 py-4">
-                                No AFK detections meet the minimum threshold ({effectiveAfkThreshold}s)
+                                {t('matches.noAfkDetections').replace('{threshold}', effectiveAfkThreshold.toString())}
                               </div>
                             )
                           })()}
@@ -2317,7 +2329,7 @@ function MatchesScreen() {
                               className="flex items-center gap-2 text-lg font-semibold text-white hover:text-accent transition-colors"
                             >
                               <Zap size={18} />
-                              Team Damage
+                              {t('matches.sections.teamDamage')}
                               {expandedSections.teamDamage ? <ChevronDown size={18} className="text-gray-500" /> : <ChevronUp size={18} className="text-gray-500" />}
                             </button>
                           </div>
@@ -2340,7 +2352,7 @@ function MatchesScreen() {
                                       <div className="flex items-center justify-between mb-2">
                                         <span className="font-medium text-white">{getPlayerName(damage.actorSteamId)}</span>
                                         <div className="flex items-center gap-2">
-                                          <span className="text-xs text-gray-400">Round {damage.roundIndex + 1}</span>
+                                          <span className="text-xs text-gray-400">{t('matches.round')} {damage.roundIndex + 1}</span>
                                           {demoPath && (
                                             <div className="flex items-center gap-1">
                                               <button
@@ -2378,7 +2390,7 @@ function MatchesScreen() {
                                         </div>
                                       )}
                                       <div className="text-xs text-accent mt-1">
-                                        {damage.meta?.total_damage?.toFixed(1) || 0} damage
+                                        {damage.meta?.total_damage?.toFixed(1) || 0} {t('matches.damage')}
                                       </div>
                                     </div>
                                   )
@@ -2397,11 +2409,11 @@ function MatchesScreen() {
                               className="flex items-center gap-2 text-lg font-semibold text-white hover:text-accent transition-colors"
                             >
                               <Zap size={18} />
-                              Team Flashes
+                              {t('matches.sections.teamFlashes')}
                               {expandedSections.teamFlashes ? <ChevronDown size={18} className="text-gray-500" /> : <ChevronUp size={18} className="text-gray-500" />}
                             </button>
                             <div className="flex items-center gap-2">
-                              <label className="text-xs text-gray-400">Min blind:</label>
+                              <label className="text-xs text-gray-400">{t('matches.minBlind')}</label>
                               <input
                                 type="number"
                                 min="0"
@@ -2460,14 +2472,14 @@ function MatchesScreen() {
                                           → {getPlayerName(flash.victimSteamId || '')}
                                         </div>
                                         <div className="text-xs text-accent mt-1">
-                                          {flash.meta?.blind_duration?.toFixed(1) || 0}s blind
+                                          {flash.meta?.blind_duration?.toFixed(1) || 0}s {t('matches.blind')}
                                         </div>
                                       </div>
                                     ))}
                                 </div>
                               ) : (
                                 <div className="text-center text-gray-400 py-4">
-                                  No flashes meet the minimum threshold ({effectiveFlashThreshold.toFixed(1)}s)
+                                  {t('matches.noFlashes').replace('{threshold}', effectiveFlashThreshold.toFixed(1))}
                                 </div>
                               )}
                             </>
@@ -2479,7 +2491,7 @@ function MatchesScreen() {
                 })()
               ) : activeTab === 'players' ? (
                 allPlayersWithScores.length === 0 ? (
-                  <div className="text-center text-gray-400 py-8">No players available</div>
+                  <div className="text-center text-gray-400 py-8">{t('matches.noPlayersAvailable')}</div>
                 ) : (
                   <div className="overflow-x-auto">
                     <div className="grid grid-cols-2 gap-4">
@@ -2507,8 +2519,8 @@ function MatchesScreen() {
                                       <span
                                         className="text-blue-400 flex-shrink-0 cursor-help"
                                         title={score.firstConnectRound !== null && score.firstConnectRound !== undefined 
-                                          ? `Connected mid-game (Round ${score.firstConnectRound + 1})`
-                                          : "Connected mid-game"}
+                                          ? t('matches.firstConnectRound').replace('{round}', (score.firstConnectRound + 1).toString())
+                                          : t('matches.connectedMidgame')}
                                       >
                                         <UserPlus size={14} />
                                       </span>
@@ -2517,8 +2529,8 @@ function MatchesScreen() {
                                       <span
                                         className="text-red-400 flex-shrink-0 cursor-help"
                                         title={score.disconnectRound !== null && score.disconnectRound !== undefined 
-                                          ? `Disconnected and never returned (Round ${score.disconnectRound + 1})`
-                                          : "Disconnected and never returned"}
+                                          ? t('matches.disconnectRound').replace('{round}', (score.disconnectRound + 1).toString())
+                                          : t('matches.permanentDisconnect')}
                                       >
                                         <UserMinus size={14} />
                                       </span>
@@ -2546,24 +2558,24 @@ function MatchesScreen() {
                                     }}
                                     disabled={!demoPath}
                                     className="px-3 py-1.5 bg-accent hover:bg-accent/90 disabled:bg-gray-600 disabled:cursor-not-allowed text-white text-sm rounded transition-colors flex items-center gap-1.5 ml-2 flex-shrink-0 whitespace-nowrap"
-                                    title={!demoPath ? 'Demo file path required' : `Extract voice for ${score.name}`}
+                                    title={!demoPath ? t('matches.demoFileRequired') : t('matches.extractVoiceFor').replace('{name}', score.name)}
                                   >
                                     <Mic size={14} />
-                                    <span>Extract Voice</span>
+                                    <span>{t('matches.extractVoice')}</span>
                                   </button>
                                 </div>
                                 <div className="grid grid-cols-2 gap-2 text-xs text-gray-300">
                                   <div>
-                                    <span className="text-gray-400">Team Kills:</span> {score.teamKills}
+                                    <span className="text-gray-400">{t('matches.teamKillsLabel')}</span> {score.teamKills}
                                   </div>
                                   <div>
-                                    <span className="text-gray-400">Team Damage:</span> {score.teamDamage.toFixed(1)}
+                                    <span className="text-gray-400">{t('matches.teamDamageLabel')}</span> {score.teamDamage.toFixed(1)}
                                   </div>
                                   <div>
-                                    <span className="text-gray-400">Flash Seconds:</span> {score.teamFlashSeconds.toFixed(1)}s
+                                    <span className="text-gray-400">{t('matches.flashSecondsLabel')}</span> {score.teamFlashSeconds.toFixed(1)}s
                                   </div>
                                   <div>
-                                    <span className="text-gray-400">AFK Seconds:</span> {score.afkSeconds.toFixed(1)}s
+                                    <span className="text-gray-400">{t('matches.afkSecondsLabel')}</span> {score.afkSeconds.toFixed(1)}s
                                   </div>
                                 </div>
                               </div>
@@ -2578,7 +2590,7 @@ function MatchesScreen() {
                           <h3 className="text-lg font-semibold text-accent px-2">Team B</h3>
                         </div>
                         {groupedAndSortedScores.teamB.length === 0 ? (
-                          <div className="text-center text-gray-400 py-4 text-sm">No players</div>
+                          <div className="text-center text-gray-400 py-4 text-sm">{t('matches.noPlayers')}</div>
                         ) : (
                           <div className="space-y-2">
                             {groupedAndSortedScores.teamB.map((score) => (
@@ -2596,8 +2608,8 @@ function MatchesScreen() {
                                       <span
                                         className="text-blue-400 flex-shrink-0 cursor-help"
                                         title={score.firstConnectRound !== null && score.firstConnectRound !== undefined 
-                                          ? `Connected mid-game (Round ${score.firstConnectRound + 1})`
-                                          : "Connected mid-game"}
+                                          ? t('matches.firstConnectRound').replace('{round}', (score.firstConnectRound + 1).toString())
+                                          : t('matches.connectedMidgame')}
                                       >
                                         <UserPlus size={14} />
                                       </span>
@@ -2606,8 +2618,8 @@ function MatchesScreen() {
                                       <span
                                         className="text-red-400 flex-shrink-0 cursor-help"
                                         title={score.disconnectRound !== null && score.disconnectRound !== undefined 
-                                          ? `Disconnected and never returned (Round ${score.disconnectRound + 1})`
-                                          : "Disconnected and never returned"}
+                                          ? t('matches.disconnectRound').replace('{round}', (score.disconnectRound + 1).toString())
+                                          : t('matches.permanentDisconnect')}
                                       >
                                         <UserMinus size={14} />
                                       </span>
@@ -2635,24 +2647,24 @@ function MatchesScreen() {
                                     }}
                                     disabled={!demoPath}
                                     className="px-3 py-1.5 bg-accent hover:bg-accent/90 disabled:bg-gray-600 disabled:cursor-not-allowed text-white text-sm rounded transition-colors flex items-center gap-1.5 ml-2 flex-shrink-0 whitespace-nowrap"
-                                    title={!demoPath ? 'Demo file path required' : `Extract voice for ${score.name}`}
+                                    title={!demoPath ? t('matches.demoFileRequired') : t('matches.extractVoiceFor').replace('{name}', score.name)}
                                   >
                                     <Mic size={14} />
-                                    <span>Extract Voice</span>
+                                    <span>{t('matches.extractVoice')}</span>
                                   </button>
                                 </div>
                                 <div className="grid grid-cols-2 gap-2 text-xs text-gray-300">
                                   <div>
-                                    <span className="text-gray-400">Team Kills:</span> {score.teamKills}
+                                    <span className="text-gray-400">{t('matches.teamKillsLabel')}</span> {score.teamKills}
                                   </div>
                                   <div>
-                                    <span className="text-gray-400">Team Damage:</span> {score.teamDamage.toFixed(1)}
+                                    <span className="text-gray-400">{t('matches.teamDamageLabel')}</span> {score.teamDamage.toFixed(1)}
                                   </div>
                                   <div>
-                                    <span className="text-gray-400">Flash Seconds:</span> {score.teamFlashSeconds.toFixed(1)}s
+                                    <span className="text-gray-400">{t('matches.flashSecondsLabel')}</span> {score.teamFlashSeconds.toFixed(1)}s
                                   </div>
                                   <div>
-                                    <span className="text-gray-400">AFK Seconds:</span> {score.afkSeconds.toFixed(1)}s
+                                    <span className="text-gray-400">{t('matches.afkSecondsLabel')}</span> {score.afkSeconds.toFixed(1)}s
                                   </div>
                                 </div>
                               </div>
@@ -2684,14 +2696,14 @@ function MatchesScreen() {
                                     <UserPlus 
                                       size={14} 
                                       className="text-blue-400 flex-shrink-0" 
-                                      title="Connected mid-game"
+                                      title={t('matches.connectedMidgame')}
                                     />
                                   )}
                                   {score.permanentDisconnect && (
                                     <UserMinus 
                                       size={14} 
                                       className="text-red-400 flex-shrink-0" 
-                                      title="Disconnected and never returned"
+                                      title={t('matches.permanentDisconnect')}
                                     />
                                   )}
                                   {score.name || (
@@ -2717,24 +2729,24 @@ function MatchesScreen() {
                                   }}
                                   disabled={!demoPath}
                                   className="px-3 py-1.5 bg-accent hover:bg-accent/90 disabled:bg-gray-600 disabled:cursor-not-allowed text-white text-sm rounded transition-colors flex items-center gap-1.5 ml-2"
-                                  title={!demoPath ? 'Demo file path required' : `Extract voice for ${score.name}`}
+                                  title={!demoPath ? t('matches.demoFileRequired') : t('matches.extractVoiceFor').replace('{name}', score.name)}
                                 >
                                   <Mic size={14} />
-                                  <span>Extract Voice</span>
+                                  <span>{t('matches.extractVoice')}</span>
                                 </button>
                               </div>
                               <div className="grid grid-cols-2 gap-2 text-xs text-gray-300">
                                 <div>
-                                  <span className="text-gray-400">Team Kills:</span> {score.teamKills}
+                                  <span className="text-gray-400">{t('matches.teamKillsLabel')}</span> {score.teamKills}
                                 </div>
                                 <div>
-                                  <span className="text-gray-400">Team Damage:</span> {score.teamDamage.toFixed(1)}
+                                  <span className="text-gray-400">{t('matches.teamDamageLabel')}</span> {score.teamDamage.toFixed(1)}
                                 </div>
                                 <div>
-                                  <span className="text-gray-400">Flash Seconds:</span> {score.teamFlashSeconds.toFixed(1)}s
+                                  <span className="text-gray-400">{t('matches.flashSecondsLabel')}</span> {score.teamFlashSeconds.toFixed(1)}s
                                 </div>
                                 <div>
-                                  <span className="text-gray-400">AFK Seconds:</span> {score.afkSeconds.toFixed(1)}s
+                                  <span className="text-gray-400">{t('matches.afkSecondsLabel')}</span> {score.afkSeconds.toFixed(1)}s
                                 </div>
                               </div>
                             </div>
@@ -2771,23 +2783,23 @@ function MatchesScreen() {
                           {stats && (
                             <div className="grid grid-cols-4 gap-4 mb-3 text-sm">
                               <div>
-                                <div className="text-gray-400">Team Kills</div>
+                                <div className="text-gray-400">{t('matches.teamKills')}</div>
                                 <div className="font-semibold text-red-400">{stats.teamKills}</div>
                               </div>
                               <div>
-                                <div className="text-gray-400">Team Damage</div>
+                                <div className="text-gray-400">{t('matches.teamDamage')}</div>
                                 <div className="font-semibold text-yellow-400">
                                   {stats.teamDamage.toFixed(1)}
                                 </div>
                               </div>
                               <div>
-                                <div className="text-gray-400">Flash Seconds</div>
+                                <div className="text-gray-400">{t('matches.flashSeconds')}</div>
                                 <div className="font-semibold text-orange-400">
                                   {stats.teamFlashSeconds.toFixed(1)}s
                                 </div>
                               </div>
                               <div>
-                                <div className="text-gray-400">AFK Seconds</div>
+                                <div className="text-gray-400">{t('matches.afkSeconds')}</div>
                                 <div className="font-semibold text-blue-400">
                                   {stats.afkSeconds.toFixed(1)}s
                                 </div>
@@ -2821,7 +2833,7 @@ function MatchesScreen() {
                                     {event.meta && (
                                       <span className="text-gray-500 ml-auto">
                                         {event.meta.weapon || event.meta.total_damage
-                                          ? `(${event.meta.weapon || `${event.meta.total_damage} dmg`})`
+                                          ? `(${event.meta.weapon || `${event.meta.total_damage} ${t('matches.dmg')}`})`
                                           : ''}
                                       </span>
                                     )}
@@ -2840,7 +2852,7 @@ function MatchesScreen() {
                   {/* Filter by player and view mode */}
                   <div className="bg-surface rounded-lg border border-border p-4">
                     <div className="flex items-center gap-4 flex-wrap">
-                      <label className="text-sm font-medium text-gray-300">Filter by Player:</label>
+                      <label className="text-sm font-medium text-gray-300">{t('matches.filterByPlayer')}</label>
                       <select
                         value={chatFilterSteamId || ''}
                         onChange={(e) => {
@@ -2852,7 +2864,7 @@ function MatchesScreen() {
                         }}
                         className="px-3 py-1.5 bg-secondary border border-border rounded text-white text-sm focus:outline-none focus:ring-1 focus:ring-accent"
                       >
-                        <option value="">All Players</option>
+                        <option value="">{t('matches.allPlayers')}</option>
                         {scores.map((score) => (
                           <option key={score.steamId} value={score.steamId}>
                             {score.name || score.steamId}
@@ -2865,36 +2877,36 @@ function MatchesScreen() {
                           <button
                             onClick={handleCopyPlayerChat}
                             className="px-3 py-1.5 bg-secondary hover:bg-secondary/80 border border-border rounded text-white text-sm flex items-center gap-2 transition-colors"
-                            title="Copy all chat messages"
+                            title={t('matches.copyAllChat')}
                           >
                             <Copy size={14} />
-                            Copy All
+                            {t('matches.copyAll')}
                           </button>
                         )}
-                        <span className="text-sm text-gray-400">All Chat Only</span>
+                        <span className="text-sm text-gray-400">{t('matches.allChatOnly')}</span>
                       </div>
                     </div>
                   </div>
 
                   {/* Chat messages */}
                   {loadingChat ? (
-                    <div className="text-center text-gray-400 py-8">Loading chat messages...</div>
+                    <div className="text-center text-gray-400 py-8">{t('matches.loadingChat')}</div>
                   ) : chatMessages.length === 0 ? (
-                    <div className="text-center text-gray-400 py-8">No chat messages found</div>
+                    <div className="text-center text-gray-400 py-8">{t('matches.noChatMessages')}</div>
                   ) : (
                     <div className="grid gap-4 grid-cols-1">
                       {/* All Chat Section */}
                       {(
                         <div className="bg-surface rounded-lg border border-border overflow-hidden">
                           <div className="px-4 py-3 border-b border-border bg-accent/20">
-                            <h3 className="text-lg font-semibold text-accent">All Chat</h3>
+                            <h3 className="text-lg font-semibold text-accent">{t('matches.allChat')}</h3>
                             <p className="text-xs text-gray-500">
-                              {chatMessages.length} messages
+                              {chatMessages.length} {t('matches.messages')}
                             </p>
                           </div>
                           <div className="max-h-[600px] overflow-y-auto">
                             {chatMessages.length === 0 ? (
-                              <div className="text-center text-gray-500 py-8 text-sm">No chat messages</div>
+                              <div className="text-center text-gray-500 py-8 text-sm">{t('matches.noChatMessagesInSection')}</div>
                             ) : (
                               <div className="divide-y divide-border">
                                 {chatMessages
@@ -2912,7 +2924,7 @@ function MatchesScreen() {
                                         <div className="flex items-start gap-3">
                                           <div className="flex-shrink-0">
                                             <div className="text-xs font-mono text-gray-500">
-                                              Round {msg.roundIndex + 1}
+                                              {t('matches.round')} {msg.roundIndex + 1}
                                             </div>
                                             <div className="text-xs text-gray-500">{timeStr}</div>
                                           </div>
@@ -2948,7 +2960,7 @@ function MatchesScreen() {
                                               <button
                                                 onClick={() => handleCopyChatMessage(fullMessage)}
                                                 className="ml-auto p-1 hover:bg-accent/20 rounded transition-colors opacity-0 group-hover:opacity-100"
-                                                title="Copy message"
+                                                title={t('matches.copyMessage')}
                                               >
                                                 <Copy size={14} className="text-gray-400 hover:text-accent" />
                                               </button>

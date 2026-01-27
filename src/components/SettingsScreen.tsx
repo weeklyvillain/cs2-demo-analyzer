@@ -3,6 +3,7 @@ import Modal from './Modal'
 import WhatsNewModal from './WhatsNewModal'
 import OverlayHotkeySettings from './OverlayHotkeySettings'
 import { RefreshCw } from 'lucide-react'
+import { t, setLanguage, getLanguage, type Language } from '../utils/translations'
 
 interface Settings {
   cs2_path: string
@@ -26,6 +27,7 @@ interface Settings {
   debugMode: string
   overlayEnabled: string
   autoplayAfterSpectate: string
+  language: string
 }
 
 function SettingsScreen() {
@@ -51,7 +53,9 @@ function SettingsScreen() {
     debugMode: 'false',
     overlayEnabled: 'false',
     autoplayAfterSpectate: 'true',
+    language: getLanguage(),
   })
+  const [, forceUpdate] = useState(0) // Force re-render when language changes
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -150,7 +154,12 @@ function SettingsScreen() {
         debugMode: allSettings.debugMode || 'false',
         overlayEnabled: allSettings.overlayEnabled !== undefined ? allSettings.overlayEnabled : 'false',
         autoplayAfterSpectate: allSettings.autoplayAfterSpectate !== undefined ? allSettings.autoplayAfterSpectate : 'true',
+        language: allSettings.language || getLanguage(),
       })
+      // Set language from settings
+      if (allSettings.language && (allSettings.language === 'en' || allSettings.language === 'sv')) {
+        setLanguage(allSettings.language as Language)
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load settings')
     } finally {
@@ -175,6 +184,12 @@ function SettingsScreen() {
             console.error('Failed to trim matches:', err)
           }
         }
+      }
+      
+      // Special handling for language change
+      if (key === 'language' && (value === 'en' || value === 'sv')) {
+        setLanguage(value as Language)
+        forceUpdate((prev) => prev + 1) // Force re-render to update all translations
       }
     } catch (err) {
       console.error(`Failed to save setting ${key}:`, err)
@@ -251,8 +266,8 @@ function SettingsScreen() {
   return (
     <div className="flex-1 flex flex-col p-6 overflow-auto">
       <div className="mb-6">
-        <h2 className="text-2xl font-bold mb-2">Settings</h2>
-        <p className="text-gray-400 text-sm">Configure application settings</p>
+        <h2 className="text-2xl font-bold mb-2">{t('settings.title')}</h2>
+        <p className="text-gray-400 text-sm">{t('settings.subtitle')}</p>
       </div>
 
       {error && (
@@ -270,191 +285,142 @@ function SettingsScreen() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Left Column: Settings */}
         <div className="space-y-6">
-          {/* CS2 Path */}
-        <div className="bg-secondary rounded-lg border border-border p-4">
-          <h3 className="text-lg font-semibold mb-4">CS2 Configuration</h3>
-          
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                CS2 Executable Path
-              </label>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={settings.cs2_path}
-                  onChange={(e) => setSettings((prev) => ({ ...prev, cs2_path: e.target.value }))}
-                  placeholder="C:\Program Files\Steam\steamapps\common\Counter-Strike Global Offensive\game\bin\win64\cs2.exe"
-                  className="flex-1 px-3 py-2 bg-surface border border-border rounded text-white text-sm"
-                />
-                <button
-                  onClick={handleBrowseCS2}
-                  className="px-4 py-2 bg-accent text-white rounded hover:bg-accent/80 transition-colors text-sm"
+          {/* CS2 Configuration */}
+          <div className="bg-secondary rounded-lg border border-border p-4">
+            <h3 className="text-lg font-semibold mb-4">{t('settings.cs2Config')}</h3>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  {t('settings.cs2Path')}
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={settings.cs2_path}
+                    onChange={(e) => setSettings((prev) => ({ ...prev, cs2_path: e.target.value }))}
+                    placeholder="C:\Program Files\Steam\steamapps\common\Counter-Strike Global Offensive\game\bin\win64\cs2.exe"
+                    className="flex-1 px-3 py-2 bg-surface border border-border rounded text-white text-sm"
+                  />
+                  <button
+                    onClick={handleBrowseCS2}
+                    className="px-4 py-2 bg-accent text-white rounded hover:bg-accent/80 transition-colors text-sm"
+                  >
+                    Browse
+                  </button>
+                </div>
+                <p className="text-xs text-gray-500 mt-1">
+                  {t('settings.cs2PathDesc')}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Window Settings */}
+          <div className="bg-secondary rounded-lg border border-border p-4">
+            <h3 className="text-lg font-semibold mb-4">{t('settings.windowSettings')}</h3>
+            
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    {t('settings.windowWidth')}
+                  </label>
+                  <input
+                    type="number"
+                    value={settings.cs2_window_width}
+                    onChange={(e) => setSettings((prev) => ({ ...prev, cs2_window_width: e.target.value }))}
+                    className="w-full px-3 py-2 bg-surface border border-border rounded text-white text-sm"
+                    min="640"
+                    max="7680"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    {t('settings.windowHeight')}
+                  </label>
+                  <input
+                    type="number"
+                    value={settings.cs2_window_height}
+                    onChange={(e) => setSettings((prev) => ({ ...prev, cs2_window_height: e.target.value }))}
+                    className="w-full px-3 py-2 bg-surface border border-border rounded text-white text-sm"
+                    min="480"
+                    max="4320"
+                  />
+                </div>
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  {t('settings.windowMode')}
+                </label>
+                <select
+                  value={settings.cs2_window_mode}
+                  onChange={(e) => setSettings((prev) => ({ ...prev, cs2_window_mode: e.target.value }))}
+                  className="w-full px-3 py-2 bg-surface border border-border rounded text-white text-sm"
                 >
-                  Browse
+                  <option value="windowed">{t('settings.windowed')}</option>
+                  <option value="fullscreen">{t('settings.fullscreen')}</option>
+                </select>
+              </div>
+
+              {/* Save Button for Window Settings */}
+              <div className="flex justify-end pt-2">
+                <button
+                  onClick={handleSaveWindowSettings}
+                  disabled={saving}
+                  className="px-6 py-2 bg-accent text-white rounded hover:bg-accent/80 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm"
+                >
+                  {saving ? t('settings.saving') : t('settings.saveWindowSettings')}
                 </button>
               </div>
-              <p className="text-xs text-gray-500 mt-1">
-                Path to the CS2 executable (cs2.exe)
-              </p>
             </div>
           </div>
-        </div>
 
-        {/* Window Settings */}
-        <div className="bg-secondary rounded-lg border border-border p-4">
-          <h3 className="text-lg font-semibold mb-4">Window Settings</h3>
-          
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Window Width
-                </label>
-                <input
-                  type="number"
-                  value={settings.cs2_window_width}
-                  onChange={(e) => setSettings((prev) => ({ ...prev, cs2_window_width: e.target.value }))}
-                  className="w-full px-3 py-2 bg-surface border border-border rounded text-white text-sm"
-                  min="640"
-                  max="7680"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Window Height
-                </label>
-                <input
-                  type="number"
-                  value={settings.cs2_window_height}
-                  onChange={(e) => setSettings((prev) => ({ ...prev, cs2_window_height: e.target.value }))}
-                  className="w-full px-3 py-2 bg-surface border border-border rounded text-white text-sm"
-                  min="480"
-                  max="4320"
-                />
-              </div>
-            </div>
+          {/* Parsing Settings */}
+          <div className="bg-secondary rounded-lg border border-border p-4">
+            <h3 className="text-lg font-semibold mb-4">{t('settings.parsingSettings')}</h3>
             
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                Window Mode
-              </label>
-              <select
-                value={settings.cs2_window_mode}
-                onChange={(e) => setSettings((prev) => ({ ...prev, cs2_window_mode: e.target.value }))}
-                className="w-full px-3 py-2 bg-surface border border-border rounded text-white text-sm"
-              >
-                <option value="windowed">Windowed</option>
-                <option value="fullscreen">Fullscreen</option>
-              </select>
-            </div>
-
-            {/* Save Button for Window Settings */}
-            <div className="flex justify-end pt-2">
-              <button
-                onClick={handleSaveWindowSettings}
-                disabled={saving}
-                className="px-6 py-2 bg-accent text-white rounded hover:bg-accent/80 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm"
-              >
-                {saving ? 'Saving...' : 'Save Window Settings'}
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* Playback Settings */}
-        <div className="bg-secondary rounded-lg border border-border p-4">
-          <h3 className="text-lg font-semibold mb-4">Playback Settings</h3>
-          
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-300 mb-1">
-                  Autoplay After Spectate
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  {t('settings.positionExtractionFrequency')}
                 </label>
-                <p className="text-xs text-gray-500">
-                  Automatically resume demo playback after spectating a player
+                <select
+                  value={settings.position_extraction_interval}
+                  onChange={async (e) => {
+                    const value = e.target.value
+                    setSettings((prev) => ({ ...prev, position_extraction_interval: value }))
+                    await handleSaveSingleSetting('position_extraction_interval', value)
+                  }}
+                  className="w-full px-3 py-2 bg-surface border border-border rounded text-white text-sm"
+                >
+                  <option value="1">{t('settings.positionExtractionAll')}</option>
+                  <option value="2">{t('settings.positionExtractionHalf')}</option>
+                  <option value="4">{t('settings.positionExtractionQuarter')}</option>
+                </select>
+                <p className="text-xs text-gray-500 mt-1">
+                  {t('settings.positionExtractionDesc')}
                 </p>
               </div>
-              <label className="relative inline-flex items-center cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={settings.autoplayAfterSpectate === 'true'}
-                  onChange={async (e) => {
-                    const newValue = e.target.checked ? 'true' : 'false'
-                    setSettings((prev) => ({ ...prev, autoplayAfterSpectate: newValue }))
-                    await handleSaveSingleSetting('autoplayAfterSpectate', newValue)
-                  }}
-                  className="sr-only peer"
-                />
-                <div className="w-11 h-6 bg-gray-600 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-              </label>
-            </div>
-          </div>
-        </div>
 
-        {/* Overlay Settings */}
-        <div className="bg-secondary rounded-lg border border-border p-4">
-          <h3 className="text-lg font-semibold mb-4">Overlay Settings</h3>
-          
-          <div className="space-y-4">
-            {/* Overlay Enable/Disable */}
-            <div className="flex items-center justify-between">
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-1">
-                  Enable Overlay
-                </label>
-                <p className="text-xs text-gray-500">
-                  Enable or disable the overlay window completely. When disabled, the overlay will not be created or shown.
-                </p>
-              </div>
-              <label className="relative inline-flex items-center cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={settings.overlayEnabled !== 'false'}
-                  onChange={async (e) => {
-                    const value = e.target.checked ? 'true' : 'false'
-                    setSettings((prev) => ({ ...prev, overlayEnabled: value }))
-                    await handleSaveSingleSetting('overlayEnabled', value)
-                    // Close overlay if disabling
-                    if (!e.target.checked && window.electronAPI?.overlay?.close) {
-                      await window.electronAPI.overlay.close()
-                    }
-                  }}
-                  className="sr-only peer"
-                />
-                <div className="w-11 h-6 bg-surface peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-accent"></div>
-              </label>
-            </div>
-
-            <div className="pt-2 border-t border-border">
-              {/* Overlay Hotkey Settings */}
-              <OverlayHotkeySettings />
-            </div>
-
-            <div className="pt-2 border-t border-border">
-              {/* Debug Mode */}
               <div className="flex items-center justify-between">
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-1">
-                    Debug Mode
+                    {t('settings.ramOnlyParsing')}
                   </label>
                   <p className="text-xs text-gray-500">
-                    Show command log in overlay (top-right). Displays all CS2 commands sent via netcon.
+                    {t('settings.ramOnlyParsingDesc')}
                   </p>
                 </div>
                 <label className="relative inline-flex items-center cursor-pointer">
                   <input
                     type="checkbox"
-                    checked={settings.debugMode === 'true'}
+                    checked={settings.ram_only_parsing === 'true'}
                     onChange={async (e) => {
                       const value = e.target.checked ? 'true' : 'false'
-                      setSettings((prev) => ({ ...prev, debugMode: value }))
-                      await handleSaveSingleSetting('debugMode', value)
-                      // Also update via settings API for immediate overlay update
-                      if (window.electronAPI) {
-                        await window.electronAPI.settings.setDebugMode(e.target.checked)
-                      }
+                      setSettings((prev) => ({ ...prev, ram_only_parsing: value }))
+                      await handleSaveSingleSetting('ram_only_parsing', value)
                     }}
                     className="sr-only peer"
                   />
@@ -463,377 +429,465 @@ function SettingsScreen() {
               </div>
             </div>
           </div>
-        </div>
 
-        {/* Storage Settings */}
-        <div className="bg-secondary rounded-lg border border-border p-4">
-          <h3 className="text-lg font-semibold mb-4">Storage Settings</h3>
-          
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-1">
-                  Rensa saknade demos vid start
-                </label>
-                <p className="text-xs text-gray-500">
-                  Radera automatiskt databaser där demo-filen saknas
-                </p>
-              </div>
-              <label className="relative inline-flex items-center cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={settings.auto_cleanup_missing_demos === 'true'}
-                  onChange={async (e) => {
-                    const value = e.target.checked ? 'true' : 'false'
-                    setSettings((prev) => ({ ...prev, auto_cleanup_missing_demos: value }))
-                    await handleSaveSingleSetting('auto_cleanup_missing_demos', value)
-                  }}
-                  className="sr-only peer"
-                />
-                <div className="w-11 h-6 bg-surface peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-accent"></div>
-              </label>
-            </div>
+          {/* Display Settings */}
+          <div className="bg-secondary rounded-lg border border-border p-4">
+            <h3 className="text-lg font-semibold mb-4">{t('settings.displaySettings')}</h3>
             
-            <div className="flex items-center justify-between">
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-1">
-                  Begränsa antal sparade matcher
-                </label>
-                <p className="text-xs text-gray-500">
-                  Behåll endast de N senaste matcherna
-                </p>
-              </div>
-              <label className="relative inline-flex items-center cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={settings.match_cap_enabled === 'true'}
-                  onChange={async (e) => {
-                    const value = e.target.checked ? 'true' : 'false'
-                    setSettings((prev) => ({ ...prev, match_cap_enabled: value }))
-                    await handleSaveSingleSetting('match_cap_enabled', value)
-                  }}
-                  className="sr-only peer"
-                />
-                <div className="w-11 h-6 bg-surface peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-accent"></div>
-              </label>
-            </div>
-            
-            {settings.match_cap_enabled === 'true' && (
+            <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Max antal matcher
+                  {t('settings.defaultAfkThreshold')}
                 </label>
                 <input
                   type="number"
-                  value={settings.match_cap_value}
+                  step="0.1"
+                  value={settings.default_afk_threshold}
                   onChange={async (e) => {
                     const value = e.target.value
-                    setSettings((prev) => ({ ...prev, match_cap_value: value }))
-                    await handleSaveSingleSetting('match_cap_value', value)
+                    setSettings((prev) => ({ ...prev, default_afk_threshold: value }))
+                    await handleSaveSingleSetting('default_afk_threshold', value)
+                  }}
+                  className="w-full px-3 py-2 bg-surface border border-border rounded text-white text-sm"
+                  min="0"
+                  max="300"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  {t('settings.defaultAfkThresholdDesc')}
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  {t('settings.defaultFlashThreshold')}
+                </label>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={settings.default_flash_threshold}
+                  onChange={async (e) => {
+                    const value = e.target.value
+                    setSettings((prev) => ({ ...prev, default_flash_threshold: value }))
+                    await handleSaveSingleSetting('default_flash_threshold', value)
+                  }}
+                  className="w-full px-3 py-2 bg-surface border border-border rounded text-white text-sm"
+                  min="0"
+                  max="60"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  {t('settings.defaultFlashThresholdDesc')}
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  {t('settings.defaultMatchSort')}
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <select
+                    value={settings.default_sort_field}
+                    onChange={async (e) => {
+                      const value = e.target.value
+                      setSettings((prev) => ({ ...prev, default_sort_field: value }))
+                      await handleSaveSingleSetting('default_sort_field', value)
+                    }}
+                    className="w-full px-3 py-2 bg-surface border border-border rounded text-white text-sm"
+                  >
+                    <option value="date">{t('settings.date')}</option>
+                    <option value="id">{t('settings.id')}</option>
+                    <option value="length">{t('settings.length')}</option>
+                    <option value="map">{t('settings.map')}</option>
+                  </select>
+                  <select
+                    value={settings.default_sort_direction}
+                    onChange={async (e) => {
+                      const value = e.target.value
+                      setSettings((prev) => ({ ...prev, default_sort_direction: value }))
+                      await handleSaveSingleSetting('default_sort_direction', value)
+                    }}
+                    className="w-full px-3 py-2 bg-surface border border-border rounded text-white text-sm"
+                  >
+                    <option value="asc">{t('settings.ascending')}</option>
+                    <option value="desc">{t('settings.descending')}</option>
+                  </select>
+                </div>
+                <p className="text-xs text-gray-500 mt-1">
+                  {t('settings.defaultMatchSortDesc')}
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  {t('settings.voicePlaybackSkipTime')}
+                </label>
+                <input
+                  type="number"
+                  step="0.5"
+                  value={settings.voice_skip_time}
+                  onChange={async (e) => {
+                    const value = e.target.value
+                    setSettings((prev) => ({ ...prev, voice_skip_time: value }))
+                    await handleSaveSingleSetting('voice_skip_time', value)
+                  }}
+                  className="w-full px-3 py-2 bg-surface border border-border rounded text-white text-sm"
+                  min="0.5"
+                  max="60"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  {t('settings.voicePlaybackSkipTimeDesc')}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Storage Settings */}
+          <div className="bg-secondary rounded-lg border border-border p-4">
+            <h3 className="text-lg font-semibold mb-4">{t('settings.storageSettings')}</h3>
+            
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-1">
+                    {t('settings.cleanupMissingDemos')}
+                  </label>
+                  <p className="text-xs text-gray-500">
+                    {t('settings.cleanupMissingDemosDesc')}
+                  </p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.auto_cleanup_missing_demos === 'true'}
+                    onChange={async (e) => {
+                      const value = e.target.checked ? 'true' : 'false'
+                      setSettings((prev) => ({ ...prev, auto_cleanup_missing_demos: value }))
+                      await handleSaveSingleSetting('auto_cleanup_missing_demos', value)
+                    }}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-surface peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-accent"></div>
+                </label>
+              </div>
+              
+              <div className="flex items-center justify-between">
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-1">
+                    {t('settings.limitMatches')}
+                  </label>
+                  <p className="text-xs text-gray-500">
+                    {t('settings.limitMatchesDesc')}
+                  </p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.match_cap_enabled === 'true'}
+                    onChange={async (e) => {
+                      const value = e.target.checked ? 'true' : 'false'
+                      setSettings((prev) => ({ ...prev, match_cap_enabled: value }))
+                      await handleSaveSingleSetting('match_cap_enabled', value)
+                    }}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-surface peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-accent"></div>
+                </label>
+              </div>
+              
+              {settings.match_cap_enabled === 'true' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    {t('settings.maxMatches')}
+                  </label>
+                  <input
+                    type="number"
+                    value={settings.match_cap_value}
+                    onChange={async (e) => {
+                      const value = e.target.value
+                      setSettings((prev) => ({ ...prev, match_cap_value: value }))
+                      await handleSaveSingleSetting('match_cap_value', value)
+                    }}
+                    className="w-full px-3 py-2 bg-surface border border-border rounded text-white text-sm"
+                    min="1"
+                    max="1000"
+                  />
+                </div>
+              )}
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  {t('settings.voiceCacheSizeLimit')}
+                </label>
+                <input
+                  type="number"
+                  value={settings.voiceCacheSizeLimitMB}
+                  onChange={async (e) => {
+                    const value = e.target.value
+                    setSettings((prev) => ({ ...prev, voiceCacheSizeLimitMB: value }))
+                    await handleSaveSingleSetting('voiceCacheSizeLimitMB', value)
                   }}
                   className="w-full px-3 py-2 bg-surface border border-border rounded text-white text-sm"
                   min="1"
-                  max="1000"
+                  max="10000"
                 />
+                <p className="text-xs text-gray-500 mt-1">
+                  {t('settings.voiceCacheSizeLimitDesc')}
+                </p>
               </div>
-            )}
+            </div>
+          </div>
+
+          {/* Overlay Settings */}
+          <div className="bg-secondary rounded-lg border border-border p-4">
+            <h3 className="text-lg font-semibold mb-4">{t('settings.overlaySettings')}</h3>
             
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                Voice Cache Size Limit (MB)
-              </label>
-              <input
-                type="number"
-                value={settings.voiceCacheSizeLimitMB}
-                onChange={async (e) => {
-                  const value = e.target.value
-                  setSettings((prev) => ({ ...prev, voiceCacheSizeLimitMB: value }))
-                  await handleSaveSingleSetting('voiceCacheSizeLimitMB', value)
-                }}
-                className="w-full px-3 py-2 bg-surface border border-border rounded text-white text-sm"
-                min="1"
-                max="10000"
-              />
-              <p className="text-xs text-gray-500 mt-1">
-                Maximum size for voice extraction cache (default: 50MB). Oldest files are deleted when limit is exceeded.
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* Display Settings */}
-        <div className="bg-secondary rounded-lg border border-border p-4">
-          <h3 className="text-lg font-semibold mb-4">Display Settings</h3>
-          
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                Default AFK Threshold (seconds)
-              </label>
-              <input
-                type="number"
-                step="0.1"
-                value={settings.default_afk_threshold}
-                onChange={async (e) => {
-                  const value = e.target.value
-                  setSettings((prev) => ({ ...prev, default_afk_threshold: value }))
-                  await handleSaveSingleSetting('default_afk_threshold', value)
-                }}
-                className="w-full px-3 py-2 bg-surface border border-border rounded text-white text-sm"
-                min="0"
-                max="300"
-              />
-              <p className="text-xs text-gray-500 mt-1">
-                Default minimum AFK duration to show in overview (default: 10s)
-              </p>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                Default Flash Threshold (seconds)
-              </label>
-              <input
-                type="number"
-                step="0.1"
-                value={settings.default_flash_threshold}
-                onChange={async (e) => {
-                  const value = e.target.value
-                  setSettings((prev) => ({ ...prev, default_flash_threshold: value }))
-                  await handleSaveSingleSetting('default_flash_threshold', value)
-                }}
-                className="w-full px-3 py-2 bg-surface border border-border rounded text-white text-sm"
-                min="0"
-                max="60"
-              />
-              <p className="text-xs text-gray-500 mt-1">
-                Default minimum flash duration to show in overview (default: 1.5s)
-              </p>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                Position Extraction Frequency
-              </label>
-              <select
-                value={settings.position_extraction_interval}
-                onChange={async (e) => {
-                  const value = e.target.value
-                  setSettings((prev) => ({ ...prev, position_extraction_interval: value }))
-                  await handleSaveSingleSetting('position_extraction_interval', value)
-                }}
-                className="w-full px-3 py-2 bg-surface border border-border rounded text-white text-sm"
-              >
-                <option value="1">All positions (slowest, most accurate)</option>
-                <option value="2">Half positions (1/2, balanced)</option>
-                <option value="4">Quarter positions (1/4, fastest, default)</option>
-              </select>
-              <p className="text-xs text-gray-500 mt-1">
-                Controls how often player positions are stored. Lower values = more accurate but slower parsing. (default: 1/4)
-              </p>
-            </div>
-
-            <div>
-              <label className="flex items-center gap-2 mb-2">
-                <input
-                  type="checkbox"
-                  checked={settings.ram_only_parsing === 'true'}
-                  onChange={async (e) => {
-                    const value = e.target.checked ? 'true' : 'false'
-                    setSettings((prev) => ({ ...prev, ram_only_parsing: value }))
-                    await handleSaveSingleSetting('ram_only_parsing', value)
-                  }}
-                  className="w-4 h-4 text-accent bg-surface border-border rounded focus:ring-accent focus:ring-2"
-                />
-                <span className="text-sm font-medium text-gray-300">
-                  RAM-Only Parsing (No Disk Writes During Parsing)
-                </span>
-              </label>
-              <p className="text-xs text-gray-500 ml-6">
-                Accumulate all data in memory before writing to disk. This can use a lot of RAM for large demos, but may be faster for smaller demos. (Default: disabled)
-              </p>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                Default Match Sort
-              </label>
-              <div className="grid grid-cols-2 gap-2">
-                <select
-                  value={settings.default_sort_field}
-                  onChange={async (e) => {
-                    const value = e.target.value
-                    setSettings((prev) => ({ ...prev, default_sort_field: value }))
-                    await handleSaveSingleSetting('default_sort_field', value)
-                  }}
-                  className="w-full px-3 py-2 bg-surface border border-border rounded text-white text-sm"
-                >
-                  <option value="date">Date</option>
-                  <option value="id">ID</option>
-                  <option value="length">Duration</option>
-                  <option value="map">Map</option>
-                </select>
-                <select
-                  value={settings.default_sort_direction}
-                  onChange={async (e) => {
-                    const value = e.target.value
-                    setSettings((prev) => ({ ...prev, default_sort_direction: value }))
-                    await handleSaveSingleSetting('default_sort_direction', value)
-                  }}
-                  className="w-full px-3 py-2 bg-surface border border-border rounded text-white text-sm"
-                >
-                  <option value="asc">Ascending</option>
-                  <option value="desc">Descending</option>
-                </select>
-              </div>
-              <p className="text-xs text-gray-500 mt-1">
-                Default sorting for matches list
-              </p>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                Voice Playback Skip Time (seconds)
-              </label>
-              <input
-                type="number"
-                step="0.5"
-                value={settings.voice_skip_time}
-                onChange={async (e) => {
-                  const value = e.target.value
-                  setSettings((prev) => ({ ...prev, voice_skip_time: value }))
-                  await handleSaveSingleSetting('voice_skip_time', value)
-                }}
-                className="w-full px-3 py-2 bg-surface border border-border rounded text-white text-sm"
-                min="0.5"
-                max="60"
-              />
-              <p className="text-xs text-gray-500 mt-1">
-                Time to skip forward/backward in voice playback (default: 10s)
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* Advanced Settings */}
-        <div className="bg-secondary rounded-lg border border-border p-4">
-          <h3 className="text-lg font-semibold mb-4">Advanced</h3>
-          
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-1">
-                  Enable DB Viewer
-                </label>
-                <p className="text-xs text-gray-500">
-                  Show the database viewer in the sidebar for debugging
-                </p>
-              </div>
-              <label className="relative inline-flex items-center cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={settings.enable_db_viewer === 'true'}
-                  onChange={async (e) => {
-                    const value = e.target.checked ? 'true' : 'false'
-                    setSettings((prev) => ({ ...prev, enable_db_viewer: value }))
-                    await handleSaveSingleSetting('enable_db_viewer', value)
-                  }}
-                  className="sr-only peer"
-                />
-                <div className="w-11 h-6 bg-surface peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-accent"></div>
-              </label>
-            </div>
-          </div>
-        </div>
-
-        {/* Danger Zone */}
-        <div className="bg-secondary rounded-lg border border-red-500/50 p-4">
-          <h3 className="text-lg font-semibold mb-4 text-red-400">Danger Zone</h3>
-          
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                Ta bort alla matcher
-              </label>
-              <p className="text-xs text-gray-500 mb-3">
-                Detta raderar alla sparade matcher permanent. Denna åtgärd kan inte ångras.
-              </p>
-              <button
-                onClick={() => setShowDeleteConfirm(true)}
-                className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition-colors text-sm"
-              >
-                Ta bort alla matcher
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* Delete All Matches Modal */}
-        <Modal
-          isOpen={showDeleteConfirm}
-          onClose={() => !deleting && setShowDeleteConfirm(false)}
-          title="Ta bort alla matcher"
-          size="md"
-          footer={
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setShowDeleteConfirm(false)}
-                disabled={deleting}
-                className="px-4 py-2 bg-surface border border-border text-white rounded hover:bg-surface/80 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm"
-              >
-                Avbryt
-              </button>
-              <button
-                onClick={handleDeleteAllMatches}
-                disabled={deleting}
-                className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm"
-              >
-                {deleting ? 'Raderar...' : 'Ja, radera alla'}
-              </button>
-            </div>
-          }
-        >
-          <div className="space-y-4">
-            <div className="flex items-start gap-3">
-              <div className="flex-shrink-0 w-12 h-12 rounded-full bg-red-500/20 flex items-center justify-center">
-                <svg
-                  className="w-6 h-6 text-red-400"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+            <div className="space-y-4">
+              {/* Overlay Enable/Disable */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-1">
+                    {t('settings.enableOverlay')}
+                  </label>
+                  <p className="text-xs text-gray-500">
+                    {t('settings.enableOverlayDesc')}
+                  </p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.overlayEnabled !== 'false'}
+                    onChange={async (e) => {
+                      const value = e.target.checked ? 'true' : 'false'
+                      setSettings((prev) => ({ ...prev, overlayEnabled: value }))
+                      await handleSaveSingleSetting('overlayEnabled', value)
+                      // Close overlay if disabling
+                      if (!e.target.checked && window.electronAPI?.overlay?.close) {
+                        await window.electronAPI.overlay.close()
+                      }
+                    }}
+                    className="sr-only peer"
                   />
-                </svg>
+                  <div className="w-11 h-6 bg-surface peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-accent"></div>
+                </label>
               </div>
-              <div className="flex-1">
-                <h3 className="text-lg font-semibold text-white mb-2">
-                  Är du säker?
-                </h3>
-                <p className="text-sm text-gray-400 mb-2">
-                  Detta kommer att radera alla sparade matcher permanent från databasen.
-                </p>
-                <p className="text-sm text-red-400 font-medium">
-                  Denna åtgärd kan inte ångras.
+
+              <div className="pt-2 border-t border-border">
+                {/* Overlay Hotkey Settings */}
+                <OverlayHotkeySettings />
+              </div>
+
+              <div className="pt-2 border-t border-border">
+                {/* Debug Mode */}
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-300 mb-1">
+                      {t('settings.debugMode')}
+                    </label>
+                    <p className="text-xs text-gray-500">
+                      {t('settings.debugModeDesc')}
+                    </p>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={settings.debugMode === 'true'}
+                      onChange={async (e) => {
+                        const value = e.target.checked ? 'true' : 'false'
+                        setSettings((prev) => ({ ...prev, debugMode: value }))
+                        await handleSaveSingleSetting('debugMode', value)
+                        // Also update via settings API for immediate overlay update
+                        if (window.electronAPI) {
+                          await window.electronAPI.settings.setDebugMode(e.target.checked)
+                        }
+                      }}
+                      className="sr-only peer"
+                    />
+                    <div className="w-11 h-6 bg-surface peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-accent"></div>
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Playback Settings */}
+          <div className="bg-secondary rounded-lg border border-border p-4">
+            <h3 className="text-lg font-semibold mb-4">{t('settings.playbackSettings')}</h3>
+            
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-1">
+                    {t('settings.autoplayAfterSpectate')}
+                  </label>
+                  <p className="text-xs text-gray-500">
+                    {t('settings.autoplayAfterSpectateDesc')}
+                  </p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.autoplayAfterSpectate === 'true'}
+                    onChange={async (e) => {
+                      const newValue = e.target.checked ? 'true' : 'false'
+                      setSettings((prev) => ({ ...prev, autoplayAfterSpectate: newValue }))
+                      await handleSaveSingleSetting('autoplayAfterSpectate', newValue)
+                    }}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-surface peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-accent"></div>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          {/* Language Settings */}
+          <div className="bg-secondary rounded-lg border border-border p-4">
+            <h3 className="text-lg font-semibold mb-4">{t('settings.language')}</h3>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  {t('settings.language')}
+                </label>
+                <select
+                  value={settings.language}
+                  onChange={async (e) => {
+                    const value = e.target.value
+                    setSettings((prev) => ({ ...prev, language: value }))
+                    await handleSaveSingleSetting('language', value)
+                  }}
+                  className="w-full px-3 py-2 bg-surface border border-border rounded text-white text-sm"
+                >
+                  <option value="en">{t('settings.english')}</option>
+                  <option value="sv">{t('settings.swedish')}</option>
+                </select>
+                <p className="text-xs text-gray-500 mt-1">
+                  {t('settings.languageDesc')}
                 </p>
               </div>
             </div>
           </div>
-        </Modal>
+
+
+          {/* Advanced Settings */}
+          <div className="bg-secondary rounded-lg border border-border p-4">
+            <h3 className="text-lg font-semibold mb-4">{t('settings.advanced')}</h3>
+            
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-1">
+                    {t('settings.enableDbViewer')}
+                  </label>
+                  <p className="text-xs text-gray-500">
+                    {t('settings.enableDbViewerDesc')}
+                  </p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.enable_db_viewer === 'true'}
+                    onChange={async (e) => {
+                      const value = e.target.checked ? 'true' : 'false'
+                      setSettings((prev) => ({ ...prev, enable_db_viewer: value }))
+                      await handleSaveSingleSetting('enable_db_viewer', value)
+                    }}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-surface peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-accent"></div>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          {/* Danger Zone */}
+          <div className="bg-secondary rounded-lg border border-red-500/50 p-4">
+            <h3 className="text-lg font-semibold mb-4 text-red-400">{t('settings.dangerZone')}</h3>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  {t('settings.deleteAllMatches')}
+                </label>
+                <p className="text-xs text-gray-500 mb-3">
+                  {t('settings.deleteAllMatchesDesc')}
+                </p>
+                <button
+                  onClick={() => setShowDeleteConfirm(true)}
+                  className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition-colors text-sm"
+                >
+                  {t('settings.deleteAllMatches')}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Delete All Matches Modal */}
+          <Modal
+            isOpen={showDeleteConfirm}
+            onClose={() => !deleting && setShowDeleteConfirm(false)}
+            title={t('settings.deleteAllMatches')}
+            size="md"
+            footer={
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => setShowDeleteConfirm(false)}
+                  disabled={deleting}
+                  className="px-4 py-2 bg-surface border border-border text-white rounded hover:bg-surface/80 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm"
+                >
+                  {t('settings.cancel')}
+                </button>
+                <button
+                  onClick={handleDeleteAllMatches}
+                  disabled={deleting}
+                  className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm"
+                >
+                  {deleting ? t('settings.deleting') : t('settings.yesDeleteAll')}
+                </button>
+              </div>
+            }
+          >
+            <div className="space-y-4">
+              <div className="flex items-start gap-3">
+                <div className="flex-shrink-0 w-12 h-12 rounded-full bg-red-500/20 flex items-center justify-center">
+                  <svg
+                    className="w-6 h-6 text-red-400"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                    />
+                  </svg>
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-lg font-semibold text-white mb-2">
+                    {t('settings.deleteConfirmTitle')}
+                  </h3>
+                  <p className="text-sm text-gray-400 mb-2">
+                    {t('settings.deleteConfirmDesc')}
+                  </p>
+                  <p className="text-sm text-red-400 font-medium">
+                    {t('settings.deleteConfirmWarning')}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </Modal>
         </div>
 
         {/* Right Column: Application Information */}
         {appInfo && (
           <div className="space-y-6">
             <div className="bg-secondary rounded-lg border border-border p-4">
-              <h3 className="text-lg font-semibold mb-4">Application Information</h3>
+              <h3 className="text-lg font-semibold mb-4">{t('settings.appInfo')}</h3>
               
               <div className="space-y-3">
                 <div className="flex items-center justify-between py-2 border-b border-border/50">
-                  <span className="text-sm text-gray-400">Version</span>
+                  <span className="text-sm text-gray-400">{t('settings.version')}</span>
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-medium text-white">{appInfo.version}</span>
                     <button
@@ -844,7 +898,7 @@ function SettingsScreen() {
                       <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                       </svg>
-                      What's New
+                      {t('settings.whatsNew')}
                     </button>
                     {appInfo.updateAvailable && appInfo.updateVersion && (
                       <button
@@ -867,30 +921,30 @@ function SettingsScreen() {
                 
                 
                 <div className="flex items-center justify-between py-2 border-b border-border/50">
-                  <span className="text-sm text-gray-400">Platform</span>
+                  <span className="text-sm text-gray-400">{t('settings.platform')}</span>
                   <span className="text-sm font-medium text-white">
                     {appInfo.platform} {appInfo.arch} ({appInfo.osVersion})
                   </span>
                 </div>
                 
                 <div className="flex items-center justify-between py-2 border-b border-border/50">
-                  <span className="text-sm text-gray-400">Electron</span>
+                  <span className="text-sm text-gray-400">{t('settings.electron')}</span>
                   <span className="text-sm font-medium text-white">{appInfo.electronVersion}</span>
                 </div>
                 
                 <div className="flex items-center justify-between py-2 border-b border-border/50">
-                  <span className="text-sm text-gray-400">Chrome</span>
+                  <span className="text-sm text-gray-400">{t('settings.chrome')}</span>
                   <span className="text-sm font-medium text-white">{appInfo.chromeVersion}</span>
                 </div>
                 
                 <div className="flex items-center justify-between py-2 border-b border-border/50">
-                  <span className="text-sm text-gray-400">Node.js</span>
+                  <span className="text-sm text-gray-400">{t('settings.nodejs')}</span>
                   <span className="text-sm font-medium text-white">{appInfo.nodeVersion}</span>
                 </div>
                 
                 <div className="mt-4 pt-3 border-t border-border">
                   <div className="flex items-center justify-between mb-3">
-                    <h4 className="text-sm font-semibold text-gray-300">Storage Usage</h4>
+                    <h4 className="text-sm font-semibold text-gray-300">{t('settings.storageUsage')}</h4>
                     <button
                       onClick={loadAppInfo}
                       className="p-1.5 hover:bg-surface rounded transition-colors"
@@ -902,22 +956,22 @@ function SettingsScreen() {
                   
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
-                      <span className="text-sm text-gray-400">Matches ({appInfo.storage.matches.count} files)</span>
+                      <span className="text-sm text-gray-400">{t('settings.matches')} ({appInfo.storage.matches.count} {t('settings.files')})</span>
                       <span className="text-sm font-medium text-white">{appInfo.storage.matches.formatted}</span>
                     </div>
                     
                     <div className="flex items-center justify-between">
-                      <span className="text-sm text-gray-400">Settings</span>
+                      <span className="text-sm text-gray-400">{t('settings.settings')}</span>
                       <span className="text-sm font-medium text-white">{appInfo.storage.settings.formatted}</span>
                     </div>
                     
                     <div className="flex items-center justify-between">
-                      <span className="text-sm text-gray-400">Voice Cache</span>
+                      <span className="text-sm text-gray-400">{t('settings.voiceCache')}</span>
                       <span className="text-sm font-medium text-white">{appInfo.storage.voiceCache?.formatted || '0 B'}</span>
                     </div>
                     
                     <div className="flex items-center justify-between pt-2 border-t border-border/50">
-                      <span className="text-sm font-medium text-gray-300">Total</span>
+                      <span className="text-sm font-medium text-gray-300">{t('settings.total')}</span>
                       <span className="text-sm font-semibold text-white">{appInfo.storage.total.formatted}</span>
                     </div>
                   </div>
@@ -927,16 +981,16 @@ function SettingsScreen() {
 
             {/* Update Settings */}
             <div className="bg-secondary rounded-lg border border-border p-4">
-              <h3 className="text-lg font-semibold mb-4">Update Settings</h3>
+              <h3 className="text-lg font-semibold mb-4">{t('settings.updateSettings')}</h3>
               
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
                   <div>
                     <label className="block text-sm font-medium text-gray-300 mb-1">
-                      Enable Auto-Update on Startup
+                      {t('settings.enableAutoUpdate')}
                     </label>
                     <p className="text-xs text-gray-500">
-                      Automatically check for and download updates when the application starts
+                      {t('settings.enableAutoUpdateDesc')}
                     </p>
                   </div>
                   <label className="relative inline-flex items-center cursor-pointer">
@@ -950,13 +1004,13 @@ function SettingsScreen() {
                       }}
                       className="sr-only peer"
                     />
-                    <div className="w-11 h-6 bg-gray-600 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                    <div className="w-11 h-6 bg-surface peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-accent"></div>
                   </label>
                 </div>
 
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
-                    Download and Install Version
+                    {t('settings.downloadAndInstallVersion')}
                   </label>
                   <div className="flex gap-2">
                     <select
@@ -970,7 +1024,7 @@ function SettingsScreen() {
                       className="flex-1 px-3 py-2 bg-surface border border-border rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                       disabled={loadingVersions || installingVersion !== null}
                     >
-                      <option value="">Use actual version</option>
+                      <option value="">{t('settings.useActualVersion')}</option>
                       {availableVersions.map((version) => (
                         <option key={version} value={version}>
                           {version}
@@ -1001,15 +1055,15 @@ function SettingsScreen() {
                         disabled={installingVersion !== null || !settings.manualVersion}
                         className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white text-sm rounded transition-colors whitespace-nowrap"
                       >
-                        {installingVersion ? 'Installing...' : 'Install'}
+                        {installingVersion ? t('settings.installing') : t('settings.install')}
                       </button>
                     )}
                   </div>
                   <p className="text-xs text-gray-500 mt-1">
-                    Select a version to download and install. The app will restart after installation. Useful if a broken version was published.
+                    {t('settings.downloadAndInstallDesc')}
                   </p>
                   {loadingVersions && (
-                    <p className="text-xs text-gray-400 mt-1">Loading versions...</p>
+                    <p className="text-xs text-gray-400 mt-1">{t('settings.loadingVersions')}</p>
                   )}
                   {installError && (
                     <p className="text-xs text-red-400 mt-1">{installError}</p>

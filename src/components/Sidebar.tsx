@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { t, getLanguage } from '../utils/translations'
 
 interface SidebarProps {
   currentScreen: 'matches' | 'settings' | 'dbviewer' | 'stats'
@@ -8,6 +9,7 @@ interface SidebarProps {
 function Sidebar({ currentScreen, onNavigate }: SidebarProps) {
   const [enableDbViewer, setEnableDbViewer] = useState(false)
   const [logoUrl, setLogoUrl] = useState<string | null>(null)
+  const [, forceUpdate] = useState(0)
 
   useEffect(() => {
     const loadSetting = async () => {
@@ -40,6 +42,16 @@ function Sidebar({ currentScreen, onNavigate }: SidebarProps) {
     loadLogo()
   }, [])
 
+  // Subscribe to language changes
+  useEffect(() => {
+    const checkLanguage = () => {
+      forceUpdate((prev) => prev + 1)
+    }
+    // Check language every second (simple polling approach)
+    const interval = setInterval(checkLanguage, 1000)
+    return () => clearInterval(interval)
+  }, [])
+
   return (
     <aside className="w-64 bg-secondary border-r border-border flex flex-col">
       <div className="p-4 border-b border-border">
@@ -47,7 +59,7 @@ function Sidebar({ currentScreen, onNavigate }: SidebarProps) {
           {logoUrl && (
             <img 
               src={logoUrl} 
-              alt="Logo" 
+              alt={t('sidebar.logo')} 
               className="w-16 h-16 object-contain flex-shrink-0"
             />
           )}
@@ -73,7 +85,7 @@ function Sidebar({ currentScreen, onNavigate }: SidebarProps) {
                   : 'text-gray-400 hover:bg-surface hover:text-white'
               }`}
             >
-              Matches
+              {t('sidebar.matches')}
             </button>
           </li>
           <li>
@@ -85,7 +97,7 @@ function Sidebar({ currentScreen, onNavigate }: SidebarProps) {
                   : 'text-gray-400 hover:bg-surface hover:text-white'
               }`}
             >
-              Settings
+              {t('sidebar.settings')}
             </button>
           </li>
           <li>
@@ -97,7 +109,7 @@ function Sidebar({ currentScreen, onNavigate }: SidebarProps) {
                   : 'text-gray-400 hover:bg-surface hover:text-white'
               }`}
             >
-              Statistics
+              {t('sidebar.statistics')}
             </button>
           </li>
           {enableDbViewer && (
@@ -110,7 +122,7 @@ function Sidebar({ currentScreen, onNavigate }: SidebarProps) {
                     : 'text-gray-400 hover:bg-surface hover:text-white'
                 }`}
               >
-                DB Viewer
+                {t('sidebar.dbViewer')}
               </button>
             </li>
           )}

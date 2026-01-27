@@ -237,7 +237,7 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 	var roundStartTick int
 	var freezeEndTick *int
 	playerMap := make(map[uint64]*PlayerData) // steamid -> player
-
+	
 	// Track total tick count for progress calculation
 	// We'll estimate based on maxTick seen so far, and update as we go
 	// Start with a very high estimate so progress starts low and increases gradually
@@ -416,7 +416,7 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 	// Track map name from ServerInfo event (v5)
 	var mapName string
 	var serverName string
-
+	
 	// Try to read server name from demo file header (best effort)
 	// For CS2 (Source 2), this requires protobuf parsing which is complex
 	// For CS:GO (Source 1), we can read it directly from the header
@@ -425,19 +425,19 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 			// Ignore any panics from header reading
 			_ = recover()
 		}()
-
+		
 		f, err := os.Open(p.path)
 		if err != nil {
 			return
 		}
 		defer f.Close()
-
+		
 		// Read first 8 bytes to check filestamp
 		buf := make([]byte, 8)
 		if _, err := f.ReadAt(buf, 0); err != nil {
 			return
 		}
-
+		
 		filestamp := string(buf)
 		if filestamp == "HL2DEMO" {
 			// Source 1 demo (CS:GO) - server name is at offset 16, 260 bytes
@@ -456,10 +456,10 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 	getDemoSource := func(serverName, fileName string) string {
 		faceitRegex := `\d+_team[\da-z-]+-team[\da-z-]+_de_[\da-z]+\.dem`
 		matched, _ := regexp.MatchString(faceitRegex, fileName)
-
+		
 		serverLower := strings.ToLower(serverName)
 		fileLower := strings.ToLower(fileName)
-
+		
 		if strings.Contains(serverLower, "faceit") || strings.Contains(serverLower, "blast") || matched {
 			return "faceit"
 		}
@@ -514,7 +514,7 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 		if strings.Contains(serverLower, "esplay") {
 			return "esplay"
 		}
-
+		
 		// If server name is empty and file name doesn't match any pattern,
 		// check if it looks like a Valve matchmaking demo
 		// Valve demos often have specific patterns or are from Valve servers
@@ -525,14 +525,14 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 			if matched, _ := regexp.MatchString(valvePattern, fileName); matched {
 				return "valve"
 			}
-
+			
 			// If server name contains "valve" (case-insensitive check already done above)
 			// But also check for common Valve server indicators in file name
 			if strings.Contains(fileLower, "valve") || strings.Contains(fileLower, "matchmaking") {
 				return "valve"
 			}
 		}
-
+		
 		return "unknown"
 	}
 
@@ -543,7 +543,7 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 	var firstRoundProcessed bool             // Track if we've processed the first round
 	var tTeamAssignment string               // "A" or "B" - assigned to first T team seen
 	var ctTeamAssignment string              // "A" or "B" - assigned to first CT team seen
-
+	
 	// Track player connection/disconnection status
 	playerFirstConnectRound := make(map[uint64]int) // steamid -> round index when first connected
 	playerDisconnected := make(map[uint64]bool)     // steamid -> true if disconnected
@@ -645,12 +645,12 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 						continue
 					}
 					steamID64 := p.SteamID64
-
+					
 					// Skip spectators
 					if p.Team == common.TeamSpectators || p.Team == common.TeamUnassigned {
 						continue
 					}
-
+					
 					var assignedTeam string
 					if p.Team == common.TeamTerrorists {
 						if tTeamAssignment == "" {
@@ -667,10 +667,10 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 						}
 						assignedTeam = ctTeamAssignment
 					}
-
+					
 					if assignedTeam != "" {
 						playerTeamMap[steamID64] = assignedTeam
-
+						
 						// Update PlayerData with team assignment
 						var playerData *PlayerData
 						var needsUpdate bool
@@ -694,7 +694,7 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 							playerMap[steamID64] = playerData
 							needsUpdate = true
 						}
-
+						
 						// Insert or update player in database immediately
 						if writer != nil && matchID != "" && needsUpdate {
 							dbPlayer := db.Player{
@@ -779,7 +779,7 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 		updateTick()
 		tick := getCurrentTick()
 		currentRound.EndTick = tick
-
+		
 		// Flush position buffer at end of round if using incremental insertion
 		if writer != nil && matchID != "" && len(positionBuffer) > 0 {
 			if err := writer.InsertPlayerPositions(ctx, positionBuffer); err != nil {
@@ -794,7 +794,7 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 		
 		// Store round end tick for filtering team kills near round end
 		roundEndTicks[currentRound.RoundIndex] = tick
-
+		
 		// Notify AFK extractor of round end (for filtering AFK periods that end at round end)
 		afkExtractor.HandleRoundEnd(currentRound.RoundIndex, tick)
 
@@ -931,7 +931,7 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 			playerData = playerMap[player.SteamID64]
 			isNewPlayer = false
 		}
-
+		
 		// Mark as reconnected if they were disconnected
 		playerDisconnected[player.SteamID64] = false
 
@@ -952,7 +952,7 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 			} else if player.Team == common.TeamCounterTerrorists {
 				assignedTeam = ctTeamAssignment
 			}
-
+			
 			if assignedTeam != "" {
 				playerTeamMap[player.SteamID64] = assignedTeam
 				playerData.Team = assignedTeam
@@ -989,12 +989,12 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 
 		// Add server announcement for player joining
 		// roundIndex and tick are already declared above
-
+		
 		playerName := player.Name
 		if playerName == "" {
 			playerName = fmt.Sprintf("Player_%d", player.SteamID64)
 		}
-
+		
 		// Stream chat message to database if writer is available (only if Steam ID is in set)
 		if writer != nil && matchID != "" && (steamIDSet == nil || steamIDSet[steamID]) {
 			chatBuffer = append(chatBuffer, db.ChatMessage{
@@ -1019,15 +1019,15 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 		} else if data.ChatMessages != nil {
 			// Fallback: store in memory ONLY if slice is allocated (in-memory mode)
 			// In JSON mode and DB streaming mode, data.ChatMessages is nil, so this never executes
-			data.ChatMessages = append(data.ChatMessages, ChatMessageData{
-				RoundIndex: roundIndex,
-				Tick:       tick,
-				SteamID:    steamID,
-				Name:       "*SERVER*",
-				Team:       "",
-				Message:    fmt.Sprintf("%s joined the game", playerName),
-				IsTeamChat: false,
-			})
+		data.ChatMessages = append(data.ChatMessages, ChatMessageData{
+			RoundIndex: roundIndex,
+			Tick:       tick,
+			SteamID:    steamID,
+			Name:       "*SERVER*",
+			Team:       "",
+			Message:    fmt.Sprintf("%s joined the game", playerName),
+			IsTeamChat: false,
+		})
 		}
 	})
 
@@ -1079,8 +1079,8 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 			}
 		}
 
-		updateTick()
-		tick := getCurrentTick()
+			updateTick()
+			tick := getCurrentTick()
 		
 		// Helper function to check if a player was disconnected at a given tick
 		// This checks if the player disconnected before or at the check tick and hasn't reconnected
@@ -1134,7 +1134,7 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 		}
 		
 		teamKillExtractor.HandlePlayerDeath(e, currentRound.RoundIndex, tick, isPlayerDisconnectedAtTick, isNearRoundEnd)
-		killExtractor.HandlePlayerDeath(e, currentRound.RoundIndex, tick)
+			killExtractor.HandlePlayerDeath(e, currentRound.RoundIndex, tick)
 
 		// In JSON mode, flush events immediately to avoid accumulation
 		if eventsFile != nil {
@@ -1165,9 +1165,9 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 			}
 		}
 
-		updateTick()
-		tick := getCurrentTick()
-		teamDamageExtractor.HandlePlayerHurt(e, currentRound.RoundIndex, tick)
+			updateTick()
+			tick := getCurrentTick()
+			teamDamageExtractor.HandlePlayerHurt(e, currentRound.RoundIndex, tick)
 
 		// In JSON mode, flush events immediately to avoid accumulation
 		if eventsFile != nil {
@@ -1198,9 +1198,9 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 			}
 		}
 
-		updateTick()
-		tick := getCurrentTick()
-		teamFlashExtractor.HandlePlayerFlashed(e, currentRound.RoundIndex, tick)
+			updateTick()
+			tick := getCurrentTick()
+			teamFlashExtractor.HandlePlayerFlashed(e, currentRound.RoundIndex, tick)
 
 		// In JSON mode, flush events immediately to avoid accumulation
 		if eventsFile != nil {
@@ -1225,14 +1225,14 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 
 		updateTick()
 		tick := getCurrentTick()
-
+		
 		disconnectExtractor.HandlePlayerDisconnected(e, roundIndex, tick, tickRate)
 
 		// In JSON mode, flush events immediately to avoid accumulation
 		if eventsFile != nil {
 			flushExtractorEvents(eventsFile, nil, nil, nil, nil, disconnectExtractor, nil)
 		}
-
+		
 		// Mark player as disconnected and record the tick and round
 		player := e.Player
 		if player != nil {
@@ -1242,13 +1242,13 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 			playerDisconnectRound[steamID64] = roundIndex
 			// Clear first connect round since they disconnected
 			delete(playerFirstConnectRound, steamID64)
-
+			
 			steamID := fmt.Sprintf("%d", steamID64)
 			playerName := player.Name
 			if playerName == "" {
 				playerName = fmt.Sprintf("Player_%d", steamID64)
 			}
-
+			
 			// Stream chat message to database if writer is available (only if Steam ID is in set)
 			if writer != nil && matchID != "" && (steamIDSet == nil || steamIDSet[steamID]) {
 				chatBuffer = append(chatBuffer, db.ChatMessage{
@@ -1273,15 +1273,15 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 			} else if data.ChatMessages != nil {
 				// Fallback: store in memory ONLY if slice is allocated (in-memory mode)
 				// In JSON mode and DB streaming mode, data.ChatMessages is nil, so this never executes
-				data.ChatMessages = append(data.ChatMessages, ChatMessageData{
-					RoundIndex: roundIndex,
-					Tick:       tick,
-					SteamID:    steamID,
-					Name:       "*SERVER*",
-					Team:       "",
-					Message:    fmt.Sprintf("%s left the game", playerName),
-					IsTeamChat: false,
-				})
+			data.ChatMessages = append(data.ChatMessages, ChatMessageData{
+				RoundIndex: roundIndex,
+				Tick:       tick,
+				SteamID:    steamID,
+				Name:       "*SERVER*",
+				Team:       "",
+				Message:    fmt.Sprintf("%s left the game", playerName),
+				IsTeamChat: false,
+			})
 			}
 		}
 	})
@@ -1319,7 +1319,7 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 		// - Server messages may have different MsgName values
 		isTeamChat := false
 		msgNameLower := strings.ToLower(e.MsgName)
-
+		
 		// Only treat as team chat if MsgName explicitly contains "team"
 		// This matches CS Demo Analyzer's approach
 		// Note: We capture ALL chat messages (both team and all chat) - the IsTeamChat flag
@@ -1327,7 +1327,7 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 		if strings.Contains(msgNameLower, "team") {
 			isTeamChat = true
 		}
-
+		
 		// Debug logging (uncomment to debug chat extraction)
 		// fmt.Printf("[Chat] MsgName: %s, Player: %s, Message: %s, IsTeamChat: %v\n", e.MsgName, playerName, messageText, isTeamChat)
 
@@ -1511,15 +1511,15 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 		} else if data.ChatMessages != nil {
 			// Fallback: store in memory ONLY if slice is allocated (in-memory mode)
 			// In JSON mode and DB streaming mode, data.ChatMessages is nil, so this never executes
-			data.ChatMessages = append(data.ChatMessages, ChatMessageData{
-				RoundIndex: roundIndex,
-				Tick:       tick,
-				SteamID:    steamID,
-				Name:       playerName,
-				Team:       team,
-				Message:    messageText,
-				IsTeamChat: isTeamChat,
-			})
+		data.ChatMessages = append(data.ChatMessages, ChatMessageData{
+			RoundIndex: roundIndex,
+			Tick:       tick,
+			SteamID:    steamID,
+			Name:       playerName,
+			Team:       team,
+			Message:    messageText,
+			IsTeamChat: isTeamChat,
+		})
 		}
 	})
 
@@ -1631,7 +1631,7 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 			} else {
 				playerData = existingPlayer
 			}
-
+			
 			// Assign team if not already assigned and first round is processed
 			if playerData.Team == "" && firstRoundProcessed {
 				var assignedTeam string
@@ -1640,7 +1640,7 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 				} else if player.Team == common.TeamCounterTerrorists {
 					assignedTeam = ctTeamAssignment
 				}
-
+				
 				if assignedTeam != "" {
 					playerTeamMap[player.SteamID64] = assignedTeam
 					playerData.Team = assignedTeam
@@ -1653,7 +1653,7 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 					needsInsert = true
 				}
 			}
-
+			
 			// Insert player into database if needed
 			if needsInsert && writer != nil && matchID != "" {
 				dbPlayer := db.Player{
@@ -1727,7 +1727,7 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 			if yaw != 0 {
 				yawPtr = &yaw
 			}
-
+			
 			posData := db.PlayerPosition{
 				MatchID:    matchID,
 				RoundIndex: currentRound.RoundIndex,
@@ -1742,11 +1742,11 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 				Armor:      armor,
 				Weapon:     weapon,
 			}
-
+			
 			// If writer is provided, buffer for incremental insertion
 			if writer != nil && matchID != "" {
 				positionBuffer = append(positionBuffer, posData)
-
+				
 				// Flush buffer when it reaches batch size
 				if len(positionBuffer) >= positionBatchSize {
 					if err := writer.InsertPlayerPositions(ctx, positionBuffer); err != nil {
@@ -1842,18 +1842,18 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 			} else if data.GrenadePositions != nil {
 				// Fallback: store in memory ONLY if slice is allocated (in-memory mode)
 				// In JSON mode and DB streaming mode, data.GrenadePositions is nil, so this never executes
-				data.GrenadePositions = append(data.GrenadePositions, GrenadePositionData{
-					RoundIndex:     currentRound.RoundIndex,
-					Tick:           tick,
-					ProjectileID:   uint64(projectileID),
-					GrenadeName:    normalizedName,
-					X:              float64(pos.X),
-					Y:              float64(pos.Y),
-					Z:              float64(pos.Z),
-					ThrowerSteamID: throwerSteamID,
-					ThrowerName:    throwerName,
-					ThrowerTeam:    throwerTeam,
-				})
+			data.GrenadePositions = append(data.GrenadePositions, GrenadePositionData{
+				RoundIndex:     currentRound.RoundIndex,
+				Tick:           tick,
+				ProjectileID:   uint64(projectileID),
+				GrenadeName:    normalizedName,
+				X:              float64(pos.X),
+				Y:              float64(pos.Y),
+				Z:              float64(pos.Z),
+				ThrowerSteamID: throwerSteamID,
+				ThrowerName:    throwerName,
+				ThrowerTeam:    throwerTeam,
+			})
 			}
 		}
 	})
@@ -1861,38 +1861,38 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 	// Track grenade events (skip in JSON mode - not needed for output)
 	// Grenade positions and events are not needed for JSON output (only TEAM_KILL, TEAM_DAMAGE, etc.)
 	if eventsFile == nil {
-		// Smoke grenade detonation (smoke starts)
-		p.parser.RegisterEventHandler(func(e events.GrenadeProjectileDestroy) {
-			// Check if it's a smoke grenade
-			if e.Projectile == nil {
-				return
-			}
-			weaponInstance := e.Projectile.WeaponInstance
-			if weaponInstance == nil {
-				return
-			}
-			grenadeName := strings.ToLower(weaponInstance.Type.String())
-			if !strings.Contains(grenadeName, "smoke") && !strings.Contains(grenadeName, "smokegrenade") {
-				return
-			}
-			if currentRound == nil {
-				return
-			}
-			updateTick()
-			tick := getCurrentTick()
+	// Smoke grenade detonation (smoke starts)
+	p.parser.RegisterEventHandler(func(e events.GrenadeProjectileDestroy) {
+		// Check if it's a smoke grenade
+		if e.Projectile == nil {
+			return
+		}
+		weaponInstance := e.Projectile.WeaponInstance
+		if weaponInstance == nil {
+			return
+		}
+		grenadeName := strings.ToLower(weaponInstance.Type.String())
+		if !strings.Contains(grenadeName, "smoke") && !strings.Contains(grenadeName, "smokegrenade") {
+			return
+		}
+		if currentRound == nil {
+			return
+		}
+		updateTick()
+		tick := getCurrentTick()
 
-			pos := e.Projectile.Position()
-			var throwerSteamID *string
-			var throwerName *string
-			var throwerTeam *string
-			if e.Projectile.Thrower != nil {
-				steamID := fmt.Sprintf("%d", e.Projectile.Thrower.SteamID64)
-				throwerSteamID = &steamID
-				name := e.Projectile.Thrower.Name
-				throwerName = &name
-				team := getTeamString(e.Projectile.Thrower.Team)
-				throwerTeam = &team
-			}
+		pos := e.Projectile.Position()
+		var throwerSteamID *string
+		var throwerName *string
+		var throwerTeam *string
+		if e.Projectile.Thrower != nil {
+			steamID := fmt.Sprintf("%d", e.Projectile.Thrower.SteamID64)
+			throwerSteamID = &steamID
+			name := e.Projectile.Thrower.Name
+			throwerName = &name
+			team := getTeamString(e.Projectile.Thrower.Team)
+			throwerTeam = &team
+		}
 
 			// Stream grenade event to database if writer is available
 			if writer != nil && matchID != "" {
@@ -1922,54 +1922,54 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 			} else if data.GrenadeEvents != nil {
 				// Fallback: store in memory ONLY if slice is allocated (in-memory mode)
 				// In JSON mode and DB streaming mode, data.GrenadeEvents is nil, so this never executes
-				data.GrenadeEvents = append(data.GrenadeEvents, GrenadeEventData{
-					RoundIndex:     currentRound.RoundIndex,
-					Tick:           tick,
-					EventType:      "smoke_start",
-					ProjectileID:   uint64(e.Projectile.UniqueID()),
-					GrenadeName:    "smokegrenade",
-					X:              float64(pos.X),
-					Y:              float64(pos.Y),
-					Z:              float64(pos.Z),
-					ThrowerSteamID: throwerSteamID,
-					ThrowerName:    throwerName,
-					ThrowerTeam:    throwerTeam,
-				})
-			}
+		data.GrenadeEvents = append(data.GrenadeEvents, GrenadeEventData{
+			RoundIndex:     currentRound.RoundIndex,
+			Tick:           tick,
+			EventType:      "smoke_start",
+			ProjectileID:   uint64(e.Projectile.UniqueID()),
+			GrenadeName:    "smokegrenade",
+			X:              float64(pos.X),
+			Y:              float64(pos.Y),
+			Z:              float64(pos.Z),
+			ThrowerSteamID: throwerSteamID,
+			ThrowerName:    throwerName,
+			ThrowerTeam:    throwerTeam,
 		})
+			}
+	})
 
-		// HE grenade explosion
-		p.parser.RegisterEventHandler(func(e events.GrenadeProjectileDestroy) {
-			// Check if it's an HE grenade
-			if e.Projectile == nil {
-				return
-			}
-			weaponInstance := e.Projectile.WeaponInstance
-			if weaponInstance == nil {
-				return
-			}
-			grenadeName := strings.ToLower(weaponInstance.Type.String())
-			if !strings.Contains(grenadeName, "he") && !strings.Contains(grenadeName, "hegrenade") {
-				return
-			}
-			if currentRound == nil {
-				return
-			}
-			updateTick()
-			tick := getCurrentTick()
+	// HE grenade explosion
+	p.parser.RegisterEventHandler(func(e events.GrenadeProjectileDestroy) {
+		// Check if it's an HE grenade
+		if e.Projectile == nil {
+			return
+		}
+		weaponInstance := e.Projectile.WeaponInstance
+		if weaponInstance == nil {
+			return
+		}
+		grenadeName := strings.ToLower(weaponInstance.Type.String())
+		if !strings.Contains(grenadeName, "he") && !strings.Contains(grenadeName, "hegrenade") {
+			return
+		}
+		if currentRound == nil {
+			return
+		}
+		updateTick()
+		tick := getCurrentTick()
 
-			pos := e.Projectile.Position()
-			var throwerSteamID *string
-			var throwerName *string
-			var throwerTeam *string
-			if e.Projectile.Thrower != nil {
-				steamID := fmt.Sprintf("%d", e.Projectile.Thrower.SteamID64)
-				throwerSteamID = &steamID
-				name := e.Projectile.Thrower.Name
-				throwerName = &name
-				team := getTeamString(e.Projectile.Thrower.Team)
-				throwerTeam = &team
-			}
+		pos := e.Projectile.Position()
+		var throwerSteamID *string
+		var throwerName *string
+		var throwerTeam *string
+		if e.Projectile.Thrower != nil {
+			steamID := fmt.Sprintf("%d", e.Projectile.Thrower.SteamID64)
+			throwerSteamID = &steamID
+			name := e.Projectile.Thrower.Name
+			throwerName = &name
+			team := getTeamString(e.Projectile.Thrower.Team)
+			throwerTeam = &team
+		}
 
 			// Filter by Steam ID set if provided - skip grenade events from players not in the set
 			if steamIDSet != nil && (throwerSteamID == nil || !steamIDSet[*throwerSteamID]) {
@@ -2004,42 +2004,42 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 			} else if data.GrenadeEvents != nil {
 				// Fallback: store in memory ONLY if slice is allocated (in-memory mode)
 				// In JSON mode and DB streaming mode, data.GrenadeEvents is nil, so this never executes
-				data.GrenadeEvents = append(data.GrenadeEvents, GrenadeEventData{
-					RoundIndex:     currentRound.RoundIndex,
-					Tick:           tick,
-					EventType:      "he_explode",
-					ProjectileID:   uint64(e.Projectile.UniqueID()),
-					GrenadeName:    "hegrenade",
-					X:              float64(pos.X),
-					Y:              float64(pos.Y),
-					Z:              float64(pos.Z),
-					ThrowerSteamID: throwerSteamID,
-					ThrowerName:    throwerName,
-					ThrowerTeam:    throwerTeam,
-				})
-			}
+		data.GrenadeEvents = append(data.GrenadeEvents, GrenadeEventData{
+			RoundIndex:     currentRound.RoundIndex,
+			Tick:           tick,
+			EventType:      "he_explode",
+			ProjectileID:   uint64(e.Projectile.UniqueID()),
+			GrenadeName:    "hegrenade",
+			X:              float64(pos.X),
+			Y:              float64(pos.Y),
+			Z:              float64(pos.Z),
+			ThrowerSteamID: throwerSteamID,
+			ThrowerName:    throwerName,
+			ThrowerTeam:    throwerTeam,
 		})
-
-		// Flashbang explosion
-		p.parser.RegisterEventHandler(func(e events.FlashExplode) {
-			if currentRound == nil {
-				return
 			}
-			updateTick()
-			tick := getCurrentTick()
+	})
 
-			pos := e.Position
-			var throwerSteamID *string
-			var throwerName *string
-			var throwerTeam *string
-			if e.Thrower != nil {
-				steamID := fmt.Sprintf("%d", e.Thrower.SteamID64)
-				throwerSteamID = &steamID
-				name := e.Thrower.Name
-				throwerName = &name
-				team := getTeamString(e.Thrower.Team)
-				throwerTeam = &team
-			}
+	// Flashbang explosion
+	p.parser.RegisterEventHandler(func(e events.FlashExplode) {
+		if currentRound == nil {
+			return
+		}
+		updateTick()
+		tick := getCurrentTick()
+
+		pos := e.Position
+		var throwerSteamID *string
+		var throwerName *string
+		var throwerTeam *string
+		if e.Thrower != nil {
+			steamID := fmt.Sprintf("%d", e.Thrower.SteamID64)
+			throwerSteamID = &steamID
+			name := e.Thrower.Name
+			throwerName = &name
+			team := getTeamString(e.Thrower.Team)
+			throwerTeam = &team
+		}
 
 			// Filter by Steam ID set if provided - skip grenade events from players not in the set
 			if steamIDSet != nil && (throwerSteamID == nil || !steamIDSet[*throwerSteamID]) {
@@ -2074,12 +2074,52 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 			} else if data.GrenadeEvents != nil {
 				// Fallback: store in memory ONLY if slice is allocated (in-memory mode)
 				// In JSON mode and DB streaming mode, data.GrenadeEvents is nil, so this never executes
-				data.GrenadeEvents = append(data.GrenadeEvents, GrenadeEventData{
+		data.GrenadeEvents = append(data.GrenadeEvents, GrenadeEventData{
+			RoundIndex:     currentRound.RoundIndex,
+			Tick:           tick,
+			EventType:      "flash_explode",
+			ProjectileID:   0, // FlashExplode doesn't have ProjectileID, use 0
+			GrenadeName:    "flashbang",
+			X:              float64(pos.X),
+			Y:              float64(pos.Y),
+			Z:              float64(pos.Z),
+			ThrowerSteamID: throwerSteamID,
+			ThrowerName:    throwerName,
+			ThrowerTeam:    throwerTeam,
+		})
+			}
+	})
+
+	// Decoy start
+	p.parser.RegisterEventHandler(func(e events.DecoyStart) {
+		if currentRound == nil {
+			return
+		}
+		updateTick()
+		tick := getCurrentTick()
+
+		pos := e.Position
+		var throwerSteamID *string
+		var throwerName *string
+		var throwerTeam *string
+		if e.Thrower != nil {
+			steamID := fmt.Sprintf("%d", e.Thrower.SteamID64)
+			throwerSteamID = &steamID
+			name := e.Thrower.Name
+			throwerName = &name
+			team := getTeamString(e.Thrower.Team)
+			throwerTeam = &team
+		}
+
+			// Stream grenade event to database if writer is available
+			if writer != nil && matchID != "" {
+				grenadeEventBuffer = append(grenadeEventBuffer, db.GrenadeEvent{
+					MatchID:        matchID,
 					RoundIndex:     currentRound.RoundIndex,
 					Tick:           tick,
-					EventType:      "flash_explode",
-					ProjectileID:   0, // FlashExplode doesn't have ProjectileID, use 0
-					GrenadeName:    "flashbang",
+					EventType:      "decoy_start",
+					ProjectileID:   0, // DecoyStart doesn't have ProjectileID, use 0
+					GrenadeName:    "decoy",
 					X:              float64(pos.X),
 					Y:              float64(pos.Y),
 					Z:              float64(pos.Z),
@@ -2087,104 +2127,64 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 					ThrowerName:    throwerName,
 					ThrowerTeam:    throwerTeam,
 				})
-			}
+
+				// Flush if buffer is full
+				if len(grenadeEventBuffer) >= grenadeEventBatchSize {
+					if err := writer.InsertGrenadeEvents(ctx, grenadeEventBuffer); err != nil {
+						fmt.Fprintf(os.Stderr, "WARN: Failed to insert grenade events batch: %v\n", err)
+					} else {
+						grenadeEventBuffer = grenadeEventBuffer[:0]
+					}
+				}
+			} else if data.GrenadeEvents != nil {
+				// Fallback: store in memory ONLY if slice is allocated (in-memory mode)
+				// In JSON mode and DB streaming mode, data.GrenadeEvents is nil, so this never executes
+		data.GrenadeEvents = append(data.GrenadeEvents, GrenadeEventData{
+			RoundIndex:     currentRound.RoundIndex,
+			Tick:           tick,
+			EventType:      "decoy_start",
+			ProjectileID:   0, // DecoyStart doesn't have ProjectileID, use 0
+			GrenadeName:    "decoy",
+			X:              float64(pos.X),
+			Y:              float64(pos.Y),
+			Z:              float64(pos.Z),
+			ThrowerSteamID: throwerSteamID,
+			ThrowerName:    throwerName,
+			ThrowerTeam:    throwerTeam,
 		})
-
-		// Decoy start
-		p.parser.RegisterEventHandler(func(e events.DecoyStart) {
-			if currentRound == nil {
-				return
 			}
-			updateTick()
-			tick := getCurrentTick()
+	})
 
-			pos := e.Position
-			var throwerSteamID *string
-			var throwerName *string
-			var throwerTeam *string
-			if e.Thrower != nil {
-				steamID := fmt.Sprintf("%d", e.Thrower.SteamID64)
+	// Inferno (molotov/incendiary) start
+	p.parser.RegisterEventHandler(func(e events.InfernoStart) {
+		if currentRound == nil {
+			return
+		}
+		updateTick()
+		tick := getCurrentTick()
+
+		// InfernoStart has Entity field
+		// Inferno doesn't have Position() method - we'll track position from grenade projectile instead
+		// For now, use zero position and rely on grenade positions for actual location
+		var pos r3.Vector
+		var throwerSteamID *string
+		var throwerName *string
+		var throwerTeam *string
+		if e.Inferno != nil {
+			// Inferno doesn't expose Position() directly
+			// We'll use (0,0,0) as placeholder - actual position tracked via grenade positions
+			pos = r3.Vector{X: 0, Y: 0, Z: 0}
+			// Thrower is a method that returns the player who threw it
+			if e.Inferno.Thrower() != nil {
+				thrower := e.Inferno.Thrower()
+				steamID := fmt.Sprintf("%d", thrower.SteamID64)
 				throwerSteamID = &steamID
-				name := e.Thrower.Name
+				name := thrower.Name
 				throwerName = &name
-				team := getTeamString(e.Thrower.Team)
+				team := getTeamString(thrower.Team)
 				throwerTeam = &team
 			}
-
-			// Stream grenade event to database if writer is available
-			if writer != nil && matchID != "" {
-				grenadeEventBuffer = append(grenadeEventBuffer, db.GrenadeEvent{
-					MatchID:        matchID,
-					RoundIndex:     currentRound.RoundIndex,
-					Tick:           tick,
-					EventType:      "decoy_start",
-					ProjectileID:   0, // DecoyStart doesn't have ProjectileID, use 0
-					GrenadeName:    "decoy",
-					X:              float64(pos.X),
-					Y:              float64(pos.Y),
-					Z:              float64(pos.Z),
-					ThrowerSteamID: throwerSteamID,
-					ThrowerName:    throwerName,
-					ThrowerTeam:    throwerTeam,
-				})
-
-				// Flush if buffer is full
-				if len(grenadeEventBuffer) >= grenadeEventBatchSize {
-					if err := writer.InsertGrenadeEvents(ctx, grenadeEventBuffer); err != nil {
-						fmt.Fprintf(os.Stderr, "WARN: Failed to insert grenade events batch: %v\n", err)
-					} else {
-						grenadeEventBuffer = grenadeEventBuffer[:0]
-					}
-				}
-			} else if data.GrenadeEvents != nil {
-				// Fallback: store in memory ONLY if slice is allocated (in-memory mode)
-				// In JSON mode and DB streaming mode, data.GrenadeEvents is nil, so this never executes
-				data.GrenadeEvents = append(data.GrenadeEvents, GrenadeEventData{
-					RoundIndex:     currentRound.RoundIndex,
-					Tick:           tick,
-					EventType:      "decoy_start",
-					ProjectileID:   0, // DecoyStart doesn't have ProjectileID, use 0
-					GrenadeName:    "decoy",
-					X:              float64(pos.X),
-					Y:              float64(pos.Y),
-					Z:              float64(pos.Z),
-					ThrowerSteamID: throwerSteamID,
-					ThrowerName:    throwerName,
-					ThrowerTeam:    throwerTeam,
-				})
-			}
-		})
-
-		// Inferno (molotov/incendiary) start
-		p.parser.RegisterEventHandler(func(e events.InfernoStart) {
-			if currentRound == nil {
-				return
-			}
-			updateTick()
-			tick := getCurrentTick()
-
-			// InfernoStart has Entity field
-			// Inferno doesn't have Position() method - we'll track position from grenade projectile instead
-			// For now, use zero position and rely on grenade positions for actual location
-			var pos r3.Vector
-			var throwerSteamID *string
-			var throwerName *string
-			var throwerTeam *string
-			if e.Inferno != nil {
-				// Inferno doesn't expose Position() directly
-				// We'll use (0,0,0) as placeholder - actual position tracked via grenade positions
-				pos = r3.Vector{X: 0, Y: 0, Z: 0}
-				// Thrower is a method that returns the player who threw it
-				if e.Inferno.Thrower() != nil {
-					thrower := e.Inferno.Thrower()
-					steamID := fmt.Sprintf("%d", thrower.SteamID64)
-					throwerSteamID = &steamID
-					name := thrower.Name
-					throwerName = &name
-					team := getTeamString(thrower.Team)
-					throwerTeam = &team
-				}
-			}
+		}
 
 			// Filter by Steam ID set if provided - skip grenade events from players not in the set
 			if steamIDSet != nil && (throwerSteamID == nil || !steamIDSet[*throwerSteamID]) {
@@ -2219,51 +2219,51 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 			} else if data.GrenadeEvents != nil {
 				// Fallback: store in memory ONLY if slice is allocated (in-memory mode)
 				// In JSON mode and DB streaming mode, data.GrenadeEvents is nil, so this never executes
-				data.GrenadeEvents = append(data.GrenadeEvents, GrenadeEventData{
-					RoundIndex:     currentRound.RoundIndex,
-					Tick:           tick,
-					EventType:      "inferno_start",
-					ProjectileID:   0, // InfernoStart doesn't have ProjectileID
-					GrenadeName:    "incendiary",
-					X:              float64(pos.X),
-					Y:              float64(pos.Y),
-					Z:              float64(pos.Z),
-					ThrowerSteamID: throwerSteamID,
-					ThrowerName:    throwerName,
-					ThrowerTeam:    throwerTeam,
-				})
-			}
+		data.GrenadeEvents = append(data.GrenadeEvents, GrenadeEventData{
+			RoundIndex:     currentRound.RoundIndex,
+			Tick:           tick,
+			EventType:      "inferno_start",
+			ProjectileID:   0, // InfernoStart doesn't have ProjectileID
+			GrenadeName:    "incendiary",
+			X:              float64(pos.X),
+			Y:              float64(pos.Y),
+			Z:              float64(pos.Z),
+			ThrowerSteamID: throwerSteamID,
+			ThrowerName:    throwerName,
+			ThrowerTeam:    throwerTeam,
 		})
-
-		// Inferno expire
-		p.parser.RegisterEventHandler(func(e events.InfernoExpired) {
-			if currentRound == nil {
-				return
 			}
-			updateTick()
-			tick := getCurrentTick()
+	})
 
-			// InfernoExpired has Entity field
-			// Get position from the inferno entity - Inferno doesn't have Position() method
-			var pos r3.Vector
-			var throwerSteamID *string
-			var throwerName *string
-			var throwerTeam *string
-			if e.Inferno != nil {
-				// Inferno doesn't expose Position() directly
-				// For now, we'll set to zero and track via grenade positions instead
-				pos = r3.Vector{X: 0, Y: 0, Z: 0}
-				// Thrower is a method that returns the player who threw it
-				if e.Inferno.Thrower() != nil {
-					thrower := e.Inferno.Thrower()
-					steamID := fmt.Sprintf("%d", thrower.SteamID64)
-					throwerSteamID = &steamID
-					name := thrower.Name
-					throwerName = &name
-					team := getTeamString(thrower.Team)
-					throwerTeam = &team
-				}
+	// Inferno expire
+	p.parser.RegisterEventHandler(func(e events.InfernoExpired) {
+		if currentRound == nil {
+			return
+		}
+		updateTick()
+		tick := getCurrentTick()
+
+		// InfernoExpired has Entity field
+		// Get position from the inferno entity - Inferno doesn't have Position() method
+		var pos r3.Vector
+		var throwerSteamID *string
+		var throwerName *string
+		var throwerTeam *string
+		if e.Inferno != nil {
+			// Inferno doesn't expose Position() directly
+			// For now, we'll set to zero and track via grenade positions instead
+			pos = r3.Vector{X: 0, Y: 0, Z: 0}
+			// Thrower is a method that returns the player who threw it
+			if e.Inferno.Thrower() != nil {
+				thrower := e.Inferno.Thrower()
+				steamID := fmt.Sprintf("%d", thrower.SteamID64)
+				throwerSteamID = &steamID
+				name := thrower.Name
+				throwerName = &name
+				team := getTeamString(thrower.Team)
+				throwerTeam = &team
 			}
+		}
 
 			// Filter by Steam ID set if provided - skip grenade events from players not in the set
 			if steamIDSet != nil && (throwerSteamID == nil || !steamIDSet[*throwerSteamID]) {
@@ -2298,21 +2298,21 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 			} else if data.GrenadeEvents != nil {
 				// Fallback: store in memory ONLY if slice is allocated (in-memory mode)
 				// In JSON mode and DB streaming mode, data.GrenadeEvents is nil, so this never executes
-				data.GrenadeEvents = append(data.GrenadeEvents, GrenadeEventData{
-					RoundIndex:     currentRound.RoundIndex,
-					Tick:           tick,
-					EventType:      "inferno_expire",
-					ProjectileID:   0, // InfernoExpire doesn't have ProjectileID
-					GrenadeName:    "incendiary",
-					X:              float64(pos.X),
-					Y:              float64(pos.Y),
-					Z:              float64(pos.Z),
-					ThrowerSteamID: throwerSteamID,
-					ThrowerName:    throwerName,
-					ThrowerTeam:    throwerTeam,
-				})
-			}
+		data.GrenadeEvents = append(data.GrenadeEvents, GrenadeEventData{
+			RoundIndex:     currentRound.RoundIndex,
+			Tick:           tick,
+			EventType:      "inferno_expire",
+			ProjectileID:   0, // InfernoExpire doesn't have ProjectileID
+			GrenadeName:    "incendiary",
+			X:              float64(pos.X),
+			Y:              float64(pos.Y),
+			Z:              float64(pos.Z),
+			ThrowerSteamID: throwerSteamID,
+			ThrowerName:    throwerName,
+			ThrowerTeam:    throwerTeam,
 		})
+			}
+	})
 	}
 
 	// Handle player_disconnect GenericGameEvent to extract reason code
@@ -2386,122 +2386,122 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 	// weapon_fire is available in both GOTV and POV demos
 	// Skip shots in JSON mode - not needed for output
 	if eventsFile == nil {
-		p.parser.RegisterEventHandler(func(e events.GenericGameEvent) {
-			if e.Name != "weapon_fire" {
-				return
-			}
+	p.parser.RegisterEventHandler(func(e events.GenericGameEvent) {
+		if e.Name != "weapon_fire" {
+			return
+		}
 
-			if currentRound == nil {
-				return
-			}
-			updateTick()
-			tick := getCurrentTick()
+		if currentRound == nil {
+			return
+		}
+		updateTick()
+		tick := getCurrentTick()
 
-			// Only track shots after freeze time ends
-			if freezeEndTick == nil || tick < *freezeEndTick {
-				return
-			}
+		// Only track shots after freeze time ends
+		if freezeEndTick == nil || tick < *freezeEndTick {
+			return
+		}
 
-			// Get userid from event data
-			// GenericGameEvent.Data is a map[string]*msg.CMsgSource1LegacyGameEventKeyT
-			var userid int
-			if useridKey, ok := e.Data["userid"]; ok && useridKey != nil {
-				// The value is stored in the KeyT structure
-				// Try to get the integer value from ValLong or ValShort
-				if useridKey.ValLong != nil {
-					userid = int(*useridKey.ValLong)
-				} else if useridKey.ValShort != nil {
-					userid = int(*useridKey.ValShort)
-				}
+		// Get userid from event data
+		// GenericGameEvent.Data is a map[string]*msg.CMsgSource1LegacyGameEventKeyT
+		var userid int
+		if useridKey, ok := e.Data["userid"]; ok && useridKey != nil {
+			// The value is stored in the KeyT structure
+			// Try to get the integer value from ValLong or ValShort
+			if useridKey.ValLong != nil {
+				userid = int(*useridKey.ValLong)
+			} else if useridKey.ValShort != nil {
+				userid = int(*useridKey.ValShort)
 			}
-			if userid == 0 {
-				return
+		}
+		if userid == 0 {
+			return
+		}
+
+		// Get weapon name from event data
+		weaponName := "unknown"
+		if weaponKey, ok := e.Data["weapon"]; ok && weaponKey != nil {
+			if weaponKey.ValString != nil {
+				weaponName = *weaponKey.ValString
 			}
+		}
 
-			// Get weapon name from event data
-			weaponName := "unknown"
-			if weaponKey, ok := e.Data["weapon"]; ok && weaponKey != nil {
-				if weaponKey.ValString != nil {
-					weaponName = *weaponKey.ValString
-				}
+		// Skip knife and grenades (we only want gun shots)
+		if strings.Contains(weaponName, "knife") || 
+		   strings.Contains(weaponName, "grenade") || 
+		   strings.Contains(weaponName, "flashbang") ||
+		   strings.Contains(weaponName, "smoke") ||
+		   strings.Contains(weaponName, "molotov") ||
+		   strings.Contains(weaponName, "incendiary") ||
+		   strings.Contains(weaponName, "decoy") ||
+		   strings.Contains(weaponName, "c4") {
+			return
+		}
+
+		// Find player by userid
+		gs := p.parser.GameState()
+		if gs == nil {
+			return
+		}
+
+		participants := gs.Participants()
+		var player *common.Player
+		for _, p := range participants.All() {
+			if p != nil && int(p.Entity.ID()) == userid {
+				player = p
+				break
 			}
+		}
 
-			// Skip knife and grenades (we only want gun shots)
-			if strings.Contains(weaponName, "knife") ||
-				strings.Contains(weaponName, "grenade") ||
-				strings.Contains(weaponName, "flashbang") ||
-				strings.Contains(weaponName, "smoke") ||
-				strings.Contains(weaponName, "molotov") ||
-				strings.Contains(weaponName, "incendiary") ||
-				strings.Contains(weaponName, "decoy") ||
-				strings.Contains(weaponName, "c4") {
-				return
-			}
+		if player == nil {
+			return
+		}
 
-			// Find player by userid
-			gs := p.parser.GameState()
-			if gs == nil {
-				return
-			}
+		// Skip spectators
+		if player.Team == common.TeamSpectators || player.Team == common.TeamUnassigned {
+			return
+		}
 
-			participants := gs.Participants()
-			var player *common.Player
-			for _, p := range participants.All() {
-				if p != nil && int(p.Entity.ID()) == userid {
-					player = p
-					break
-				}
-			}
+		// Get player position
+		pos := player.Position()
 
-			if player == nil {
-				return
-			}
+		// Get team
+		var team *string
+		switch player.Team {
+		case common.TeamTerrorists:
+			t := "T"
+			team = &t
+		case common.TeamCounterTerrorists:
+			ct := "CT"
+			team = &ct
+		default:
+			return
+		}
 
-			// Skip spectators
-			if player.Team == common.TeamSpectators || player.Team == common.TeamUnassigned {
-				return
-			}
-
-			// Get player position
-			pos := player.Position()
-
-			// Get team
-			var team *string
-			switch player.Team {
-			case common.TeamTerrorists:
-				t := "T"
-				team = &t
-			case common.TeamCounterTerrorists:
-				ct := "CT"
-				team = &ct
-			default:
-				return
-			}
-
-			steamID := fmt.Sprintf("%d", player.SteamID64)
+		steamID := fmt.Sprintf("%d", player.SteamID64)
 
 			// Filter by Steam ID set if provided - skip shots from players not in the set
 			if steamIDSet != nil && !steamIDSet[steamID] {
 				return
 			}
 
-			// Get view direction (yaw angle) - same calculation as player positions
-			viewDirX := player.ViewDirectionX()
-			viewDirY := player.ViewDirectionY()
-			var yaw float64
-			if viewDirX != 0 || viewDirY != 0 {
-				yaw = math.Atan2(float64(viewDirY), float64(viewDirX)) * 180.0 / math.Pi
-				if yaw < 0 {
-					yaw += 360
-				}
+		// Get view direction (yaw angle) - same calculation as player positions
+		viewDirX := player.ViewDirectionX()
+		viewDirY := player.ViewDirectionY()
+		var yaw float64
+		if viewDirX != 0 || viewDirY != 0 {
+			yaw = math.Atan2(float64(viewDirY), float64(viewDirX)) * 180.0 / math.Pi
+			if yaw < 0 {
+				yaw += 360
 			}
+		}
 
-			// Get pitch (view angle up/down)
-			// Note: ViewDirectionZ() doesn't exist in demoinfocs v5
-			// We can calculate pitch from ViewDirectionX/Y if needed, but for now we'll skip it
-			// Pitch is not critical for 2D viewer rendering
-			var pitch *float64
-			// TODO: Calculate pitch if needed using ViewDirectionX/Y conversion
+		// Get pitch (view angle up/down)
+		// Note: ViewDirectionZ() doesn't exist in demoinfocs v5
+		// We can calculate pitch from ViewDirectionX/Y if needed, but for now we'll skip it
+		// Pitch is not critical for 2D viewer rendering
+		var pitch *float64
+		// TODO: Calculate pitch if needed using ViewDirectionX/Y conversion
 
 			// Stream shot to database if writer is available
 			if writer != nil && matchID != "" {
@@ -2530,20 +2530,20 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 			} else if data.Shots != nil {
 				// Fallback: store in memory ONLY if slice is allocated (in-memory mode)
 				// In JSON mode and DB streaming mode, data.Shots is nil, so this never executes
-				data.Shots = append(data.Shots, ShotData{
-					RoundIndex: currentRound.RoundIndex,
-					Tick:       tick,
-					SteamID:    steamID,
-					WeaponName: weaponName,
-					X:          float64(pos.X),
-					Y:          float64(pos.Y),
-					Z:          float64(pos.Z),
-					Yaw:        yaw,
-					Pitch:      pitch,
-					Team:       team,
-				})
-			}
+		data.Shots = append(data.Shots, ShotData{
+			RoundIndex: currentRound.RoundIndex,
+			Tick:       tick,
+			SteamID:    steamID,
+			WeaponName: weaponName,
+			X:          float64(pos.X),
+			Y:          float64(pos.Y),
+			Z:          float64(pos.Z),
+			Yaw:        yaw,
+			Pitch:      pitch,
+			Team:       team,
 		})
+			}
+	})
 	}
 
 	// Parse the demo
@@ -2699,7 +2699,7 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 				player.Team = team
 			}
 		}
-
+		
 		// Mark as permanent disconnect if they disconnected and never reconnected
 		// But exclude disconnects within 20 seconds of game end
 		if playerDisconnected[steamID64] {
@@ -2716,14 +2716,14 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 				// Fallback: if we can't calculate, mark as permanent
 				player.PermanentDisconnect = true
 			}
-
+			
 			// Store disconnect round
 			if disconnectRound, exists := playerDisconnectRound[steamID64]; exists {
 				roundNum := &disconnectRound
 				player.DisconnectRound = roundNum
 			}
 		}
-
+		
 		// Update connected_midgame flag and first connect round based on when they first connected
 		if firstConnectRound, exists := playerFirstConnectRound[steamID64]; exists {
 			if firstConnectRound > 0 {
@@ -2731,10 +2731,10 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 			}
 			player.FirstConnectRound = &firstConnectRound
 		}
-
+		
 		// Filter by Steam ID set if provided - only include players in the set
 		if steamIDSet == nil || steamIDSet[player.SteamID] {
-			data.Players = append(data.Players, *player)
+		data.Players = append(data.Players, *player)
 		}
 	}
 
@@ -2750,7 +2750,7 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 			}
 		}
 	}
-
+	
 	// Flush any remaining positions in buffer
 	if writer != nil && matchID != "" && len(positionBuffer) > 0 {
 		if err := writer.InsertPlayerPositions(ctx, positionBuffer); err != nil {
