@@ -5,11 +5,12 @@ import MatchesScreen from './components/MatchesScreen'
 import SettingsScreen from './components/SettingsScreen'
 import DBViewerScreen from './components/DBViewerScreen'
 import StatsScreen from './components/StatsScreen'
+import UnparsedDemosPage from './components/UnparsedDemosPage'
 import OverlayScreen from './components/OverlayScreen'
 import WhatsNewModal from './components/WhatsNewModal'
 import TitleBar from './components/TitleBar'
 
-type Screen = 'matches' | 'settings' | 'dbviewer' | 'stats'
+type Screen = 'matches' | 'settings' | 'dbviewer' | 'stats' | 'unparsed'
 
 function App() {
   const [currentScreen, setCurrentScreen] = useState<Screen>('matches')
@@ -111,6 +112,7 @@ function App() {
           {currentScreen === 'settings' && <SettingsScreen />}
           {currentScreen === 'dbviewer' && <DBViewerScreen />}
           {currentScreen === 'stats' && <StatsScreen />}
+          {currentScreen === 'unparsed' && <UnparsedDemosPage />}
         </main>
       </div>
       {showWhatsNew && appVersion && (

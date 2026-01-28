@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Matches
   listMatches: () => ipcRenderer.invoke('matches:list'),
+  getUnparsedDemos: () => ipcRenderer.invoke('demos:getUnparsed'),
   getMatchSummary: (matchId: string) => ipcRenderer.invoke('matches:summary', matchId),
   getMatchPlayers: (matchId: string) => ipcRenderer.invoke('matches:players', matchId),
   getMatchEvents: (matchId: string, filters?: { type?: string; steamid?: string; round?: number }) =>
@@ -42,6 +43,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getSetting: (key: string, defaultValue?: string) => ipcRenderer.invoke('settings:get', key, defaultValue),
   setSetting: (key: string, value: string) => ipcRenderer.invoke('settings:set', key, value),
   getAllSettings: () => ipcRenderer.invoke('settings:getAll'),
+  
+  // Demo Folder Management
+  selectDemoFolders: () => ipcRenderer.invoke('demos:selectFolders'),
+  addDemoFolder: () => ipcRenderer.invoke('demos:addFolder'),
+  getDemoFolders: () => ipcRenderer.invoke('demos:getDemoFolders'),
   
   // Stats
   getAllStats: () => ipcRenderer.invoke('stats:getAll'),
@@ -96,6 +102,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   onParserError: (callback: (error: string) => void) => {
     ipcRenderer.on('parser:error', (_, error) => callback(error))
+  },
+  onDemosFileAdded: (callback: (data: { filePath: string }) => void) => {
+    ipcRenderer.on('demos:fileAdded', (_, data) => callback(data))
+  },
+  onDemosFileRemoved: (callback: (data: { filePath: string }) => void) => {
+    ipcRenderer.on('demos:fileRemoved', (_, data) => callback(data))
   },
 
   // Remove listeners

@@ -8,7 +8,7 @@ import * as crypto from 'crypto'
 import * as net from 'net'
 import { pathToFileURL } from 'url'
 import { initSettingsDb, getSetting, setSetting, getAllSettings } from './settings'
-import { initStatsDb, incrementStat, incrementMapParseCount, getAllStats, resetStats } from './stats'
+import { initStatsDb, incrementStat, incrementMapParseCount, getAllStats, resetStats, trackDemoParsed, trackVoiceExtracted } from './stats'
 import * as matchesService from './matchesService'
 
 import { pushCommand, getCommandLog } from './commandLog'
@@ -37,6 +37,11 @@ let currentIncident: {
 } | null = null
 // Store timeout IDs for pause timers so we can cancel them
 let pauseTimerTimeout: NodeJS.Timeout | null = null
+
+// File watcher for demo folders
+let demoFolderWatchers: Map<string, fs.FSWatcher> = new Map()
+let demoFileDebounce: Map<string, NodeJS.Timeout> = new Map()
+let watchedDemoFolders: Set<string> = new Set()
 
 // Command delay constant (ms)
 const COMMAND_DELAY_MS = 150
@@ -680,6 +685,17 @@ app.whenReady().then(async () => {
     console.log(`[Startup] Cleaned up ${startupCleanupDeleted.length} orphan/corrupt databases`)
   }
   
+  // Initialize demo folder watcher
+  const demoFolders = getSetting('demo_folders', '')
+  if (demoFolders) {
+    const folders = demoFolders.split('|').filter(f => f.trim())
+    try {
+      setupDemoFolderWatcher(folders)
+    } catch (err) {
+      console.error('[Watcher] Failed to initialize demo folder watcher:', err)
+    }
+  }
+  
   // In production, show splash screen first and check for updates
   // In dev, just create the main window
   if (!isDev) {
@@ -996,6 +1012,88 @@ function getVoiceExtractorPath(): string {
   }
 }
 
+// Demo folder watcher management
+function setupDemoFolderWatcher(folderPaths: string[]) {
+  // Clean up existing watchers
+  for (const watcher of demoFolderWatchers.values()) {
+    watcher.close()
+  }
+  demoFolderWatchers.clear()
+  watchedDemoFolders.clear()
+  
+  if (!folderPaths || folderPaths.length === 0) {
+    return
+  }
+  
+  // Filter to only valid, existing folders
+  const validFolders = folderPaths.filter(folder => {
+    try {
+      return fs.existsSync(folder) && fs.statSync(folder).isDirectory()
+    } catch {
+      return false
+    }
+  })
+  
+  if (validFolders.length === 0) {
+    return
+  }
+  
+  watchedDemoFolders = new Set(validFolders)
+  
+  console.log(`[Watcher] Setting up demo folder watcher for: ${Array.from(watchedDemoFolders).join(', ')}`)
+  
+  // Use native fs.watch for each folder (more compatible with Electron)
+  for (const folderPath of validFolders) {
+    try {
+      const watcher = fs.watch(folderPath, { persistent: true, recursive: false }, (eventType, filename) => {
+        if (!filename || !filename.toLowerCase().endsWith('.dem')) {
+          return
+        }
+        
+        const filePath = path.join(folderPath, filename)
+        
+        // Debounce with timer
+        const debounceKey = filePath
+        if (demoFileDebounce.has(debounceKey)) {
+          clearTimeout(demoFileDebounce.get(debounceKey))
+        }
+        
+        const timer = setTimeout(() => {
+          try {
+            const exists = fs.existsSync(filePath)
+            const event = exists ? 'add' : 'unlink'
+            
+            console.log(`[Watcher] Demo file ${event}: ${filePath}`)
+            if (mainWindow) {
+              if (event === 'add') {
+                mainWindow.webContents.send('demos:fileAdded', { filePath })
+              } else {
+                mainWindow.webContents.send('demos:fileRemoved', { filePath })
+              }
+            }
+          } finally {
+            demoFileDebounce.delete(debounceKey)
+          }
+        }, 2000) // 2 second debounce
+        
+        demoFileDebounce.set(debounceKey, timer as any)
+      })
+      
+      watcher.on('error', (error: unknown) => {
+        console.error(`[Watcher] Error watching ${folderPath}:`, error)
+      })
+      
+      demoFolderWatchers.set(folderPath, watcher)
+    } catch (err) {
+      console.error(`[Watcher] Failed to setup watcher for ${folderPath}:`, err)
+    }
+  }
+  
+  if (demoFolderWatchers.size > 0) {
+    console.log(`[Watcher] Successfully initialized demo folder watchers for ${demoFolderWatchers.size} folder(s)`)
+  }
+}
+
 // IPC Handlers
 
 ipcMain.handle('dialog:openFile', async (_, allowMultiple: boolean = false) => {
@@ -1117,6 +1215,10 @@ ipcMain.handle('parser:parse', async (_, { demoPath }: { demoPath: string }) => 
     },
   })
 
+  // Track parsing start time
+  const parsingStartTime = Date.now()
+  const demoDemoSizeBytes = fs.statSync(demoPath).size
+
   // Collect parser logs (both stdout and stderr)
   const parserLogs: string[] = []
 
@@ -1189,6 +1291,12 @@ ipcMain.handle('parser:parse', async (_, { demoPath }: { demoPath: string }) => 
     
     // If parsing succeeded, refresh matches list and track stats
     if (code === 0) {
+      // Calculate parsing time
+      const parsingTimeMs = Date.now() - parsingStartTime
+      
+      // Track demo parsing stats (size and time)
+      trackDemoParsed(demoDemoSizeBytes, parsingTimeMs)
+      
       // Refresh matches list so the new match appears
       if (mainWindow && !mainWindow.isDestroyed()) {
         try {
@@ -1198,9 +1306,6 @@ ipcMain.handle('parser:parse', async (_, { demoPath }: { demoPath: string }) => 
           console.error('[Main] Failed to refresh matches list after parsing:', err)
         }
       }
-      
-      // Track demo parsed
-      incrementStat('total_demos_parsed')
       
       // Get map name from database and track map parse count
       try {
@@ -1298,6 +1403,95 @@ ipcMain.handle('parser:stop', async () => {
 // Matches IPC handlers
 ipcMain.handle('matches:list', async () => {
   return await matchesService.listMatches()
+})
+
+ipcMain.handle('demos:getUnparsed', async () => {
+  try {
+    const appDataPath = app.getPath('userData')
+    const matchesDir = path.join(appDataPath, 'matches')
+    
+    // Ensure matches directory exists
+    if (!fs.existsSync(matchesDir)) {
+      fs.mkdirSync(matchesDir, { recursive: true })
+    }
+    
+    // Get all parsed demo paths from .sqlite files
+    const parsedDemoPaths = new Set<string>()
+    const sqliteFiles = fs.readdirSync(matchesDir).filter(file => file.endsWith('.sqlite'))
+    
+    for (const sqliteFile of sqliteFiles) {
+      const dbPath = path.join(matchesDir, sqliteFile)
+      try {
+        const initSqlJs = require('sql.js')
+        const SQL = await initSqlJs()
+        const buffer = fs.readFileSync(dbPath)
+        const db = new SQL.Database(buffer)
+        
+        // Get demo_path from meta table
+        const metaStmt = db.prepare('SELECT value FROM meta WHERE key = ?')
+        metaStmt.bind(['demo_path'])
+        if (metaStmt.step()) {
+          const demoPaths = metaStmt.get()
+          if (demoPaths && demoPaths[0]) {
+            parsedDemoPaths.add(demoPaths[0])
+          }
+        }
+        metaStmt.free()
+        db.close()
+      } catch (err) {
+        console.error(`Failed to read demo path from ${sqliteFile}:`, err)
+      }
+    }
+    
+    // Get demo folders from settings
+    const demoFoldersSetting = getSetting('demo_folders', '')
+    if (!demoFoldersSetting) {
+      // No demo folders configured
+      return []
+    }
+    
+    const demoFolders = demoFoldersSetting.split('|').filter(f => f.trim() && fs.existsSync(f))
+    if (demoFolders.length === 0) {
+      return []
+    }
+    
+    // Scan all demo folders for .dem files
+    const unparsedDemos: Array<{ fileName: string; filePath: string; fileSize: number; createdAt: string }> = []
+    
+    for (const demoFolder of demoFolders) {
+      try {
+        const files = fs.readdirSync(demoFolder)
+        
+        for (const file of files) {
+          if (!file.toLowerCase().endsWith('.dem')) continue
+          
+          const filePath = path.join(demoFolder, file)
+          
+          // Skip if already parsed
+          if (parsedDemoPaths.has(filePath)) continue
+          
+          try {
+            const stats = fs.statSync(filePath)
+            unparsedDemos.push({
+              fileName: file,
+              filePath: filePath,
+              fileSize: stats.size,
+              createdAt: stats.birthtime.toISOString(),
+            })
+          } catch (err) {
+            console.warn(`Failed to stat demo file ${filePath}:`, err)
+          }
+        }
+      } catch (err) {
+        console.error(`Failed to scan demo folder ${demoFolder}:`, err)
+      }
+    }
+    
+    return unparsedDemos
+  } catch (err) {
+    console.error('Failed to get unparsed demos:', err)
+    throw new Error('Failed to scan for unparsed demos')
+  }
 })
 
 ipcMain.handle('matches:summary', async (_, matchId: string) => {
@@ -2241,12 +2435,82 @@ ipcMain.handle('settings:get', async (_, key: string, defaultValue?: string) => 
 
 ipcMain.handle('settings:set', async (_, key: string, value: string) => {
   setSetting(key, value)
+  
+  // Setup watcher if demo folder setting changes
+  if (key === 'demo_folders') {
+    try {
+      const folders = value ? value.split('|').filter(f => f.trim()) : []
+      await setupDemoFolderWatcher(folders)
+    } catch (err) {
+      console.error('Failed to setup demo folder watcher:', err)
+    }
+  }
+  
   return { success: true }
 })
 
 ipcMain.handle('settings:getAll', async () => {
   return getAllSettings()
 })
+
+ipcMain.handle('demos:selectFolders', async () => {
+  try {
+    const result = await dialog.showOpenDialog(mainWindow!, {
+      properties: ['openDirectory', 'multiSelections'],
+      title: 'Select demo folders to watch',
+    })
+    
+    if (!result.canceled && result.filePaths.length > 0) {
+      // Save selected folders
+      const folderPath = result.filePaths.join('|')
+      setSetting('demo_folders', folderPath)
+      try {
+        setupDemoFolderWatcher(result.filePaths)
+      } catch (watchErr) {
+        console.error('Failed to setup demo folder watcher:', watchErr)
+        // Still return success - user selected folders, watcher setup might fail gracefully
+      }
+      return { success: true, folders: result.filePaths }
+    }
+    
+    return { success: false }
+  } catch (err) {
+    console.error('Failed to select demo folders:', err)
+    throw new Error('Failed to select demo folders')
+  }
+})
+
+ipcMain.handle('demos:addFolder', async () => {
+  try {
+    const result = await dialog.showOpenDialog(mainWindow!, {
+      properties: ['openDirectory'],
+      title: 'Select a demo folder to add',
+    })
+    
+    if (!result.canceled && result.filePaths.length > 0) {
+      return { success: true, folder: result.filePaths[0] }
+    }
+    
+    return { success: false }
+  } catch (err) {
+    console.error('Failed to add demo folder:', err)
+    throw new Error('Failed to add demo folder')
+  }
+})
+
+ipcMain.handle('demos:getDemoFolders', async () => {
+  try {
+    const folderPath = getSetting('demo_folders', '')
+    if (!folderPath) {
+      return []
+    }
+    return folderPath.split('|').filter(f => f.trim() && fs.existsSync(f))
+  } catch (err) {
+    console.error('Failed to get demo folders:', err)
+    return []
+  }
+})
+
 
 // Voice cache management
 ipcMain.handle('voice:getCacheInfo', async () => {
@@ -4679,7 +4943,11 @@ ipcMain.handle('voice:extract', async (_, options: { demoPath: string; outputPat
           }
         }
         
-        // Track voice extraction
+        // Track voice extraction stats (use file count and assume ~60 seconds per extracted file as estimate)
+        const estimatedDurationMs = files.length * 60000
+        trackVoiceExtracted(estimatedDurationMs, files.length)
+        
+        // Track voice extraction (legacy counter)
         incrementStat('total_voices_extracted', files.length)
         
         resolve({ success: true, outputPath, files: files.map(f => f.name), filePaths: files.map(f => f.path) })

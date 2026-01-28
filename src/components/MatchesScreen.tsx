@@ -3131,22 +3131,12 @@ function MatchesScreen() {
         {/* Parsing Modal */}
         {demoToParse && (
           <ParsingModal
-            isOpen={showParsingModal}
+            demosToParse={[demoToParse, ...demosToParse]}
             onClose={() => {
               setShowParsingModal(false)
               setDemoToParse(null)
               setDemosToParse([])
             }}
-            onComplete={async () => {
-              // Refresh matches list after parsing completes
-              await fetchMatches()
-              const message = demosToParse.length > 0 
-                ? `${demosToParse.length + 1} demos parsed successfully!`
-                : 'Demo parsed successfully!'
-              setToast({ message, type: 'success' })
-            }}
-            demoPath={demoToParse}
-            demoQueue={demosToParse}
           />
         )}
 

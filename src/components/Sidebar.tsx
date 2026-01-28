@@ -2,8 +2,8 @@ import { useState, useEffect } from 'react'
 import { t, getLanguage } from '../utils/translations'
 
 interface SidebarProps {
-  currentScreen: 'matches' | 'settings' | 'dbviewer' | 'stats'
-  onNavigate: (screen: 'matches' | 'settings' | 'dbviewer' | 'stats') => void
+  currentScreen: 'matches' | 'settings' | 'dbviewer' | 'stats' | 'unparsed'
+  onNavigate: (screen: 'matches' | 'settings' | 'dbviewer' | 'stats' | 'unparsed') => void
 }
 
 function Sidebar({ currentScreen, onNavigate }: SidebarProps) {
@@ -90,14 +90,14 @@ function Sidebar({ currentScreen, onNavigate }: SidebarProps) {
           </li>
           <li>
             <button
-              onClick={() => onNavigate('settings')}
+              onClick={() => onNavigate('unparsed')}
               className={`w-full text-left block px-4 py-2 rounded transition-colors ${
-                currentScreen === 'settings'
+                currentScreen === 'unparsed'
                   ? 'bg-surface text-accent font-medium'
                   : 'text-gray-400 hover:bg-surface hover:text-white'
               }`}
             >
-              {t('sidebar.settings')}
+              {t('sidebar.unparsedDemos')}
             </button>
           </li>
           <li>
@@ -110,6 +110,18 @@ function Sidebar({ currentScreen, onNavigate }: SidebarProps) {
               }`}
             >
               {t('sidebar.statistics')}
+            </button>
+          </li>
+          <li>
+            <button
+              onClick={() => onNavigate('settings')}
+              className={`w-full text-left block px-4 py-2 rounded transition-colors ${
+                currentScreen === 'settings'
+                  ? 'bg-surface text-accent font-medium'
+                  : 'text-gray-400 hover:bg-surface hover:text-white'
+              }`}
+            >
+              {t('sidebar.settings')}
             </button>
           </li>
           {enableDbViewer && (

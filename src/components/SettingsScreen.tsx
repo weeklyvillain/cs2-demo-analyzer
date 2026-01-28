@@ -28,6 +28,7 @@ interface Settings {
   overlayEnabled: string
   autoplayAfterSpectate: string
   language: string
+  demo_folders: string
 }
 
 function SettingsScreen() {
@@ -54,7 +55,9 @@ function SettingsScreen() {
     overlayEnabled: 'false',
     autoplayAfterSpectate: 'true',
     language: getLanguage(),
+    demo_folders: '',
   })
+  const [demoFolders, setDemoFolders] = useState<string[]>([])
   const [, forceUpdate] = useState(0) // Force re-render when language changes
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -155,15 +158,68 @@ function SettingsScreen() {
         overlayEnabled: allSettings.overlayEnabled !== undefined ? allSettings.overlayEnabled : 'false',
         autoplayAfterSpectate: allSettings.autoplayAfterSpectate !== undefined ? allSettings.autoplayAfterSpectate : 'true',
         language: allSettings.language || getLanguage(),
+        demo_folders: allSettings.demo_folders || '',
       })
       // Set language from settings
       if (allSettings.language && (allSettings.language === 'en' || allSettings.language === 'sv')) {
         setLanguage(allSettings.language as Language)
       }
+      
+      // Load demo folders
+      await loadDemoFolders()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load settings')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const loadDemoFolders = async () => {
+    if (!window.electronAPI) return
+    try {
+      const folders = await window.electronAPI.getDemoFolders()
+      setDemoFolders(folders || [])
+    } catch (err) {
+      console.error('Failed to load demo folders:', err)
+    }
+  }
+
+  const handleAddDemoFolder = async () => {
+    if (!window.electronAPI) return
+
+    try {
+      // Open a single folder dialog
+      const result = await window.electronAPI.addDemoFolder()
+      
+      if (result.success && result.folder && !demoFolders.includes(result.folder)) {
+        const updatedFolders = [...demoFolders, result.folder]
+        setDemoFolders(updatedFolders)
+        // Save updated list via setSetting if available
+        if (window.electronAPI.setSetting) {
+          await window.electronAPI.setSetting('demo_folders', updatedFolders.join('|'))
+        }
+        setSuccess(true)
+        setTimeout(() => setSuccess(false), 2000)
+      }
+    } catch (err) {
+      console.error('Failed to add demo folder:', err)
+    }
+  }
+
+  const handleRemoveDemoFolder = async (folderToRemove: string) => {
+    if (!window.electronAPI) return
+
+    try {
+      const updatedFolders = demoFolders.filter(f => f !== folderToRemove)
+      setDemoFolders(updatedFolders)
+      // Save updated list
+      if (window.electronAPI.setSetting) {
+        await window.electronAPI.setSetting('demo_folders', updatedFolders.join('|'))
+      }
+      setSuccess(true)
+      setTimeout(() => setSuccess(false), 2000)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to remove demo folder')
     }
   }
 
@@ -312,6 +368,52 @@ function SettingsScreen() {
                 <p className="text-xs text-gray-500 mt-1">
                   {t('settings.cs2PathDesc')}
                 </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Demo Folder Settings */}
+          <div className="bg-secondary rounded-lg border border-border p-4">
+            <h3 className="text-lg font-semibold mb-4">{t('settings.demoFolders')}</h3>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  {t('settings.demoFoldersDesc')}
+                </label>
+                <button
+                  onClick={handleAddDemoFolder}
+                  className="px-4 py-2 bg-green-600/20 text-green-400 border border-green-600/50 rounded hover:bg-green-600/30 transition-colors text-sm mb-3"
+                >
+                  + {t('settings.addFolder')}
+                </button>
+                
+                {demoFolders.length > 0 && (
+                  <div className="space-y-2 mt-3">
+                    <p className="text-xs text-gray-400">{t('settings.watchedFolders')}:</p>
+                    <div className="space-y-2">
+                      {demoFolders.map((folder, idx) => (
+                        <div
+                          key={idx}
+                          className="px-3 py-2 bg-surface border border-border rounded text-white text-sm truncate flex justify-between items-center"
+                          title={folder}
+                        >
+                          <span className="flex-1 truncate">{folder}</span>
+                          <button
+                            onClick={() => handleRemoveDemoFolder(folder)}
+                            className="ml-2 px-2 py-1 text-xs bg-red-600/20 text-red-400 border border-red-600/50 rounded hover:bg-red-600/30 transition-colors flex-shrink-0"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                
+                {demoFolders.length === 0 && (
+                  <p className="text-xs text-gray-500 italic">{t('settings.noDemoFoldersSelected')}</p>
+                )}
               </div>
             </div>
           </div>

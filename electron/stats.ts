@@ -30,6 +30,12 @@ export async function initStatsDb(): Promise<void> {
     // Initialize default stats
     statsDb.run(`INSERT OR IGNORE INTO stats (key, value) VALUES ('total_demos_parsed', '0')`)
     statsDb.run(`INSERT OR IGNORE INTO stats (key, value) VALUES ('total_voices_extracted', '0')`)
+    statsDb.run(`INSERT OR IGNORE INTO stats (key, value) VALUES ('largest_demo_parsed', '0')`)
+    statsDb.run(`INSERT OR IGNORE INTO stats (key, value) VALUES ('smallest_demo_parsed', '0')`)
+    statsDb.run(`INSERT OR IGNORE INTO stats (key, value) VALUES ('total_demo_size', '0')`)
+    statsDb.run(`INSERT OR IGNORE INTO stats (key, value) VALUES ('total_parsing_time_ms', '0')`)
+    statsDb.run(`INSERT OR IGNORE INTO stats (key, value) VALUES ('total_voice_extraction_ms', '0')`)
+    statsDb.run(`INSERT OR IGNORE INTO stats (key, value) VALUES ('voice_files_generated', '0')`)
     
     // Save to file
     const data = statsDb.export()
@@ -110,11 +116,101 @@ export function incrementStat(key: string, amount: number = 1): void {
   }
 }
 
+// Set a stat to a specific value
+export function setStat(key: string, value: string): void {
+  if (!statsDb) {
+    console.error('Stats database not initialized')
+    return
+  }
+  
+  try {
+    const stmt = statsDb.prepare('INSERT OR REPLACE INTO stats (key, value) VALUES (?, ?)')
+    stmt.run([key, value])
+    stmt.free()
+    
+    // Save to file
+    const dbPath = getStatsDbPath()
+    const data = statsDb.export()
+    const buffer = Buffer.from(data)
+    fs.writeFileSync(dbPath, buffer)
+  } catch (err) {
+    console.error(`Error setting stat ${key}:`, err)
+  }
+}
+
 // Increment map parse count
 export function incrementMapParseCount(mapName: string): void {
   if (!mapName) return
   const key = `map_parsed_${mapName.toLowerCase()}`
   incrementStat(key)
+}
+
+// Track demo parsing stats (size and time)
+export function trackDemoParsed(demoSizeBytes: number, parsingTimeMs: number): void {
+  try {
+    // Increment total parsed count
+    incrementStat('total_demos_parsed')
+    
+    // Update largest demo
+    const largestCurrent = parseInt(getStat('largest_demo_parsed', '0'), 10)
+    if (demoSizeBytes > largestCurrent) {
+      setStat('largest_demo_parsed', demoSizeBytes.toString())
+    }
+    
+    // Update smallest demo (if first time or smaller than current)
+    const smallestCurrent = parseInt(getStat('smallest_demo_parsed', '0'), 10)
+    if (smallestCurrent === 0 || demoSizeBytes < smallestCurrent) {
+      setStat('smallest_demo_parsed', demoSizeBytes.toString())
+    }
+    
+    // Add to total demo size
+    incrementStat('total_demo_size', demoSizeBytes)
+    
+    // Add to total parsing time
+    incrementStat('total_parsing_time_ms', parsingTimeMs)
+    
+    // Update fastest parsing time (if first time or faster than current)
+    const fastestCurrent = parseInt(getStat('fastest_parsing_time_ms', '0'), 10)
+    if (fastestCurrent === 0 || parsingTimeMs < fastestCurrent) {
+      setStat('fastest_parsing_time_ms', parsingTimeMs.toString())
+    }
+    
+    // Update slowest parsing time
+    const slowestCurrent = parseInt(getStat('slowest_parsing_time_ms', '0'), 10)
+    if (parsingTimeMs > slowestCurrent) {
+      setStat('slowest_parsing_time_ms', parsingTimeMs.toString())
+    }
+  } catch (err) {
+    console.error('Error tracking demo parsed:', err)
+  }
+}
+
+// Track voice extraction stats
+export function trackVoiceExtracted(durationMs: number, fileCount: number = 1): void {
+  try {
+    // Increment total voice files generated
+    incrementStat('voice_files_generated', fileCount)
+    
+    // Add to total extraction time
+    incrementStat('total_voice_extraction_ms', durationMs)
+    
+    // Increment total voices extracted (legacy counter)
+    incrementStat('total_voices_extracted', fileCount)
+    
+    // Update shortest voice extraction time (if first time or shorter than current)
+    const shortestCurrent = parseInt(getStat('shortest_voice_extraction_ms', '0'), 10)
+    if (shortestCurrent === 0 || durationMs < shortestCurrent) {
+      setStat('shortest_voice_extraction_ms', durationMs.toString())
+    }
+    
+    // Update longest voice extraction time
+    const longestCurrent = parseInt(getStat('longest_voice_extraction_ms', '0'), 10)
+    if (durationMs > longestCurrent) {
+      setStat('longest_voice_extraction_ms', durationMs.toString())
+    }
+  } catch (err) {
+    console.error('Error tracking voice extracted:', err)
+  }
 }
 
 // Get all stats
@@ -154,6 +250,16 @@ export function resetStats(): void {
     // Reinitialize default stats
     statsDb.run(`INSERT INTO stats (key, value) VALUES ('total_demos_parsed', '0')`)
     statsDb.run(`INSERT INTO stats (key, value) VALUES ('total_voices_extracted', '0')`)
+    statsDb.run(`INSERT INTO stats (key, value) VALUES ('largest_demo_parsed', '0')`)
+    statsDb.run(`INSERT INTO stats (key, value) VALUES ('smallest_demo_parsed', '0')`)
+    statsDb.run(`INSERT INTO stats (key, value) VALUES ('total_demo_size', '0')`)
+    statsDb.run(`INSERT INTO stats (key, value) VALUES ('total_parsing_time_ms', '0')`)
+    statsDb.run(`INSERT INTO stats (key, value) VALUES ('fastest_parsing_time_ms', '0')`)
+    statsDb.run(`INSERT INTO stats (key, value) VALUES ('slowest_parsing_time_ms', '0')`)
+    statsDb.run(`INSERT INTO stats (key, value) VALUES ('total_voice_extraction_ms', '0')`)
+    statsDb.run(`INSERT INTO stats (key, value) VALUES ('shortest_voice_extraction_ms', '0')`)
+    statsDb.run(`INSERT INTO stats (key, value) VALUES ('longest_voice_extraction_ms', '0')`)
+    statsDb.run(`INSERT INTO stats (key, value) VALUES ('voice_files_generated', '0')`)
     
     // Save to file
     const dbPath = getStatsDbPath()

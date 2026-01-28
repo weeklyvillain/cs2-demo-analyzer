@@ -14,6 +14,7 @@ export interface ElectronAPI {
   parseDemo: (args: { demoPath: string }) => Promise<{ matchId: string; dbPath: string }>
   stopParser: () => Promise<void>
   listMatches: () => Promise<Array<{ id: string; map: string; startedAt: string | null; playerCount: number; demoPath: string | null; isMissingDemo?: boolean; createdAtIso?: string | null; source?: string | null }>>
+  getUnparsedDemos: () => Promise<Array<{ fileName: string; filePath: string; fileSize: number; createdAt: string }>>
   getMatchSummary: (matchId: string) => Promise<{ matchId: string; players: any[] }>
   getMatchPlayers: (matchId: string) => Promise<{ matchId: string; players: Array<{ steamId: string; name: string }> }>
   getMatchEvents: (matchId: string, filters?: { type?: string; steamid?: string; round?: number }) => Promise<any>
@@ -67,6 +68,9 @@ export interface ElectronAPI {
   openExternal: (url: string) => Promise<void>
   restartApp: () => Promise<void>
   showFileInFolder: (filePath: string) => Promise<void>
+  selectDemoFolders: () => Promise<{ success: boolean; folders?: string[] }>
+  addDemoFolder: () => Promise<{ success: boolean; folder?: string }>
+  getDemoFolders: () => Promise<string[]>
   extractVoice: (options: { demoPath: string; outputPath?: string; mode?: 'split-compact' | 'split-full' | 'single-full'; steamIds?: string[] }) => Promise<{ success: boolean; outputPath: string; files: string[]; filePaths?: string[] }>
   getVoiceAudio: (filePath: string) => Promise<{ success: boolean; data?: string; error?: string }>
   generateWaveform: (filePath: string, audioDuration?: number) => Promise<{ success: boolean; data?: string; error?: string; pixelsPerSecond?: number; actualWidth?: number }>
@@ -75,6 +79,8 @@ export interface ElectronAPI {
   onParserLog: (callback: (log: string) => void) => void
   onParserExit: (callback: (data: { code: number | null; signal: string | null }) => void) => void
   onParserError: (callback: (error: string) => void) => void
+  onDemosFileAdded: (callback: (data: { filePath: string }) => void) => void
+  onDemosFileRemoved: (callback: (data: { filePath: string }) => void) => void
   onMatchesCleanup: (callback: (data: { deleted: number; details: Array<{ matchId: string; reason: string }> }) => void) => void
   onMatchesTrimmed: (callback: (data: { deleted: number; details: Array<{ matchId: string; reason: string }> }) => void) => void
   onMatchesList: (callback: (matches: Array<{ id: string; map: string; startedAt: string | null; playerCount: number; demoPath: string | null; isMissingDemo?: boolean; createdAtIso?: string | null; source?: string | null }>) => void) => void

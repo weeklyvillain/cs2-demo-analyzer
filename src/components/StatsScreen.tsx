@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { BarChart3, RefreshCw, Trash2 } from 'lucide-react'
+import { BarChart3, RefreshCw, Trash2, HardDrive, Clock, Users, Volume2 } from 'lucide-react'
 import Modal from './Modal'
 import Toast from './Toast'
 import { t, getLanguage } from '../utils/translations'
@@ -7,6 +7,16 @@ import { t, getLanguage } from '../utils/translations'
 interface Stats {
   total_demos_parsed: number
   total_voices_extracted: number
+  largest_demo_parsed: number
+  smallest_demo_parsed: number
+  total_demo_size: number
+  total_parsing_time_ms: number
+  fastest_parsing_time_ms: number
+  slowest_parsing_time_ms: number
+  total_voice_extraction_ms: number
+  shortest_voice_extraction_ms: number
+  longest_voice_extraction_ms: number
+  voice_files_generated: number
   [key: string]: number
 }
 
@@ -14,6 +24,16 @@ function StatsScreen() {
   const [stats, setStats] = useState<Stats>({
     total_demos_parsed: 0,
     total_voices_extracted: 0,
+    largest_demo_parsed: 0,
+    smallest_demo_parsed: 0,
+    total_demo_size: 0,
+    total_parsing_time_ms: 0,
+    fastest_parsing_time_ms: 0,
+    slowest_parsing_time_ms: 0,
+    total_voice_extraction_ms: 0,
+    shortest_voice_extraction_ms: 0,
+    longest_voice_extraction_ms: 0,
+    voice_files_generated: 0,
   })
   const [loading, setLoading] = useState(true)
   const [showResetConfirm, setShowResetConfirm] = useState(false)
@@ -84,6 +104,46 @@ function StatsScreen() {
       .join(' ')
   }
 
+  // Format bytes to human-readable size
+  const formatBytes = (bytes: number): string => {
+    if (bytes === 0) return '0 B'
+    const k = 1024
+    const sizes = ['B', 'KB', 'MB', 'GB']
+    const i = Math.floor(Math.log(bytes) / Math.log(k))
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
+  }
+
+  // Format milliseconds to human-readable time
+  const formatTime = (ms: number): string => {
+    const seconds = Math.floor((ms / 1000) % 60)
+    const minutes = Math.floor((ms / (1000 * 60)) % 60)
+    const hours = Math.floor(ms / (1000 * 60 * 60))
+    
+    if (hours > 0) {
+      return `${hours}h ${minutes}m ${seconds}s`
+    } else if (minutes > 0) {
+      return `${minutes}m ${seconds}s`
+    } else {
+      return `${seconds}s`
+    }
+  }
+
+  // Format milliseconds to hours
+  const formatHours = (ms: number): string => {
+    const hours = ms / (1000 * 60 * 60)
+    return hours.toFixed(2)
+  }
+
+  // Calculate average demo size
+  const averageDemoSize = stats.total_demos_parsed > 0 
+    ? stats.total_demo_size / stats.total_demos_parsed 
+    : 0
+
+  // Calculate average parsing time
+  const averageParsingTime = stats.total_demos_parsed > 0 
+    ? stats.total_parsing_time_ms / stats.total_demos_parsed 
+    : 0
+
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center">
@@ -138,18 +198,95 @@ function StatsScreen() {
             </div>
             <div className="flex items-center justify-between p-4 bg-surface rounded">
               <span className="text-gray-300">{t('stats.totalVoicesExtracted')}</span>
-              <span className="text-2xl font-bold text-accent">{stats.total_voices_extracted || 0}</span>
+              <span className="text-2xl font-bold text-accent">{stats.voice_files_generated || 0}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Performance Statistics */}
+        <div className="bg-secondary rounded-lg border border-border p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <HardDrive size={18} className="text-accent" />
+            <h2 className="text-lg font-semibold text-white">{t('stats.performanceStats')}</h2>
+          </div>
+          <div className="space-y-4">
+            <div className="flex items-center justify-between p-4 bg-surface rounded">
+              <span className="text-gray-300">{t('stats.largestDemo')}</span>
+              <span className="text-lg font-semibold text-accent">{formatBytes(stats.largest_demo_parsed || 0)}</span>
+            </div>
+            <div className="flex items-center justify-between p-4 bg-surface rounded">
+              <span className="text-gray-300">{t('stats.smallestDemo')}</span>
+              <span className="text-lg font-semibold text-accent">{formatBytes(stats.smallest_demo_parsed || 0)}</span>
+            </div>
+            <div className="flex items-center justify-between p-4 bg-surface rounded">
+              <span className="text-gray-300">{t('stats.averageDemo')}</span>
+              <span className="text-lg font-semibold text-accent">{formatBytes(averageDemoSize)}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Time Statistics */}
+        <div className="bg-secondary rounded-lg border border-border p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <Clock size={18} className="text-accent" />
+            <h2 className="text-lg font-semibold text-white">{t('stats.timeStats')}</h2>
+          </div>
+          <div className="space-y-4">
+            <div className="flex items-center justify-between p-4 bg-surface rounded">
+              <span className="text-gray-300">{t('stats.totalParsingTime')}</span>
+              <span className="text-lg font-semibold text-accent">{formatTime(stats.total_parsing_time_ms || 0)}</span>
+            </div>
+            <div className="flex items-center justify-between p-4 bg-surface rounded">
+              <span className="text-gray-300">{t('stats.averageParsingTime')}</span>
+              <span className="text-lg font-semibold text-accent">{formatTime(averageParsingTime)}</span>
+            </div>
+            <div className="flex items-center justify-between p-4 bg-surface rounded">
+              <span className="text-gray-300">{t('stats.fastestParsingTime')}</span>
+              <span className="text-lg font-semibold text-accent">{formatTime(stats.fastest_parsing_time_ms || 0)}</span>
+            </div>
+            <div className="flex items-center justify-between p-4 bg-surface rounded">
+              <span className="text-gray-300">{t('stats.slowestParsingTime')}</span>
+              <span className="text-lg font-semibold text-accent">{formatTime(stats.slowest_parsing_time_ms || 0)}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Extraction Statistics */}
+        <div className="bg-secondary rounded-lg border border-border p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <Volume2 size={18} className="text-accent" />
+            <h2 className="text-lg font-semibold text-white">{t('stats.extractionStats')}</h2>
+          </div>
+          <div className="space-y-4">
+            <div className="flex items-center justify-between p-4 bg-surface rounded">
+              <span className="text-gray-300">{t('stats.voiceFilesGenerated')}</span>
+              <span className="text-lg font-semibold text-accent">{stats.voice_files_generated || 0}</span>
+            </div>
+            <div className="flex items-center justify-between p-4 bg-surface rounded">
+              <span className="text-gray-300">{t('stats.totalVoiceExtracted')}</span>
+              <span className="text-lg font-semibold text-accent">{formatHours(stats.total_voice_extraction_ms || 0)} h</span>
+            </div>
+            <div className="flex items-center justify-between p-4 bg-surface rounded">
+              <span className="text-gray-300">{t('stats.shortestVoiceExtraction')}</span>
+              <span className="text-lg font-semibold text-accent">{formatTime(stats.shortest_voice_extraction_ms || 0)}</span>
+            </div>
+            <div className="flex items-center justify-between p-4 bg-surface rounded">
+              <span className="text-gray-300">{t('stats.longestVoiceExtraction')}</span>
+              <span className="text-lg font-semibold text-accent">{formatTime(stats.longest_voice_extraction_ms || 0)}</span>
             </div>
           </div>
         </div>
 
         {/* Map Statistics */}
-        <div className="bg-secondary rounded-lg border border-border p-6">
-          <h2 className="text-lg font-semibold text-white mb-4">{t('stats.mapsParsed')}</h2>
+        <div className="bg-secondary rounded-lg border border-border p-6 md:col-span-2">
+          <div className="flex items-center gap-2 mb-4">
+            <Users size={18} className="text-accent" />
+            <h2 className="text-lg font-semibold text-white">{t('stats.mapsParsed')}</h2>
+          </div>
           {mapStats.length === 0 ? (
             <div className="text-center text-gray-400 py-8">{t('stats.noMapStatistics')}</div>
           ) : (
-            <div className="space-y-2 max-h-96 overflow-y-auto">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-96 overflow-y-auto">
               {mapStats.map(({ map, count }) => (
                 <div
                   key={map}

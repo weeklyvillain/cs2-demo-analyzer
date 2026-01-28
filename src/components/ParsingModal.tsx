@@ -4,11 +4,8 @@ import { parseNDJSONLine } from '../utils/ndjson'
 import { X } from 'lucide-react'
 
 interface ParsingModalProps {
-  isOpen: boolean
+  demosToParse: string[] // Array of demo file paths to parse
   onClose: () => void
-  onComplete: () => void
-  demoPath: string
-  demoQueue?: string[] // Optional queue of additional demos to parse after this one
 }
 
 interface LogEntry {
@@ -26,11 +23,8 @@ interface ProgressState {
 }
 
 export default function ParsingModal({
-  isOpen,
+  demosToParse,
   onClose,
-  onComplete,
-  demoPath,
-  demoQueue = [],
 }: ParsingModalProps) {
   const [isParsing, setIsParsing] = useState(false)
   const [logs, setLogs] = useState<LogEntry[]>([])
@@ -45,26 +39,11 @@ export default function ParsingModal({
   const logIdRef = useRef(0)
   const logsEndRef = useRef<HTMLDivElement>(null)
   
-  const totalDemos = 1 + (demoQueue?.length || 0) // Current + queue
+  const totalDemos = demosToParse?.length || 0
 
   const maxLogs = 100
 
   useEffect(() => {
-    if (!isOpen) {
-      // Reset state when modal closes
-      setIsParsing(false)
-      setLogs([])
-      setProgress(null)
-      setError(null)
-      setHasError(false)
-      setShowAbortConfirm(false)
-      setMatchId(null)
-      setCurrentDemoIndex(0)
-      stoppedByUserRef.current = false
-      parsingStartedRef.current = false
-      return
-    }
-
     if (!window.electronAPI) return
 
     // Set up IPC listeners
@@ -104,8 +83,8 @@ export default function ParsingModal({
         setError(null)
         setHasError(false)
         
-        // Check if there are more demos in the queue
-        if (demoQueue && currentDemoIndex < demoQueue.length) {
+        // Check if there are more demos to parse
+        if (currentDemoIndex < (demosToParse?.length || 0) - 1) {
           // Move to next demo in queue
           setTimeout(() => {
             setCurrentDemoIndex(prev => prev + 1)
@@ -116,9 +95,8 @@ export default function ParsingModal({
             // The auto-start effect will pick up the new demoPath
           }, 500)
         } else {
-          // All demos parsed - call onComplete after a short delay
+          // All demos parsed - close modal and return to previous screen
           setTimeout(() => {
-            onComplete()
             onClose()
           }, 1000)
         }
@@ -168,7 +146,7 @@ export default function ParsingModal({
       window.electronAPI.removeAllListeners('parser:exit')
       window.electronAPI.removeAllListeners('parser:error')
     }
-  }, [isOpen, onComplete, onClose, demoQueue, currentDemoIndex])
+  }, [onClose, currentDemoIndex])
 
   useEffect(() => {
     logsEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -190,10 +168,8 @@ export default function ParsingModal({
     })
   }
 
-  // Get the current demo path (either the initial demoPath or from queue)
-  const currentDemoPath = currentDemoIndex === 0 
-    ? demoPath 
-    : (demoQueue?.[currentDemoIndex - 1] || demoPath)
+  // Get the current demo path from the demosToParse array
+  const currentDemoPath = demosToParse?.[currentDemoIndex]
 
   const handleStartParse = async () => {
     const pathToParse = currentDemoPath
@@ -304,16 +280,16 @@ export default function ParsingModal({
 
   // Auto-start parsing when modal opens or when moving to next demo
   useEffect(() => {
-    if (isOpen && currentDemoPath && !isParsing) {
+    if (currentDemoPath && !isParsing) {
       handleStartParse()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, currentDemoPath, currentDemoIndex])
+  }, [currentDemoPath, currentDemoIndex])
 
   return (
     <>
       <Modal
-        isOpen={isOpen}
+        isOpen={true}
         onClose={handleClose}
         title={totalDemos > 1 ? `Parsing Demo (${currentDemoIndex + 1} of ${totalDemos})` : 'Parsing Demo'}
         size="lg"
@@ -323,8 +299,8 @@ export default function ParsingModal({
         {/* Demo Path */}
         <div className="px-4 py-2 bg-surface rounded border border-border">
           <p className="text-xs text-gray-500 mb-1">Demo File:</p>
-          <p className="text-sm text-gray-300 truncate" title={currentDemoPath}>
-            {currentDemoPath.split(/[/\\]/).pop()}
+          <p className="text-sm text-gray-300 truncate" title={currentDemoPath || ''}>
+            {currentDemoPath ? currentDemoPath.split(/[/\\]/).pop() : 'N/A'}
           </p>
         </div>
 
