@@ -10,7 +10,7 @@ import { pathToFileURL } from 'url'
 import { initSettingsDb, getSetting, setSetting, getAllSettings } from './settings'
 import { initStatsDb, incrementStat, incrementMapParseCount, getAllStats, resetStats } from './stats'
 import * as matchesService from './matchesService'
-import { isCS2PluginInstalled, getPluginInstallPath, isGameInfoModified } from './cs2-plugin'
+
 import { pushCommand, getCommandLog } from './commandLog'
 import { cs2OverlayTracker } from './cs2OverlayTracker'
 import { overlayHoverController } from './overlayHoverController'
@@ -3731,63 +3731,7 @@ ipcMain.handle('cs2:launch', async (_, demoPath: string, startTick?: number, pla
     }, 1000) // Increased delay to ensure overlay window is fully loaded
   }
 
-  // Check if CS Demo Analyzer plugin is installed
-  const pluginInstalled = isCS2PluginInstalled(cs2Exe)
-  const gameInfoModified = isGameInfoModified(cs2Exe)
-  const pluginReady = pluginInstalled && gameInfoModified
 
-  // Create JSON actions file next to demo (CS Demo Analyzer format)
-  // This works automatically if CS Demo Analyzer's server plugin is installed
-  let jsonActionsFilePath: string | null = null
-  if (consoleCommands.length > 0) {
-    try {
-      // Create JSON file next to demo file (same name + .json extension)
-      // Format: [{ "actions": [{ "tick": number, "cmd": string }] }]
-      const demoDir = path.dirname(demoPath)
-      const demoName = path.basename(demoPath, path.extname(demoPath))
-      jsonActionsFilePath = path.join(demoDir, `${demoName}.json`)
-      
-      const actions: Array<{ tick: number; cmd: string }> = []
-      
-      // Add skip ahead command if we have a target tick
-      if (targetTick > 0) {
-        actions.push({
-          tick: 0, // Execute at tick 0 (start of demo)
-          cmd: `demo_gototick ${targetTick}`
-        })
-      }
-      
-      // Add spec_player command if we have a player name
-      // Note: CS Demo Analyzer uses player slot numbers, but we'll use player name
-      // The plugin should handle this, or user can paste from clipboard
-      if (playerName) {
-        const playerNameQuoted = playerName.includes(' ') ? `"${playerName}"` : playerName
-        // Execute spec_player a few ticks after demo_gototick to ensure it works
-        // CS Demo Analyzer adds a delay for this reason
-        actions.push({
-          tick: targetTick > 0 ? targetTick + 4 : 0,
-          cmd: `spec_player ${playerNameQuoted}`
-        })
-      }
-      
-      if (actions.length > 0) {
-        const jsonContent = JSON.stringify([{ actions }], null, 2)
-        fs.writeFileSync(jsonActionsFilePath, jsonContent, 'utf8')
-        console.log('Created JSON actions file (CS Demo Analyzer format):', jsonActionsFilePath)
-        if (pluginReady) {
-          console.log('✓ CS Demo Analyzer plugin detected - commands will execute automatically!')
-        } else if (pluginInstalled && !gameInfoModified) {
-          console.log('⚠ Plugin binary found but gameinfo.gi not modified - plugin may not load')
-        } else {
-          console.log('ℹ CS Demo Analyzer plugin not detected - install it for automatic command execution')
-          console.log('  Plugin location:', getPluginInstallPath(cs2Exe)?.binaryPath || 'unknown')
-        }
-      }
-    } catch (err) {
-      console.warn('Failed to create JSON actions file:', err)
-      // Continue without JSON file - other methods still work
-    }
-  }
 
   // Create a config file for automatic execution (if we have commands to run)
   let configFilePath: string | null = null
@@ -3977,14 +3921,6 @@ ipcMain.handle('cs2:launch', async (_, demoPath: string, startTick?: number, pla
       }
     }, waitTime)
     
-    if (jsonActionsFilePath) {
-      console.log('JSON Actions File (CS Demo Analyzer format):', jsonActionsFilePath)
-      if (pluginReady) {
-        console.log('✓ Plugin ready - commands will execute automatically!')
-      } else {
-        console.log('ℹ Install CS Demo Analyzer plugin for automatic execution')
-      }
-    }
     console.log('Commands will be sent via netconport')
     console.log('========================')
     
