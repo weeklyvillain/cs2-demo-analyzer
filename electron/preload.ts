@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getMatchPlayers: (matchId: string) => ipcRenderer.invoke('matches:players', matchId),
   getMatchEvents: (matchId: string, filters?: { type?: string; steamid?: string; round?: number }) =>
     ipcRenderer.invoke('matches:events', matchId, filters),
+  getMatchParserLogs: (matchId: string) => ipcRenderer.invoke('matches:parserLogs', matchId),
   getMatchRounds: (matchId: string) => ipcRenderer.invoke('matches:rounds', matchId),
   getMatchChat: (matchId: string, steamid?: string) => ipcRenderer.invoke('matches:chat', matchId, steamid),
   getMatchPositions: (matchId: string, roundIndex: number, tick: number) => ipcRenderer.invoke('matches:positions', matchId, roundIndex, tick),

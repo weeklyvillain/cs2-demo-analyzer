@@ -4,10 +4,11 @@ import Modal from './Modal'
 import PlayerModal from './PlayerModal'
 import ParsingModal from './ParsingModal'
 import VoicePlaybackModal from './VoicePlaybackModal'
+import ParserLogsModal from './ParserLogsModal'
 import Toast from './Toast'
 import { formatDisconnectReason } from '../utils/disconnectReason'
 import { t } from '../utils/translations'
-import { Clock, Skull, Zap, WifiOff, ChevronDown, ChevronUp, Copy, Play, Check, ArrowUp, ArrowDown, Trash2, X, Plus, Loader2, Mic, FolderOpen, Database, RefreshCw, Upload, Map as MapIcon, UserPlus, UserMinus } from 'lucide-react'
+import { Clock, Skull, Zap, WifiOff, ChevronDown, ChevronUp, Copy, Play, Check, ArrowUp, ArrowDown, Trash2, X, Plus, Loader2, Mic, FolderOpen, Database, RefreshCw, Upload, Map as MapIcon, UserPlus, UserMinus, FileText } from 'lucide-react'
 
 interface Match {
   id: string
@@ -144,6 +145,8 @@ function MatchesScreen() {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; match: Match } | null>(null)
   const [enableDbViewer, setEnableDbViewer] = useState(false)
   const [searchQuery, setSearchQuery] = useState<string>('')
+  const [showParserLogsModal, setShowParserLogsModal] = useState(false)
+  const [selectedMatchForLogs, setSelectedMatchForLogs] = useState<string | null>(null)
   const [, forceUpdate] = useState(0) // Force re-render when language changes
 
   // Listen for language changes
@@ -773,7 +776,7 @@ function MatchesScreen() {
     setContextMenu({ x: e.clientX, y: e.clientY, match })
   }
 
-  const handleContextMenuAction = async (action: 'delete' | 'open' | 'showInDb' | 'reparse' | 'select', match: Match) => {
+  const handleContextMenuAction = async (action: 'delete' | 'open' | 'showInDb' | 'reparse' | 'select' | 'showLogs', match: Match) => {
     setContextMenu(null)
 
     if (action === 'delete') {
@@ -797,6 +800,10 @@ function MatchesScreen() {
     } else if (action === 'select') {
       // Toggle selection for this match
       toggleMatchSelection(match.id)
+    } else if (action === 'showLogs') {
+      // Show parser logs modal
+      setSelectedMatchForLogs(match.id)
+      setShowParserLogsModal(true)
     }
   }
 
@@ -1606,6 +1613,13 @@ function MatchesScreen() {
                   {t('matches.showInDb')}
                 </button>
               )}
+              <button
+                onClick={() => handleContextMenuAction('showLogs', contextMenu.match)}
+                className="w-full text-left px-4 py-2 text-sm text-white hover:bg-surface transition-colors flex items-center gap-2"
+              >
+                <FileText className="w-4 h-4" />
+                Show Parser Logs
+              </button>
               {selectedMatches.has(contextMenu.match.id) ? (
                 <button
                   onClick={() => handleContextMenuAction('select', contextMenu.match)}
@@ -3145,6 +3159,16 @@ function MatchesScreen() {
           demoPath={demoPath}
           playerSteamId={voicePlayerSteamId}
           playerName={voicePlayerName}
+        />
+
+        {/* Parser Logs Modal */}
+        <ParserLogsModal
+          isOpen={showParserLogsModal}
+          onClose={() => {
+            setShowParserLogsModal(false)
+            setSelectedMatchForLogs(null)
+          }}
+          matchId={selectedMatchForLogs || ''}
         />
       </>
     </div>

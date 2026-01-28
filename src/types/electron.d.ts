@@ -17,6 +17,7 @@ export interface ElectronAPI {
   getMatchSummary: (matchId: string) => Promise<{ matchId: string; players: any[] }>
   getMatchPlayers: (matchId: string) => Promise<{ matchId: string; players: Array<{ steamId: string; name: string }> }>
   getMatchEvents: (matchId: string, filters?: { type?: string; steamid?: string; round?: number }) => Promise<any>
+  getMatchParserLogs: (matchId: string) => Promise<{ matchId: string; logs: string }>
   getMatchRounds: (matchId: string) => Promise<any>
   getMatchChat: (matchId: string, steamid?: string) => Promise<{ matchId: string; messages: Array<{ matchId: string; roundIndex: number; tick: number; steamid: string; name: string; team: string | null; message: string; isTeamChat: boolean }> }>
   getMatchPositions: (matchId: string, roundIndex: number, tick: number) => Promise<{ matchId: string; roundIndex: number; tick: number; positions: Array<{ tick: number; steamid: string; x: number; y: number; z: number; team: string | null; name: string | null }> }>

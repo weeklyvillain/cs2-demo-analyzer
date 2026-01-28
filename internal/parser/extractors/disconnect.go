@@ -89,9 +89,10 @@ func (e *DisconnectExtractor) HandlePlayerDisconnected(event events.PlayerDiscon
 		reasonValue = getDisconnectReasonFromEvent(event)
 	}
 
-	// Format the reason using our mapping function
-	reason := formatDisconnectReason(reasonValue)
-	meta["reason"] = reason
+	// Store the raw reason value (numeric code or string), NOT the formatted string
+	// The React side will format it using formatDisconnectReason
+	// If no reason found, store nil and let React use the default fallback
+	meta["reason"] = reasonValue
 	meta["disconnect_time"] = float64(tick) / tickRate // Time in seconds
 
 	// Store as pending disconnect in case they reconnect

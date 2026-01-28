@@ -179,6 +179,15 @@ CREATE TABLE IF NOT EXISTS shots (
 CREATE INDEX IF NOT EXISTS idx_shots_match_round ON shots(match_id, round_index);
 CREATE INDEX IF NOT EXISTS idx_shots_tick ON shots(match_id, round_index, tick);
 CREATE INDEX IF NOT EXISTS idx_shots_steamid ON shots(match_id, steamid);
+
+CREATE TABLE IF NOT EXISTS parser_logs (
+	match_id TEXT PRIMARY KEY,
+	logs TEXT NOT NULL,
+	created_at TEXT NOT NULL,
+	FOREIGN KEY(match_id) REFERENCES matches(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_parser_logs_match ON parser_logs(match_id);
 `
 
 // runMigrations runs database migrations to add new columns to existing tables.

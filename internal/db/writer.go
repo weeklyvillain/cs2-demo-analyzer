@@ -556,3 +556,16 @@ func (w *Writer) InsertShots(ctx context.Context, shots []Shot) error {
 
 	return nil
 }
+
+// InsertParserLogs inserts parser logs for a match.
+func (w *Writer) InsertParserLogs(ctx context.Context, matchID string, logs string) error {
+	query := `
+		INSERT OR REPLACE INTO parser_logs (match_id, logs, created_at)
+		VALUES (?, ?, ?)
+	`
+	_, err := w.db.ExecContext(ctx, query, matchID, logs, time.Now().Format(time.RFC3339))
+	if err != nil {
+		return fmt.Errorf("failed to insert parser logs: %w", err)
+	}
+	return nil
+}

@@ -269,3 +269,16 @@ func (r *Reader) GetChatMessages(ctx context.Context, matchID string, steamid *s
 	return messages, nil
 }
 
+// GetParserLogs retrieves parser logs for a match.
+func (r *Reader) GetParserLogs(ctx context.Context, matchID string) (string, error) {
+	query := `SELECT logs FROM parser_logs WHERE match_id = ?`
+	var logs string
+	err := r.db.QueryRowContext(ctx, query, matchID).Scan(&logs)
+	if err == sql.ErrNoRows {
+		return "", nil // No logs found
+	}
+	if err != nil {
+		return "", fmt.Errorf("failed to get parser logs: %w", err)
+	}
+	return logs, nil
+}

@@ -1059,6 +1059,17 @@ ipcMain.handle('parser:parse', async (_, { demoPath }: { demoPath: string }) => 
   const dbPath = path.join(matchesDir, `${matchId}.sqlite`)
   const parserPath = getParserPath()
   
+  // Clear old database if it exists (for reparsing)
+  if (fs.existsSync(dbPath)) {
+    try {
+      fs.unlinkSync(dbPath)
+      console.log(`[Parser] Deleted old database at ${dbPath} for fresh parse`)
+    } catch (err) {
+      console.warn(`[Parser] Warning: Failed to delete old database: ${err}`)
+      // Continue anyway, the parser will try to work with the existing database
+    }
+  }
+  
   // Note: demo_path and created_at_iso will be stored in meta table by the Go parser
   
   // Debug: log the path being used (only in dev)
@@ -1106,18 +1117,45 @@ ipcMain.handle('parser:parse', async (_, { demoPath }: { demoPath: string }) => 
     },
   })
 
-  // Handle stdout (NDJSON)
+  // Collect parser logs (both stdout and stderr)
+  const parserLogs: string[] = []
+
+  // Handle stdout (NDJSON - progress and info logs)
   parserProcess.stdout?.on('data', (data: Buffer) => {
     const lines = data.toString().split('\n').filter(line => line.trim())
     for (const line of lines) {
+      try {
+        // Parse NDJSON and format for display
+        const json = JSON.parse(line)
+        if (json.type === 'log') {
+          // Format log message: "[LEVEL] message"
+          parserLogs.push(`[${json.level?.toUpperCase() || 'INFO'}] ${json.msg}`)
+        } else if (json.type === 'progress') {
+          // Format progress: "stage: X/Y (Zz%) - tick: N"
+          const pctStr = (json.pct * 100).toFixed(1)
+          parserLogs.push(`[PROGRESS] ${json.stage}: ${pctStr}% (round ${json.round}, tick ${json.tick})`)
+        } else if (json.type === 'error') {
+          parserLogs.push(`[ERROR] ${json.msg}`)
+        }
+      } catch {
+        // If not valid JSON, treat as plain log line
+        parserLogs.push(line)
+      }
       mainWindow?.webContents.send('parser:message', line)
     }
   })
 
-  // Handle stderr (log lines)
+  // Handle stderr (error messages and warnings)
   parserProcess.stderr?.on('data', (data: Buffer) => {
     const lines = data.toString().split('\n').filter(line => line.trim())
     for (const line of lines) {
+      // Check if line is a DEBUG log
+      if (line.startsWith('DEBUG:')) {
+        parserLogs.push(`[DEBUG] ${line.substring(6).trim()}`)
+      } else {
+        // Prefix other stderr with [STDERR] to distinguish from stdout logs
+        parserLogs.push(`[STDERR] ${line}`)
+      }
       mainWindow?.webContents.send('parser:log', line)
     }
   })
@@ -1126,6 +1164,28 @@ ipcMain.handle('parser:parse', async (_, { demoPath }: { demoPath: string }) => 
   parserProcess.on('exit', async (code, signal) => {
     parserProcess = null
     mainWindow?.webContents.send('parser:exit', { code, signal })
+    
+    // Store parser logs to database
+    if (parserLogs.length > 0) {
+      try {
+        const initSqlJs = require('sql.js')
+        const SQL = await initSqlJs()
+        const buffer = fs.readFileSync(dbPath)
+        const db = new SQL.Database(buffer)
+        
+        const logContent = parserLogs.join('\n')
+        const stmt = db.prepare('INSERT OR REPLACE INTO parser_logs (match_id, logs, created_at) VALUES (?, ?, ?)')
+        stmt.bind([matchId, logContent, new Date().toISOString()])
+        stmt.step()
+        stmt.free()
+        
+        const data = db.export()
+        db.close()
+        fs.writeFileSync(dbPath, Buffer.from(data))
+      } catch (err) {
+        console.error('[Main] Failed to store parser logs:', err)
+      }
+    }
     
     // If parsing succeeded, refresh matches list and track stats
     if (code === 0) {
@@ -1354,6 +1414,47 @@ ipcMain.handle('matches:events', async (_, matchId: string, filters?: { type?: s
     }
   } catch (err) {
     throw new Error(`Failed to get match events: ${err}`)
+  }
+})
+
+ipcMain.handle('matches:parserLogs', async (_, matchId: string) => {
+  const appDataPath = app.getPath('userData')
+  const matchesDir = path.join(appDataPath, 'matches')
+  const dbPath = path.join(matchesDir, `${matchId}.sqlite`)
+  
+  if (!fs.existsSync(dbPath)) {
+    throw new Error(`Match ${matchId} not found`)
+  }
+
+  try {
+    const initSqlJs = require('sql.js')
+    const SQL = await initSqlJs()
+    const buffer = fs.readFileSync(dbPath)
+    const db = new SQL.Database(buffer)
+    
+    let logs = ''
+    try {
+      const stmt = db.prepare('SELECT logs FROM parser_logs WHERE match_id = ?')
+      stmt.bind([matchId])
+      
+      if (stmt.step()) {
+        const row = stmt.getAsObject()
+        logs = (row.logs as string) || ''
+      }
+      stmt.free()
+    } catch (err: any) {
+      // Table doesn't exist for older demos - this is expected
+      if (err.message?.includes('no such table')) {
+        logs = '' // Return empty logs for older demos
+      } else {
+        throw err // Re-throw other errors
+      }
+    }
+    db.close()
+
+    return { matchId, logs }
+  } catch (err) {
+    throw new Error(`Failed to get parser logs: ${err}`)
   }
 })
 

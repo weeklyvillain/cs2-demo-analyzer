@@ -408,11 +408,6 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 		}
 	}
 
-	// Helper function to convert string to *string
-	stringPtr := func(s string) *string {
-		return &s
-	}
-
 	// Track map name from ServerInfo event (v5)
 	var mapName string
 	var serverName string
@@ -945,27 +940,82 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 			}
 		} else if firstRoundProcessed && roundIndex >= 0 {
 			// Player connected mid-game (or during first round but after team assignments are set)
-			// Assign team based on their current team
+			// Find a connected player on the same in-game team and use their Team assignment
+			var assignedTeam string
+			
+			// Look for a connected player on the same team to determine their Team (A or B)
+			gs := p.parser.GameState()
+			if gs != nil {
+				participants := gs.Participants()
+				for _, otherPlayer := range participants.All() {
+					if otherPlayer == nil || otherPlayer.SteamID64 == player.SteamID64 {
+						continue
+					}
+					// Found a player on the same in-game team
+					if otherPlayer.Team == player.Team {
+						// Check if this player has a Team assignment
+						if assignedTeam, exists := playerTeamMap[otherPlayer.SteamID64]; exists {
+							// Use the same Team assignment
+							playerTeamMap[player.SteamID64] = assignedTeam
+							playerData.Team = assignedTeam
+							if roundIndex > 0 {
+								playerData.ConnectedMidgame = true
+							}
+							teamUpdated = true
+							break
+						}
+					}
+				}
+			}
+			
+			// Fallback: if no connected player found on same team, use the stored team assignments
+			if assignedTeam == "" {
+				if player.Team == common.TeamTerrorists {
+					if tTeamAssignment == "" {
+						tTeamAssignment = "A"
+						ctTeamAssignment = "B"
+					}
+					assignedTeam = tTeamAssignment
+				} else if player.Team == common.TeamCounterTerrorists {
+					if ctTeamAssignment == "" {
+						ctTeamAssignment = "B"
+						tTeamAssignment = "A"
+					}
+					assignedTeam = ctTeamAssignment
+				}
+				
+				if assignedTeam != "" {
+					playerTeamMap[player.SteamID64] = assignedTeam
+					playerData.Team = assignedTeam
+					if roundIndex > 0 {
+						playerData.ConnectedMidgame = true
+					}
+					teamUpdated = true
+				}
+			}
+		} else if !firstRoundProcessed {
+			// Player connected before first round is processed
+			// Assign team based on their current team - ensure team assignments are set
 			var assignedTeam string
 			if player.Team == common.TeamTerrorists {
+				if tTeamAssignment == "" {
+					tTeamAssignment = "A"
+					ctTeamAssignment = "B"
+				}
 				assignedTeam = tTeamAssignment
 			} else if player.Team == common.TeamCounterTerrorists {
+				if ctTeamAssignment == "" {
+					ctTeamAssignment = "B"
+					tTeamAssignment = "A"
+				}
 				assignedTeam = ctTeamAssignment
 			}
 			
 			if assignedTeam != "" {
 				playerTeamMap[player.SteamID64] = assignedTeam
 				playerData.Team = assignedTeam
-				// Only mark as mid-game if they connected after round 0
-				if roundIndex > 0 {
-					playerData.ConnectedMidgame = true
-				}
 				teamUpdated = true
 			}
-		} else if !firstRoundProcessed {
-			// Player connected before first round is processed
-			// We'll assign their team when RoundStart processes the first round
-			// But we can still track which round they connected
 		}
 
 		// Insert or update player in database immediately if writer is available
@@ -995,40 +1045,10 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 			playerName = fmt.Sprintf("Player_%d", player.SteamID64)
 		}
 		
-		// Stream chat message to database if writer is available (only if Steam ID is in set)
-		if writer != nil && matchID != "" && (steamIDSet == nil || steamIDSet[steamID]) {
-			chatBuffer = append(chatBuffer, db.ChatMessage{
-				MatchID:    matchID,
-				RoundIndex: roundIndex,
-				Tick:       tick,
-				SteamID:    steamID,
-				Name:       stringPtr("*SERVER*"),
-				Team:       nil,
-				Message:    fmt.Sprintf("%s joined the game", playerName),
-				IsTeamChat: false,
-			})
-
-			// Flush if buffer is full
-			if len(chatBuffer) >= chatBatchSize {
-				if err := writer.InsertChatMessages(ctx, chatBuffer); err != nil {
-					fmt.Fprintf(os.Stderr, "WARN: Failed to insert chat messages batch: %v\n", err)
-				} else {
-					chatBuffer = chatBuffer[:0]
-				}
-			}
-		} else if data.ChatMessages != nil {
-			// Fallback: store in memory ONLY if slice is allocated (in-memory mode)
-			// In JSON mode and DB streaming mode, data.ChatMessages is nil, so this never executes
-		data.ChatMessages = append(data.ChatMessages, ChatMessageData{
-			RoundIndex: roundIndex,
-			Tick:       tick,
-			SteamID:    steamID,
-			Name:       "*SERVER*",
-			Team:       "",
-			Message:    fmt.Sprintf("%s joined the game", playerName),
-			IsTeamChat: false,
-		})
-		}
+		// Skip server announcements - they can cause foreign key constraint issues
+		// if the player hasn't been properly inserted into the players table yet.
+		// Real chat messages are captured separately via events.ChatMessage
+		_ = playerName // Suppress unused variable warning
 	})
 
 	// Update player names when they change
@@ -1215,9 +1235,15 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 			roundIndex = currentRound.RoundIndex
 		}
 
+		// Filter out invalid disconnects: skip if player is nil, has invalid steam ID, or is disconnecting before any round
+		player := e.Player
+		if player == nil || player.SteamID64 == 0 || roundIndex < 0 {
+			return
+		}
+
 		// Early filter: only process disconnects for players in Steam ID set
-		if steamIDSet != nil && e.Player != nil {
-			steamID := fmt.Sprintf("%d", e.Player.SteamID64)
+		if steamIDSet != nil {
+			steamID := fmt.Sprintf("%d", player.SteamID64)
 			if !steamIDSet[steamID] {
 				return
 			}
@@ -1234,56 +1260,21 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 		}
 		
 		// Mark player as disconnected and record the tick and round
-		player := e.Player
-		if player != nil {
-			steamID64 := player.SteamID64
-			playerDisconnected[steamID64] = true
-			playerDisconnectTick[steamID64] = tick
-			playerDisconnectRound[steamID64] = roundIndex
-			// Clear first connect round since they disconnected
-			delete(playerFirstConnectRound, steamID64)
-			
-			steamID := fmt.Sprintf("%d", steamID64)
-			playerName := player.Name
-			if playerName == "" {
-				playerName = fmt.Sprintf("Player_%d", steamID64)
-			}
-			
-			// Stream chat message to database if writer is available (only if Steam ID is in set)
-			if writer != nil && matchID != "" && (steamIDSet == nil || steamIDSet[steamID]) {
-				chatBuffer = append(chatBuffer, db.ChatMessage{
-					MatchID:    matchID,
-					RoundIndex: roundIndex,
-					Tick:       tick,
-					SteamID:    steamID,
-					Name:       stringPtr("*SERVER*"),
-					Team:       nil,
-					Message:    fmt.Sprintf("%s left the game", playerName),
-					IsTeamChat: false,
-				})
-
-				// Flush if buffer is full
-				if len(chatBuffer) >= chatBatchSize {
-					if err := writer.InsertChatMessages(ctx, chatBuffer); err != nil {
-						fmt.Fprintf(os.Stderr, "WARN: Failed to insert chat messages batch: %v\n", err)
-					} else {
-						chatBuffer = chatBuffer[:0]
-					}
-				}
-			} else if data.ChatMessages != nil {
-				// Fallback: store in memory ONLY if slice is allocated (in-memory mode)
-				// In JSON mode and DB streaming mode, data.ChatMessages is nil, so this never executes
-			data.ChatMessages = append(data.ChatMessages, ChatMessageData{
-				RoundIndex: roundIndex,
-				Tick:       tick,
-				SteamID:    steamID,
-				Name:       "*SERVER*",
-				Team:       "",
-				Message:    fmt.Sprintf("%s left the game", playerName),
-				IsTeamChat: false,
-			})
-			}
+		steamID64 := player.SteamID64
+		playerDisconnected[steamID64] = true
+		playerDisconnectTick[steamID64] = tick
+		playerDisconnectRound[steamID64] = roundIndex
+		// Clear first connect round since they disconnected
+		delete(playerFirstConnectRound, steamID64)
+		
+		playerName := player.Name
+		if playerName == "" {
+			playerName = fmt.Sprintf("Player_%d", steamID64)
 		}
+		
+		// Skip server announcements - they can cause foreign key constraint issues
+		// if the player hasn't been properly inserted into the players table yet.
+		_ = playerName // Suppress unused variable warning
 	})
 
 	// Handle chat messages using SayText2 event
@@ -1635,10 +1626,39 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 			// Assign team if not already assigned and first round is processed
 			if playerData.Team == "" && firstRoundProcessed {
 				var assignedTeam string
-				if player.Team == common.TeamTerrorists {
-					assignedTeam = tTeamAssignment
-				} else if player.Team == common.TeamCounterTerrorists {
-					assignedTeam = ctTeamAssignment
+				
+				// Look for a connected player on the same in-game team and use their Team assignment
+				participants := p.parser.GameState().Participants()
+				for _, otherPlayer := range participants.All() {
+					if otherPlayer == nil || otherPlayer.SteamID64 == player.SteamID64 {
+						continue
+					}
+					// Found a player on the same in-game team
+					if otherPlayer.Team == player.Team {
+						// Check if this player has a Team assignment
+						if existingAssignedTeam, exists := playerTeamMap[otherPlayer.SteamID64]; exists {
+							// Use the same Team assignment
+							assignedTeam = existingAssignedTeam
+							break
+						}
+					}
+				}
+				
+				// Fallback: if no connected player found on same team, use the stored team assignments
+				if assignedTeam == "" {
+					if player.Team == common.TeamTerrorists {
+						if tTeamAssignment == "" {
+							tTeamAssignment = "A"
+							ctTeamAssignment = "B"
+						}
+						assignedTeam = tTeamAssignment
+					} else if player.Team == common.TeamCounterTerrorists {
+						if ctTeamAssignment == "" {
+							ctTeamAssignment = "B"
+							tTeamAssignment = "A"
+						}
+						assignedTeam = ctTeamAssignment
+					}
 				}
 				
 				if assignedTeam != "" {
@@ -2339,14 +2359,34 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 			return
 		}
 
+		// Debug: log all available data in event
+		fmt.Fprintf(os.Stderr, "DEBUG: player_disconnect event at tick %d with userid %d\n", tick, userid)
+		for k, v := range e.Data {
+			if v != nil {
+				if v.ValLong != nil {
+					fmt.Fprintf(os.Stderr, "  %s (Long): %d\n", k, *v.ValLong)
+				} else if v.ValShort != nil {
+					fmt.Fprintf(os.Stderr, "  %s (Short): %d\n", k, *v.ValShort)
+				} else if v.ValBool != nil {
+					fmt.Fprintf(os.Stderr, "  %s (Bool): %v\n", k, *v.ValBool)
+				} else if v.ValString != nil {
+					fmt.Fprintf(os.Stderr, "  %s (String): %s\n", k, *v.ValString)
+				} else if v.ValFloat != nil {
+					fmt.Fprintf(os.Stderr, "  %s (Float): %f\n", k, *v.ValFloat)
+				}
+			}
+		}
+
 		// Extract reason from event data - this is the numerical code
 		var reason interface{}
 		if reasonKey, ok := e.Data["reason"]; ok && reasonKey != nil {
 			// Try to get as integer first
 			if reasonKey.ValLong != nil {
 				reason = int(*reasonKey.ValLong)
+				fmt.Fprintf(os.Stderr, "DEBUG: Got reason from ValLong: %v at tick %d\n", reason, tick)
 			} else if reasonKey.ValShort != nil {
 				reason = int(*reasonKey.ValShort)
+				fmt.Fprintf(os.Stderr, "DEBUG: Got reason from ValShort: %v at tick %d\n", reason, tick)
 			} else if reasonKey.ValString != nil {
 				// Try to parse string as int, otherwise keep as string
 				if parsed, err := strconv.Atoi(*reasonKey.ValString); err == nil {
@@ -2354,7 +2394,10 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 				} else {
 					reason = *reasonKey.ValString
 				}
+				fmt.Fprintf(os.Stderr, "DEBUG: Got reason from ValString: %v at tick %d\n", reason, tick)
 			}
+		} else {
+			fmt.Fprintf(os.Stderr, "DEBUG: No reason key found in player_disconnect event at tick %d\n", tick)
 		}
 
 		// Find player by userid to get SteamID
@@ -2378,6 +2421,9 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 		if reason != nil {
 			// Store by tick - we'll match by tick in HandlePlayerDisconnected
 			disconnectExtractor.StoreDisconnectReason(fmt.Sprintf("tick-%d", tick), tick, reason)
+			fmt.Fprintf(os.Stderr, "DEBUG: Stored disconnect reason %v for tick %d\n", reason, tick)
+		} else {
+			fmt.Fprintf(os.Stderr, "DEBUG: Reason is nil for player_disconnect at tick %d, not storing\n", tick)
 		}
 	})
 
