@@ -664,6 +664,7 @@ func run(ctx context.Context, demoPath, outPath, matchID string, positionInterva
 					MetaJSON:      eventData.MetaJSON,
 				})
 			}
+			afkExtractor.ClearEvents() // Clear events after writing to prevent accumulation
 			if err := writer.BatchInsertEvents(ctx, dbEvents); err != nil {
 				output.Log("warn", fmt.Sprintf("Failed to batch insert AFK events: %v", err))
 			} else {
@@ -855,6 +856,7 @@ func run(ctx context.Context, demoPath, outPath, matchID string, positionInterva
 					MetaJSON:      eventData.MetaJSON,
 				})
 			}
+			afkExtractor.ClearEvents() // Clear events after writing to prevent accumulation
 			if err := writer.BatchInsertEvents(ctx, dbEvents); err != nil {
 				output.Log("warn", fmt.Sprintf("Failed to batch insert AFK events: %v", err))
 			} else {
@@ -967,6 +969,7 @@ func run(ctx context.Context, demoPath, outPath, matchID string, positionInterva
 					MetaJSON:      eventData.MetaJSON,
 				})
 			}
+			afkExtractor.ClearEvents() // Clear events after writing to prevent accumulation
 			if err := writer.BatchInsertEvents(ctx, dbEvents); err != nil {
 				output.Log("warn", fmt.Sprintf("Failed to batch insert AFK events: %v", err))
 			} else {
