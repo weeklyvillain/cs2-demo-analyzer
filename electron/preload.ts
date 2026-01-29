@@ -5,6 +5,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 contextBridge.exposeInMainWorld('electronAPI', {
   // Dialog
   openFileDialog: (allowMultiple?: boolean) => ipcRenderer.invoke('dialog:openFile', allowMultiple),
+  openDirectoryDialog: () => ipcRenderer.invoke('dialog:openDirectory'),
 
   // Parser
   parseDemo: (args: { demoPath: string }) => ipcRenderer.invoke('parser:parse', args),
@@ -87,8 +88,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   extractVoice: (options: { demoPath: string; outputPath?: string; mode?: 'split-compact' | 'split-full' | 'single-full'; steamIds?: string[] }) => 
     ipcRenderer.invoke('voice:extract', options),
   getVoiceAudio: (filePath: string) => ipcRenderer.invoke('voice:getAudio', filePath),
-  generateWaveform: (filePath: string, audioDuration?: number) => ipcRenderer.invoke('voice:generateWaveform', filePath, audioDuration),
+  generateWaveform: (filePath: string, audioDuration?: number, options?: { mode?: 'fixed' | 'wide'; pixelsPerSecond?: number; maxWidth?: number }) =>
+    ipcRenderer.invoke('voice:generateWaveform', filePath, audioDuration, options),
   cleanupVoiceFiles: (outputPath: string) => ipcRenderer.invoke('voice:cleanup', outputPath),
+
+  // Clip Export
+  exportClips: (payload: any) => ipcRenderer.invoke('clips:export', payload),
+  onClipsExportProgress: (callback: (progress: any) => void) => {
+    ipcRenderer.on('clips:export:progress', (_, data) => callback(data))
+  },
+  showItemInFolder: (filePath: string) => ipcRenderer.invoke('file:showInFolder', filePath),
 
   // Listeners
   onParserMessage: (callback: (message: string) => void) => {

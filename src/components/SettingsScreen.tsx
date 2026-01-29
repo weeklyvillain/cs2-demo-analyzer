@@ -7,6 +7,8 @@ import { t, setLanguage, getLanguage, type Language } from '../utils/translation
 
 interface Settings {
   cs2_path: string
+  clips_output_dir: string
+  ffmpeg_path: string
   cs2_window_width: string
   cs2_window_height: string
   cs2_window_mode: string
@@ -34,6 +36,8 @@ interface Settings {
 function SettingsScreen() {
   const [settings, setSettings] = useState<Settings>({
     cs2_path: '',
+    clips_output_dir: '',
+    ffmpeg_path: '',
     cs2_window_width: '1920',
     cs2_window_height: '1080',
     cs2_window_mode: 'windowed',
@@ -137,6 +141,8 @@ function SettingsScreen() {
       const allSettings = await window.electronAPI.getAllSettings()
       setSettings({
         cs2_path: allSettings.cs2_path || '',
+        clips_output_dir: allSettings.clips_output_dir || '',
+        ffmpeg_path: allSettings.ffmpeg_path || '',
         cs2_window_width: allSettings.cs2_window_width || '1920',
         cs2_window_height: allSettings.cs2_window_height || '1080',
         cs2_window_mode: allSettings.cs2_window_mode || 'windowed',
@@ -289,6 +295,27 @@ function SettingsScreen() {
     }
   }
 
+  const handleBrowseFfmpeg = async () => {
+    if (!window.electronAPI) return
+
+    const path = await window.electronAPI.openFileDialog()
+    if (path) {
+      setSettings((prev) => ({ ...prev, ffmpeg_path: path }))
+      await handleSaveSingleSetting('ffmpeg_path', path)
+    }
+  }
+
+  const handleBrowseClipsOutputDir = async () => {
+    if (!window.electronAPI) return
+
+    const path = await window.electronAPI.openDirectoryDialog()
+    if (path) {
+      setSettings((prev) => ({ ...prev, clips_output_dir: path }))
+      // Save immediately when directory is selected
+      await handleSaveSingleSetting('clips_output_dir', path)
+    }
+  }
+
   const handleDeleteAllMatches = async () => {
     if (!window.electronAPI) return
     
@@ -369,6 +396,57 @@ function SettingsScreen() {
                   {t('settings.cs2PathDesc')}
                 </p>
               </div>
+
+              {/* Clips Output Directory */}
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  Clips Output Directory
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={settings.clips_output_dir}
+                    onChange={(e) => setSettings((prev) => ({ ...prev, clips_output_dir: e.target.value }))}
+                    placeholder="C:\Users\YourName\Documents\CS2 Demo Clips"
+                    className="flex-1 px-3 py-2 bg-surface border border-border rounded text-white text-sm"
+                  />
+                  <button
+                    onClick={handleBrowseClipsOutputDir}
+                    className="px-4 py-2 bg-accent text-white rounded hover:bg-accent/80 transition-colors text-sm"
+                  >
+                    Browse
+                  </button>
+                </div>
+                <p className="text-xs text-gray-500 mt-1">
+                  Where to save exported demo clips. Defaults to Documents/CS2 Demo Clips if not set.
+                </p>
+              </div>
+
+              {/* FFmpeg Path */}
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  FFmpeg Path
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={settings.ffmpeg_path}
+                    onChange={(e) => setSettings((prev) => ({ ...prev, ffmpeg_path: e.target.value }))}
+                    placeholder="C:\\ffmpeg\\bin\\ffmpeg.exe"
+                    className="flex-1 px-3 py-2 bg-surface border border-border rounded text-white text-sm"
+                  />
+                  <button
+                    onClick={handleBrowseFfmpeg}
+                    className="px-4 py-2 bg-accent text-white rounded hover:bg-accent/80 transition-colors text-sm"
+                  >
+                    Browse
+                  </button>
+                </div>
+                <p className="text-xs text-gray-500 mt-1">
+                  Used for speed normalization and montage rendering.
+                </p>
+              </div>
+
             </div>
           </div>
 

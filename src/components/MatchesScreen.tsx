@@ -4,11 +4,14 @@ import Modal from './Modal'
 import PlayerModal from './PlayerModal'
 import ParsingModal from './ParsingModal'
 import VoicePlaybackModal from './VoicePlaybackModal'
+import TeamCommsModal from './TeamCommsModal'
 import ParserLogsModal from './ParserLogsModal'
 import Toast from './Toast'
+import { ClipExportPanel } from './ClipExportPanel'
+import type { ClipRange } from './ClipExportPanel'
 import { formatDisconnectReason } from '../utils/disconnectReason'
 import { t } from '../utils/translations'
-import { Clock, Skull, Zap, WifiOff, ChevronDown, ChevronUp, Copy, Play, Check, ArrowUp, ArrowDown, Trash2, X, Plus, Loader2, Mic, FolderOpen, Database, RefreshCw, Upload, Map as MapIcon, UserPlus, UserMinus, FileText } from 'lucide-react'
+import { Clock, Skull, Zap, WifiOff, ChevronDown, ChevronUp, Copy, Play, Check, ArrowUp, ArrowDown, Trash2, X, Plus, Loader2, Mic, FolderOpen, Database, RefreshCw, Upload, Map as MapIcon, UserPlus, UserMinus, FileText, Download } from 'lucide-react'
 
 interface Match {
   id: string
@@ -142,12 +145,16 @@ function MatchesScreen() {
   const [showVoiceModal, setShowVoiceModal] = useState(false)
   const [voicePlayerSteamId, setVoicePlayerSteamId] = useState<string>('')
   const [voicePlayerName, setVoicePlayerName] = useState<string>('')
+  const [showTeamCommsModal, setShowTeamCommsModal] = useState(false)
+  const [teamCommsPlayers, setTeamCommsPlayers] = useState<Array<{ steamId: string; name: string }>>([])
+  const [teamCommsName, setTeamCommsName] = useState<string>('')
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; match: Match } | null>(null)
   const [enableDbViewer, setEnableDbViewer] = useState(false)
   const [searchQuery, setSearchQuery] = useState<string>('')
   const [showParserLogsModal, setShowParserLogsModal] = useState(false)
   const [selectedMatchForLogs, setSelectedMatchForLogs] = useState<string | null>(null)
   const [, forceUpdate] = useState(0) // Force re-render when language changes
+  const [showExportPanel, setShowExportPanel] = useState(false)
 
   // Listen for language changes
   useEffect(() => {
@@ -842,6 +849,22 @@ function MatchesScreen() {
     setPlayerEvents([])
   }
 
+  // Convert events to ClipRange format for export
+  const getExportableEvents = (): ClipRange[] => {
+    if (!allEvents || allEvents.length === 0) return []
+    
+    return allEvents.map((event, index) => ({
+      // Include index to ensure uniqueness when multiple events occur at same tick
+      id: `${selectedMatch}_${event.roundIndex}_${event.startTick}_${event.type}_${index}`,
+      startTick: event.startTick,
+      endTick: event.endTick || event.startTick + 320, // ~5 sec default at 64 tick
+      label: `${event.type} - Round ${event.roundIndex + 1}`,
+      eventType: event.type,
+      playerName: event.actorSteamId ? getPlayerName(event.actorSteamId) : 'Unknown Player',
+      playerSteamId: event.actorSteamId,
+    }))
+  }
+
   // Launch CS2 from overview (without specific event)
   const handleWatchInCS2 = async () => {
     if (!window.electronAPI) {
@@ -1119,6 +1142,24 @@ function MatchesScreen() {
     setVoicePlayerSteamId(player.steamId)
     setVoicePlayerName(player.name)
     setShowVoiceModal(true)
+  }
+
+  const handleExtractTeamVoice = (teamName: string, teamPlayers: PlayerScore[], e?: React.MouseEvent) => {
+    e?.stopPropagation()
+
+    if (!demoPath || !selectedMatch) {
+      setToast({ message: t('matches.demoFileRequired'), type: 'error' })
+      return
+    }
+
+    const mappedPlayers = teamPlayers.map((player) => ({
+      steamId: player.steamId,
+      name: player.name || player.steamId,
+    }))
+
+    setTeamCommsName(teamName)
+    setTeamCommsPlayers(mappedPlayers)
+    setShowTeamCommsModal(true)
   }
 
 
@@ -2511,8 +2552,17 @@ function MatchesScreen() {
                     <div className="grid grid-cols-2 gap-4">
                       {/* Team A Column */}
                       <div className="flex flex-col">
-                        <div className="bg-surface/30 border-b border-border pb-2 mb-2">
-                          <h3 className="text-lg font-semibold text-accent px-2">Team A</h3>
+                        <div className="bg-surface/30 border-b border-border pb-2 mb-2 flex items-center justify-between px-2 py-2">
+                          <h3 className="text-lg font-semibold text-accent">Team A</h3>
+                          <button
+                            onClick={(e) => handleExtractTeamVoice('Team A', groupedAndSortedScores.teamA, e)}
+                            disabled={!demoPath || groupedAndSortedScores.teamA.length === 0}
+                            className="px-2.5 py-1.5 bg-accent hover:bg-accent/90 disabled:bg-gray-600 disabled:cursor-not-allowed text-white text-xs rounded transition-colors flex items-center gap-1.5"
+                            title={!demoPath ? t('matches.demoFileRequired') : 'Extract team voice'}
+                          >
+                            <Mic size={12} />
+                            <span>Team Voice</span>
+                          </button>
                         </div>
                         {groupedAndSortedScores.teamA.length === 0 ? (
                           <div className="text-center text-gray-400 py-4 text-sm">No players</div>
@@ -2600,8 +2650,17 @@ function MatchesScreen() {
 
                       {/* Team B Column */}
                       <div className="flex flex-col">
-                        <div className="bg-surface/30 border-b border-border pb-2 mb-2">
-                          <h3 className="text-lg font-semibold text-accent px-2">Team B</h3>
+                        <div className="bg-surface/30 border-b border-border pb-2 mb-2 flex items-center justify-between px-2 py-2">
+                          <h3 className="text-lg font-semibold text-accent">Team B</h3>
+                          <button
+                            onClick={(e) => handleExtractTeamVoice('Team B', groupedAndSortedScores.teamB, e)}
+                            disabled={!demoPath || groupedAndSortedScores.teamB.length === 0}
+                            className="px-2.5 py-1.5 bg-accent hover:bg-accent/90 disabled:bg-gray-600 disabled:cursor-not-allowed text-white text-xs rounded transition-colors flex items-center gap-1.5"
+                            title={!demoPath ? t('matches.demoFileRequired') : 'Extract team voice'}
+                          >
+                            <Mic size={12} />
+                            <span>Team Voice</span>
+                          </button>
                         </div>
                         {groupedAndSortedScores.teamB.length === 0 ? (
                           <div className="text-center text-gray-400 py-4 text-sm">{t('matches.noPlayers')}</div>
@@ -3151,6 +3210,15 @@ function MatchesScreen() {
           playerName={voicePlayerName}
         />
 
+        {/* Team Voice Modal */}
+        <TeamCommsModal
+          isOpen={showTeamCommsModal}
+          onClose={() => setShowTeamCommsModal(false)}
+          demoPath={demoPath}
+          teamName={teamCommsName}
+          players={teamCommsPlayers}
+        />
+
         {/* Parser Logs Modal */}
         <ParserLogsModal
           isOpen={showParserLogsModal}
@@ -3160,6 +3228,20 @@ function MatchesScreen() {
           }}
           matchId={selectedMatchForLogs || ''}
         />
+
+        {/* Clip Export Panel */}
+        {showExportPanel && selectedMatch && demoPath && (
+          <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+            <div className="max-w-3xl w-full max-h-[90vh] overflow-auto">
+              <ClipExportPanel
+                demoPath={demoPath}
+                matchId={selectedMatch}
+                incidents={getExportableEvents()}
+                onClose={() => setShowExportPanel(false)}
+              />
+            </div>
+          </div>
+        )}
       </>
     </div>
   )

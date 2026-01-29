@@ -11,6 +11,7 @@ export interface Incident {
 export interface ElectronAPI {
   deleteDemo: (demoPath: string | null, deleteFile: boolean) => Promise<void>
   openFileDialog: (allowMultiple?: boolean) => Promise<string | null | string[]>
+  openDirectoryDialog: () => Promise<string | null>
   parseDemo: (args: { demoPath: string }) => Promise<{ matchId: string; dbPath: string }>
   stopParser: () => Promise<void>
   listMatches: () => Promise<Array<{ id: string; map: string; startedAt: string | null; playerCount: number; demoPath: string | null; isMissingDemo?: boolean; createdAtIso?: string | null; source?: string | null }>>
@@ -73,8 +74,30 @@ export interface ElectronAPI {
   getDemoFolders: () => Promise<string[]>
   extractVoice: (options: { demoPath: string; outputPath?: string; mode?: 'split-compact' | 'split-full' | 'single-full'; steamIds?: string[] }) => Promise<{ success: boolean; outputPath: string; files: string[]; filePaths?: string[] }>
   getVoiceAudio: (filePath: string) => Promise<{ success: boolean; data?: string; error?: string }>
-  generateWaveform: (filePath: string, audioDuration?: number) => Promise<{ success: boolean; data?: string; error?: string; pixelsPerSecond?: number; actualWidth?: number }>
+  generateWaveform: (
+    filePath: string,
+    audioDuration?: number,
+    options?: { mode?: 'fixed' | 'wide'; pixelsPerSecond?: number; maxWidth?: number }
+  ) => Promise<{ success: boolean; data?: string; error?: string; pixelsPerSecond?: number; actualWidth?: number }>
   cleanupVoiceFiles: (outputPath: string) => Promise<{ success: boolean; error?: string }>
+  exportClips: (payload: {
+    demoPath: string
+    clipRanges: Array<{ id: string; startTick: number; endTick: number; label?: string; playerName?: string; playerSteamId?: string; eventType?: string }>
+    outputDir?: string
+    resolutionPreset: '720p' | '1080p'
+    playbackSpeed: number
+    montageEnabled: boolean
+    fadeDuration: number
+    tickRate?: number
+  }) => Promise<{ success: boolean; clips: string[]; montage?: string; error?: string }>
+  onClipsExportProgress: (callback: (progress: {
+    stage: 'launch_cs2' | 'load_demo' | 'recording' | 'ffmpeg' | 'done'
+    currentClipIndex: number
+    totalClips: number
+    percent: number
+    message: string
+  }) => void) => void
+  showItemInFolder: (filePath: string) => Promise<void>
   onParserMessage: (callback: (message: string) => void) => void
   onParserLog: (callback: (log: string) => void) => void
   onParserExit: (callback: (data: { code: number | null; signal: string | null }) => void) => void

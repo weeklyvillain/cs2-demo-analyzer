@@ -14,6 +14,7 @@ import * as matchesService from './matchesService'
 import { pushCommand, getCommandLog } from './commandLog'
 import { cs2OverlayTracker } from './cs2OverlayTracker'
 import { overlayHoverController } from './overlayHoverController'
+import { ClipExportService, ExportOptions } from './clipExportService'
 
 let mainWindow: BrowserWindow | null = null
 let splashWindow: BrowserWindow | null = null
@@ -1112,6 +1113,20 @@ ipcMain.handle('dialog:openFile', async (_, allowMultiple: boolean = false) => {
   }
 
   return allowMultiple ? result.filePaths : result.filePaths[0]
+})
+
+ipcMain.handle('dialog:openDirectory', async () => {
+  if (!mainWindow) return null
+
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openDirectory'],
+  })
+
+  if (result.canceled || result.filePaths.length === 0) {
+    return null
+  }
+
+  return result.filePaths[0]
 })
 
 ipcMain.handle('parser:parse', async (_, { demoPath }: { demoPath: string }) => {
@@ -2403,6 +2418,46 @@ ipcMain.handle('matches:deleteAll', async () => {
 ipcMain.handle('matches:trimToCap', async (_, cap: number) => {
   const deleted = await matchesService.trimMatchesToCap(cap)
   return { deleted }
+})
+
+// Clip export IPC handler
+ipcMain.handle('clips:export', async (event, payload: ExportOptions) => {
+  try {
+    // Validate required fields
+    if (!payload.demoPath || !fs.existsSync(payload.demoPath)) {
+      throw new Error('Demo file not found')
+    }
+    if (!payload.clipRanges || payload.clipRanges.length === 0) {
+      throw new Error('No clip ranges provided')
+    }
+    if (payload.playbackSpeed <= 0 || payload.playbackSpeed > 10) {
+      throw new Error('Playback speed must be between 0.1 and 10')
+    }
+
+    const netconPort = parseInt(getSetting('cs2_netconport', '2121'), 10)
+    const exportService = new ClipExportService(netconPort)
+
+    // Get output directory from settings or use payload
+    const clipsOutputDir = getSetting('clips_output_dir', '')
+    if (!payload.outputDir && clipsOutputDir) {
+      payload.outputDir = clipsOutputDir
+    }
+
+    // Subscribe to progress updates and forward to renderer
+    const result = await exportService.exportClips(payload, (progress) => {
+      // Send progress to renderer
+      event.sender.send('clips:export:progress', progress)
+    })
+
+    return result
+  } catch (err) {
+    console.error('[ClipExport] Error:', err)
+    return {
+      success: false,
+      clips: [],
+      error: err instanceof Error ? err.message : 'Unknown error during clip export',
+    }
+  }
 })
 
 // Stats IPC handlers
@@ -4987,7 +5042,7 @@ function getPngDimensions(buffer: Buffer): { width: number; height: number } | n
 }
 
 // Voice waveform generation IPC handler - generate waveform PNG using audiowaveform
-ipcMain.handle('voice:generateWaveform', async (_, filePath: string, audioDuration?: number) => {
+ipcMain.handle('voice:generateWaveform', async (_, filePath: string, audioDuration?: number, options?: { mode?: 'fixed' | 'wide'; pixelsPerSecond?: number; maxWidth?: number }) => {
   try {
     if (!fs.existsSync(filePath)) {
       return { success: false, error: 'Audio file not found' }
@@ -5011,15 +5066,32 @@ ipcMain.handle('voice:generateWaveform', async (_, filePath: string, audioDurati
     const audioHash = crypto.createHash('sha256').update(fileBuffer).digest('hex').substring(0, 32)
     const waveformPath = path.join(waveformDir, `waveform-${audioHash}.png`)
 
-    const targetWidth = 600
+    const defaultWidth = 600
     
     // Calculate pixels-per-second dynamically to ensure waveform is always exactly 600px wide
     // This must be calculated based on audio duration and target width
-    if (!audioDuration || audioDuration <= 0) {
+    const audioDurationNumber = typeof audioDuration === 'string' ? parseFloat(audioDuration) : audioDuration
+    if (audioDurationNumber === undefined || !Number.isFinite(audioDurationNumber) || audioDurationNumber <= 0) {
       return { success: false, error: 'Audio duration is required to generate waveform with fixed width' }
     }
-    
-    const pixelsPerSecond = targetWidth / audioDuration
+
+    const mode = options?.mode || 'fixed'
+    const pixelsPerSecondSetting = options?.pixelsPerSecond && options.pixelsPerSecond > 0 ? options.pixelsPerSecond : 4
+    const maxWidth = options?.maxWidth && options.maxWidth > 0 ? options.maxWidth : 20000
+
+    let targetWidth = defaultWidth
+    let rawPixelsPerSecond = targetWidth / audioDurationNumber
+
+    if (mode === 'wide') {
+      targetWidth = Math.max(defaultWidth, Math.round(audioDurationNumber * pixelsPerSecondSetting))
+      targetWidth = Math.min(targetWidth, maxWidth)
+      rawPixelsPerSecond = targetWidth / audioDurationNumber
+    }
+
+    if (!Number.isFinite(rawPixelsPerSecond) || rawPixelsPerSecond <= 0) {
+      return { success: false, error: 'Invalid pixels-per-second calculation' }
+    }
+    const pixelsPerSecond = Math.max(1, Math.ceil(rawPixelsPerSecond))
 
     // Check if waveform already exists (cache)
     // Note: We still use cached waveforms, but always calculate pixelsPerSecond based on targetWidth
@@ -5045,7 +5117,7 @@ ipcMain.handle('voice:generateWaveform', async (_, filePath: string, audioDurati
     const args: string[] = [
       '-i', filePath,
       '-o', waveformPath,
-      '-w', targetWidth.toString(),   // Fixed width: always 600px
+      '-w', targetWidth.toString(),   // Fixed width (wide for team waveform)
       '-h', '150',   // Fixed height for consistent display
       '--waveform-style', 'bars',
       '--bar-width', '2',   // Slightly thinner bars for higher resolution
@@ -5055,9 +5127,12 @@ ipcMain.handle('voice:generateWaveform', async (_, filePath: string, audioDurati
       '--waveform-color', 'd07a2d',    // Orange waveform matching accent
       '--no-axis-labels',              // No axis labels for cleaner look
       '--amplitude-scale', '1.8',       // Lower fixed scale to preserve volume relationships
-      '--pixels-per-second', Math.round(pixelsPerSecond).toString(),  // Calculated to ensure 600px width
       // Dynamic pixels-per-second ensures waveform is always exactly 600px regardless of duration
     ]
+
+    if (mode === 'fixed') {
+      args.push('--pixels-per-second', pixelsPerSecond.toString())
+    }
 
     return new Promise<{ success: boolean; data?: string; error?: string; pixelsPerSecond?: number; actualWidth?: number }>((resolve) => {
       // Kill any existing audiowaveform process before starting a new one
