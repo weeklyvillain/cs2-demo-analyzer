@@ -195,12 +195,14 @@ func runJSON(ctx context.Context, demoPath, outputPath, matchID string, position
 	var partialFiles []string
 	partNumber := 1
 	allowedEventTypes := map[string]bool{
-		"TEAM_KILL":   true,
-		"TEAM_DAMAGE": true,
-		"DISCONNECT":  true,
-		"RECONNECT":   true,
-		"AFK":         true,
-		"TEAM_FLASH":  true,
+		"TEAM_KILL":      true,
+		"TEAM_DAMAGE":    true,
+		"DISCONNECT":     true,
+		"RECONNECT":      true,
+		"AFK":            true,
+		"TEAM_FLASH":     true,
+		"ECONOMY_GRIEF":  true,
+		"BODY_BLOCK":     true,
 	}
 
 	// Parse demo - events will be written to file during parsing
@@ -672,6 +674,39 @@ func run(ctx context.Context, demoPath, outPath, matchID string, positionInterva
 			}
 		}
 
+		// Process body blocking detection from database positions
+		output.Log("info", "Processing body blocking detection from database...")
+		bodyBlockExtractor := extractors.NewBodyBlockExtractor(matchData.TickRate, dbConn)
+		for _, roundData := range matchData.Rounds {
+			bodyBlockExtractor.ProcessRoundFromDatabase(actualMatchID, roundData.RoundIndex, roundData.StartTick, roundData.EndTick)
+		}
+		// Write body block events to database
+		bodyBlockEvents := bodyBlockExtractor.GetEvents()
+		if len(bodyBlockEvents) > 0 {
+			output.Log("info", fmt.Sprintf("Found %d body blocking events", len(bodyBlockEvents)))
+			dbEvents := make([]db.Event, 0, len(bodyBlockEvents))
+			for _, eventData := range bodyBlockEvents {
+				dbEvents = append(dbEvents, db.Event{
+					MatchID:       actualMatchID,
+					RoundIndex:    eventData.RoundIndex,
+					Type:          eventData.Type,
+					StartTick:     eventData.StartTick,
+					EndTick:       eventData.EndTick,
+					ActorSteamID:  eventData.ActorSteamID,
+					VictimSteamID: eventData.VictimSteamID,
+					Severity:      &eventData.Severity,
+					Confidence:    &eventData.Confidence,
+					MetaJSON:      eventData.MetaJSON,
+				})
+			}
+			bodyBlockExtractor.ClearEvents()
+			if err := writer.BatchInsertEvents(ctx, dbEvents); err != nil {
+				output.Log("warn", fmt.Sprintf("Failed to batch insert body blocking events: %v", err))
+			} else {
+				output.Log("info", fmt.Sprintf("Stored %d body blocking events", len(bodyBlockEvents)))
+			}
+		}
+
 		// Store grenade positions (RAM-only mode accumulates these)
 		if len(matchData.GrenadePositions) > 0 {
 			output.Log("info", fmt.Sprintf("Storing %d grenade positions...", len(matchData.GrenadePositions)))
@@ -861,6 +896,39 @@ func run(ctx context.Context, demoPath, outPath, matchID string, positionInterva
 				output.Log("warn", fmt.Sprintf("Failed to batch insert AFK events: %v", err))
 			} else {
 				output.Log("info", fmt.Sprintf("Stored %d AFK events", len(afkEvents)))
+			}
+		}
+
+		// Process body blocking detection from database positions (streaming mode)
+		output.Log("info", "Processing body blocking detection from database...")
+		bodyBlockExtractor := extractors.NewBodyBlockExtractor(matchData.TickRate, dbConn)
+		for _, roundData := range matchData.Rounds {
+			bodyBlockExtractor.ProcessRoundFromDatabase(actualMatchID, roundData.RoundIndex, roundData.StartTick, roundData.EndTick)
+		}
+		// Write body block events to database
+		bodyBlockEvents := bodyBlockExtractor.GetEvents()
+		if len(bodyBlockEvents) > 0 {
+			output.Log("info", fmt.Sprintf("Found %d body blocking events", len(bodyBlockEvents)))
+			dbEvents := make([]db.Event, 0, len(bodyBlockEvents))
+			for _, eventData := range bodyBlockEvents {
+				dbEvents = append(dbEvents, db.Event{
+					MatchID:       actualMatchID,
+					RoundIndex:    eventData.RoundIndex,
+					Type:          eventData.Type,
+					StartTick:     eventData.StartTick,
+					EndTick:       eventData.EndTick,
+					ActorSteamID:  eventData.ActorSteamID,
+					VictimSteamID: eventData.VictimSteamID,
+					Severity:      &eventData.Severity,
+					Confidence:    &eventData.Confidence,
+					MetaJSON:      eventData.MetaJSON,
+				})
+			}
+			bodyBlockExtractor.ClearEvents()
+			if err := writer.BatchInsertEvents(ctx, dbEvents); err != nil {
+				output.Log("warn", fmt.Sprintf("Failed to batch insert body blocking events: %v", err))
+			} else {
+				output.Log("info", fmt.Sprintf("Stored %d body blocking events", len(bodyBlockEvents)))
 			}
 		}
 	}

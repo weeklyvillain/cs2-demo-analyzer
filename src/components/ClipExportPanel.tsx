@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { AlertCircle, Download, Loader2, X, FolderOpen, CheckCircle, User, ChevronDown, ChevronUp } from 'lucide-react'
+import { AlertCircle, Download, Loader2, X, FolderOpen, CheckCircle, User, ChevronDown, ChevronUp, Settings } from 'lucide-react'
 
 export interface ClipRange {
   id: string
@@ -8,6 +8,7 @@ export interface ClipRange {
   label?: string
   playerName?: string
   playerSteamId?: string
+  playerSlot?: number
   eventType?: string
 }
 
@@ -19,7 +20,7 @@ interface ClipExportPanelProps {
 }
 
 interface ExportProgress {
-  stage: 'launch_cs2' | 'load_demo' | 'recording' | 'ffmpeg' | 'done'
+  stage: 'validate' | 'launch' | 'load_demo' | 'seek' | 'pov' | 'recording' | 'encode' | 'montage' | 'done'
   currentClipIndex: number
   totalClips: number
   percent: number
@@ -34,10 +35,14 @@ interface PlayerGroup {
 
 export function ClipExportPanel({ demoPath, incidents, onClose }: ClipExportPanelProps) {
   const [selectedClips, setSelectedClips] = useState<Set<string>>(new Set(incidents.map((i) => i.id)))
-  const [resolutionPreset, setResolutionPreset] = useState<'720p' | '1080p'>('1080p')
-  const [playbackSpeed, setPlaybackSpeed] = useState(4)
+  const [width, setWidth] = useState(1280)
+  const [height, setHeight] = useState(720)
+  const [fps, setFps] = useState(60)
+  const [timescale, setTimescale] = useState(4)
+  const [tickrate, setTickrate] = useState(64)
   const [montageEnabled, setMontageEnabled] = useState(true)
   const [fadeDuration, setFadeDuration] = useState(0.5)
+  const [showAdvanced, setShowAdvanced] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
   const [progress, setProgress] = useState<ExportProgress | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -151,8 +156,11 @@ export function ClipExportPanel({ demoPath, incidents, onClose }: ClipExportPane
       const result = await window.electronAPI?.exportClips?.({
         demoPath,
         clipRanges: clipsToExport,
-        resolutionPreset,
-        playbackSpeed,
+        width,
+        height,
+        fps,
+        timescale,
+        tickrate,
         montageEnabled,
         fadeDuration,
       })
@@ -337,46 +345,112 @@ validSelectedCount
           <div className="space-y-4 mb-6 border-t border-border pt-4">
             <div>
               <label className="block text-sm font-semibold text-white mb-2">Resolution:</label>
-              <select
-                value={resolutionPreset}
-                onChange={(e) => setResolutionPreset(e.target.value as '720p' | '1080p')}
-                className="w-full px-3 py-2 bg-surface border border-border text-white rounded text-sm"
-              >
-                <option value="720p">720p (~50-150MB per min)</option>
-                <option value="1080p">1080p (~150-400MB per min)</option>
-              </select>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Width</label>
+                  <input
+                    type="number"
+                    value={width}
+                    onChange={(e) => setWidth(parseInt(e.target.value) || 1280)}
+                    min={640}
+                    max={3840}
+                    step={16}
+                    className="w-full px-3 py-2 bg-surface border border-border rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Height</label>
+                  <input
+                    type="number"
+                    value={height}
+                    onChange={(e) => setHeight(parseInt(e.target.value) || 720)}
+                    min={480}
+                    max={2160}
+                    step={16}
+                    className="w-full px-3 py-2 bg-surface border border-border rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+                  />
+                </div>
+              </div>
+              <p className="text-xs text-gray-400 mt-1">
+                Common: 1280x720 (720p), 1920x1080 (1080p), 2560x1440 (1440p)
+              </p>
             </div>
 
             <div>
               <label className="block text-sm font-semibold text-white mb-2">
-                Playback Speed: <span className="text-accent">{playbackSpeed}x</span>
+                Recording Speed: {timescale}x
               </label>
               <input
                 type="range"
                 min="1"
-                max="10"
+                max="16"
                 step="1"
-                value={playbackSpeed}
-                onChange={(e) => setPlaybackSpeed(parseInt(e.target.value))}
-                className="w-full accent-accent"
+                value={timescale}
+                onChange={(e) => setTimescale(Number(e.target.value))}
+                className="w-full"
               />
-              <p className="text-xs text-gray-400 mt-1">Recording will be {playbackSpeed}x faster, then normalized back to 1x speed via ffmpeg</p>
+              <p className="text-xs text-gray-400 mt-1">
+                Higher = faster recording (final output will be normal speed)
+              </p>
             </div>
 
-            <label className="flex items-center gap-2 cursor-pointer">
+            {/* Advanced Settings Toggle */}
+            <button
+              onClick={() => setShowAdvanced(!showAdvanced)}
+              className="flex items-center gap-2 text-sm text-gray-400 hover:text-white transition-colors"
+            >
+              <Settings size={16} />
+              {showAdvanced ? 'Hide' : 'Show'} Advanced Settings
+              {showAdvanced ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+            </button>
+
+            {showAdvanced && (
+              <div className="space-y-4 pl-4 border-l-2 border-accent/30">
+                <div>
+                  <label className="block text-sm font-semibold text-white mb-2">FPS:</label>
+                  <input
+                    type="number"
+                    value={fps}
+                    onChange={(e) => setFps(parseInt(e.target.value) || 60)}
+                    min={30}
+                    max={240}
+                    className="w-full px-3 py-2 bg-surface border border-border rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+                  />
+                  <p className="text-xs text-gray-400 mt-1">Frames per second (typically 60)</p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-white mb-2">Tickrate:</label>
+                  <input
+                    type="number"
+                    value={tickrate}
+                    onChange={(e) => setTickrate(parseInt(e.target.value) || 64)}
+                    min={16}
+                    max={128}
+                    className="w-full px-3 py-2 bg-surface border border-border rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+                  />
+                  <p className="text-xs text-gray-400 mt-1">Server tickrate (typically 64 or 128)</p>
+                </div>
+              </div>
+            )}
+
+            <div className="flex items-center gap-2">
               <input
                 type="checkbox"
+                id="montageEnabled"
                 checked={montageEnabled}
                 onChange={(e) => setMontageEnabled(e.target.checked)}
-                className="w-4 h-4 rounded accent-accent"
+                className="w-4 h-4 rounded"
               />
-              <span className="text-sm font-semibold text-white">Create montage video</span>
-            </label>
+              <label htmlFor="montageEnabled" className="text-sm text-white">
+                Create montage (combine all clips)
+              </label>
+            </div>
 
             {montageEnabled && (
               <div>
                 <label className="block text-sm font-semibold text-white mb-2">
-                  Fade Duration: <span className="text-accent">{fadeDuration.toFixed(1)}s</span>
+                  Fade Duration: {fadeDuration.toFixed(1)}s
                 </label>
                 <input
                   type="range"
@@ -384,8 +458,8 @@ validSelectedCount
                   max="2"
                   step="0.1"
                   value={fadeDuration}
-                  onChange={(e) => setFadeDuration(parseFloat(e.target.value))}
-                  className="w-full accent-accent"
+                  onChange={(e) => setFadeDuration(Number(e.target.value))}
+                  className="w-full"
                 />
               </div>
             )}

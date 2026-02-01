@@ -39,6 +39,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   launchCS2: (demoPath: string, startTick?: number, playerName?: string, confirmLoadDemo?: boolean) => ipcRenderer.invoke('cs2:launch', demoPath, startTick, playerName, confirmLoadDemo),
   // CS2 Copy Commands (without launching)
   copyCS2Commands: (demoPath: string, startTick?: number, playerName?: string) => ipcRenderer.invoke('cs2:copyCommands', demoPath, startTick, playerName),
+
+  // HLAE Launch/Test
+  launchHlaeCs2: (opts?: { width?: number; height?: number; launchArgs?: string; movieConfigDir?: string }) =>
+    ipcRenderer.invoke('hlae:launchCs2', opts),
   
   // Settings
   getSetting: (key: string, defaultValue?: string) => ipcRenderer.invoke('settings:get', key, defaultValue),

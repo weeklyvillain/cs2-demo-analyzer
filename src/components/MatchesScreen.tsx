@@ -11,7 +11,30 @@ import { ClipExportPanel } from './ClipExportPanel'
 import type { ClipRange } from './ClipExportPanel'
 import { formatDisconnectReason } from '../utils/disconnectReason'
 import { t } from '../utils/translations'
-import { Clock, Skull, Zap, WifiOff, ChevronDown, ChevronUp, Copy, Play, Check, ArrowUp, ArrowDown, Trash2, X, Plus, Loader2, Mic, FolderOpen, Database, RefreshCw, Upload, Map as MapIcon, UserPlus, UserMinus, FileText, Download } from 'lucide-react'
+import { Clock, Skull, Zap, WifiOff, ChevronDown, ChevronUp, Copy, Play, Check, ArrowUp, ArrowDown, Trash2, X, Plus, Loader2, Mic, FolderOpen, Database, RefreshCw, Upload, Map as MapIcon, UserPlus, UserMinus, FileText, Download, Info } from 'lucide-react'
+
+// Custom dollar sign icon for economy griefing
+const DollarIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="64" cy="64" r="54" fill="#F4C430"/>
+    <circle cx="64" cy="64" r="44" fill="#FFD966"/>
+    <text x="64" y="78" textAnchor="middle" fontSize="48" fontWeight="bold" fill="#B8860B">$</text>
+  </svg>
+)
+
+// Custom body block icon for head stacking
+const BodyBlockIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+    {/* Player left */}
+    <circle cx="42" cy="34" r="10" fill="#FF9800"/>
+    <rect x="30" y="48" width="24" height="48" rx="7" fill="#FF9800"/>
+    {/* Player right */}
+    <circle cx="86" cy="34" r="10" fill="#FF9800"/>
+    <rect x="74" y="48" width="24" height="48" rx="7" fill="#FF9800"/>
+    {/* Impact bar (the block moment) */}
+    <rect x="56" y="68" width="16" height="8" rx="4" fill="#FF5722"/>
+  </svg>
+)
 
 interface Match {
   id: string
@@ -45,6 +68,7 @@ interface PlayerScore {
   teamFlashSeconds: number
   afkSeconds: number
   bodyBlockSeconds: number
+  economyGriefCount: number
   griefScore: number
 }
 
@@ -116,7 +140,10 @@ function MatchesScreen() {
     teamDamage: true,
     disconnects: true,
     teamFlashes: true,
+    economy: true,
+    bodyBlock: true,
   })
+  const [selectedEconomyEvent, setSelectedEconomyEvent] = useState<any | null>(null)
   const [afkMinSeconds, setAfkMinSeconds] = useState<number>(10)
   const [flashMinSeconds, setFlashMinSeconds] = useState<number>(1.5)
   const [afkSortBy, setAfkSortBy] = useState<'round' | 'duration'>('round')
@@ -1841,6 +1868,17 @@ function MatchesScreen() {
                           <span>🎮</span>
                           <span>Watch in CS2</span>
                         </button>
+                        {
+                          false && (
+                            <button
+                              onClick={() => setShowExportPanel(true)}
+                              className="px-3 py-1.5 bg-accent text-white text-sm rounded hover:bg-accent/80 transition-colors flex items-center gap-1"
+                              title="Export clips from incidents"
+                            >
+                              <Download size={16} />
+                              <span>Export Clips</span>
+                            </button>)
+                        }
                         <button
                           onClick={handleDeleteDemo}
                           className="px-3 py-1.5 bg-accent text-white text-sm rounded hover:bg-accent/80 transition-colors flex items-center gap-1"
@@ -1931,6 +1969,8 @@ function MatchesScreen() {
                   const afkDetections = allEvents.filter(e => e.type === 'AFK_STILLNESS')
                   const disconnects = allEvents.filter(e => e.type === 'DISCONNECT')
                   const teamFlashes = allEvents.filter(e => e.type === 'TEAM_FLASH')
+                  const economyGriefs = allEvents.filter(e => e.type === 'ECONOMY_GRIEF')
+                  const bodyBlocks = allEvents.filter(e => e.type === 'BODY_BLOCK')
                   
                   const totalTeamDamage = teamDamage.reduce((sum, e) => sum + (e.meta?.total_damage || 0), 0)
                   const totalAfkSeconds = afkDetections.reduce((sum, e) => {
@@ -2007,7 +2047,7 @@ function MatchesScreen() {
                     <div className="flex flex-col gap-6 p-6">
 
                       {/* Summary Cards */}
-                      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+                      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-3">
                         <div className="bg-surface border border-border rounded-lg p-4">
                           <div className="flex items-center gap-2 mb-2 text-gray-400">
                             <Clock size={16} />
@@ -2047,6 +2087,22 @@ function MatchesScreen() {
                           </div>
                           <div className="text-3xl font-bold mb-1 text-accent">{filteredTeamFlashes.length}</div>
                           <div className="text-xs text-gray-500">{t('matches.friendlyFlashbangs')}</div>
+                        </div>
+                        <div className="bg-surface border border-border rounded-lg p-4">
+                          <div className="flex items-center gap-2 mb-2 text-gray-400">
+                            <DollarIcon />
+                            <span className="text-sm font-medium">Economy Grief</span>
+                          </div>
+                          <div className="text-3xl font-bold mb-1 text-yellow-400">{economyGriefs.length}</div>
+                          <div className="text-xs text-gray-500">Poor buy decisions</div>
+                        </div>
+                        <div className="bg-surface border border-border rounded-lg p-4">
+                          <div className="flex items-center gap-2 mb-2 text-gray-400">
+                            <BodyBlockIcon />
+                            <span className="text-sm font-medium">Body Block</span>
+                          </div>
+                          <div className="text-3xl font-bold mb-1 text-purple-400">{bodyBlocks.length}</div>
+                          <div className="text-xs text-gray-500">Head stacking incidents</div>
                         </div>
                       </div>
 
@@ -2538,6 +2594,339 @@ function MatchesScreen() {
                                 </div>
                               )}
                             </>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Economy Griefing */}
+                      {economyGriefs.length > 0 && (
+                        <div className="bg-surface border border-border rounded-lg p-4">
+                          <div className="flex items-center justify-between mb-3">
+                            <button
+                              onClick={() => toggleSection('economy')}
+                              className="flex items-center gap-2 text-lg font-semibold text-white hover:text-yellow-400 transition-colors"
+                            >
+                              <DollarIcon />
+                              Economy Griefing
+                              {expandedSections.economy ? <ChevronDown size={18} className="text-gray-500" /> : <ChevronUp size={18} className="text-gray-500" />}
+                            </button>
+                          </div>
+                          {expandedSections.economy && (
+                            <div className="flex flex-wrap gap-4">
+                              {economyGriefs
+                                .sort((a, b) => a.roundIndex - b.roundIndex)
+                                .map((econ, idx) => {
+                                  const griefType = econ.meta?.grief_type || 'unknown'
+                                  const startMoney = econ.meta?.start_money || 0
+                                  const moneySpent = econ.meta?.money_spent || 0
+                                  const spendPct = econ.meta?.spend_pct || 0
+                                  const teamAvgSpend = econ.meta?.team_avg_spend || 0
+                                  const teamAvgMoney = econ.meta?.team_avg_money || 0
+                                  const teamSpendPct = econ.meta?.team_spend_pct || 0
+                                  const griefTypeLabels: Record<string, string> = {
+                                    'equipment_mismatch': 'Wrong weapon choice',
+                                    'no_buy_with_team': 'Not buying with team',
+                                    'excessive_saving': 'Excessive saving',
+                                    'full_save_high_money': 'Full save with high money',
+                                  }
+
+                                  return (
+                                    <div key={idx} className="bg-secondary border border-border rounded p-3 min-w-[320px]">
+                                      <div className="flex items-center justify-between mb-2">
+                                        <span className="font-medium text-white">{getPlayerName(econ.actorSteamId)}</span>
+                                        <div className="flex items-center gap-2">
+                                          <button
+                                            onClick={() => setSelectedEconomyEvent(econ)}
+                                            className="p-1 hover:bg-accent/20 rounded transition-colors"
+                                            title="View details"
+                                          >
+                                            <Info size={14} className="text-gray-400 hover:text-accent" />
+                                          </button>
+                                          <span className="text-xs text-gray-400">Round {econ.roundIndex + 1}</span>
+                                          {demoPath && (
+                                            <div className="flex items-center gap-1">
+                                              <button
+                                                onClick={() => {
+                                                  const round = rounds.find(r => r.roundIndex === econ.roundIndex)
+                                                  if (round) {
+                                                    const targetTick = round.freezeEndTick || round.startTick
+                                                    setViewer2D({ roundIndex: econ.roundIndex, tick: targetTick })
+                                                  }
+                                                }}
+                                                className="p-1 hover:bg-accent/20 rounded transition-colors"
+                                                title="View in 2D"
+                                              >
+                                                <MapIcon size={14} className="text-gray-400 hover:text-accent" />
+                                              </button>
+                                              <button
+                                                onClick={() => handleCopyCommand(econ)}
+                                                className="p-1 hover:bg-accent/20 rounded transition-colors"
+                                                title="Watch this event in CS2"
+                                              >
+                                                <Play size={14} className="text-gray-400 hover:text-accent" />
+                                              </button>
+                                            </div>
+                                          )}
+                                        </div>
+                                      </div>
+                                      <div className="text-xs text-yellow-400 font-medium mb-2">
+                                        {griefTypeLabels[griefType] || griefType}
+                                      </div>
+                                      <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+                                        <div className="text-gray-400">
+                                          <span className="font-medium">Start money:</span>
+                                        </div>
+                                        <div className="text-white">
+                                          ${startMoney.toLocaleString()}
+                                        </div>
+                                        <div className="text-gray-400">
+                                          <span className="font-medium">Spent:</span>
+                                        </div>
+                                        <div className="text-white">
+                                          ${moneySpent.toLocaleString()} ({spendPct.toFixed(1)}%)
+                                        </div>
+                                        <div className="text-gray-400">
+                                          <span className="font-medium">Team avg money:</span>
+                                        </div>
+                                        <div className="text-gray-300">
+                                          ${Math.round(teamAvgMoney).toLocaleString()}
+                                        </div>
+                                        <div className="text-gray-400">
+                                          <span className="font-medium">Team avg spent:</span>
+                                        </div>
+                                        <div className="text-gray-300">
+                                          ${Math.round(teamAvgSpend).toLocaleString()} ({teamSpendPct.toFixed(1)}%)
+                                        </div>
+                                      </div>
+                                    </div>
+                                  )
+                                })}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {selectedEconomyEvent && (
+                        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+                          <div className="bg-surface border border-border rounded-lg max-w-md w-full max-h-[80vh] overflow-y-auto">
+                            <div className="sticky top-0 bg-surface border-b border-border p-4 flex items-center justify-between">
+                              <h2 className="text-lg font-semibold text-white">
+                                {getPlayerName(selectedEconomyEvent.actorSteamId)} - Round {selectedEconomyEvent.roundIndex + 1}
+                              </h2>
+                              <button
+                                onClick={() => setSelectedEconomyEvent(null)}
+                                className="p-1 hover:bg-secondary rounded transition-colors"
+                              >
+                                <X size={18} className="text-gray-400" />
+                              </button>
+                            </div>
+
+                            <div className="p-4 space-y-4">
+                              {/* Grief type */}
+                              <div>
+                                <div className="text-xs font-medium text-gray-400 mb-1">Grief Type:</div>
+                                <div className="text-yellow-400 font-medium">
+                                  {selectedEconomyEvent.meta?.grief_type === 'equipment_mismatch' && 'Wrong weapon choice'}
+                                  {selectedEconomyEvent.meta?.grief_type === 'no_buy_with_team' && 'Not buying with team'}
+                                  {selectedEconomyEvent.meta?.grief_type === 'excessive_saving' && 'Excessive saving'}
+                                  {selectedEconomyEvent.meta?.grief_type === 'full_save_high_money' && 'Full save with high money'}
+                                  {!['equipment_mismatch', 'no_buy_with_team', 'excessive_saving', 'full_save_high_money'].includes(selectedEconomyEvent.meta?.grief_type) && selectedEconomyEvent.meta?.grief_type}
+                                </div>
+                              </div>
+
+                              {/* Economy stats */}
+                              <div className="bg-secondary/50 rounded p-3 space-y-2">
+                                <div className="flex justify-between text-xs">
+                                  <span className="text-gray-400">Start money:</span>
+                                  <span className="text-white font-medium">${selectedEconomyEvent.meta?.start_money?.toLocaleString()}</span>
+                                </div>
+                                <div className="flex justify-between text-xs">
+                                  <span className="text-gray-400">Spent:</span>
+                                  <span className="text-white font-medium">${selectedEconomyEvent.meta?.money_spent?.toLocaleString()} ({selectedEconomyEvent.meta?.spend_pct?.toFixed(1)}%)</span>
+                                </div>
+                                <div className="flex justify-between text-xs">
+                                  <span className="text-gray-400">Remaining:</span>
+                                  <span className="text-white font-medium">${selectedEconomyEvent.meta?.remaining_money?.toLocaleString()}</span>
+                                </div>
+                              </div>
+
+                              {/* Team stats */}
+                              <div className="bg-secondary/50 rounded p-3 space-y-2">
+                                <div className="text-xs font-medium text-gray-400 mb-2">Team Average:</div>
+                                <div className="flex justify-between text-xs">
+                                  <span className="text-gray-400">Start money:</span>
+                                  <span className="text-white font-medium">${Math.round(selectedEconomyEvent.meta?.team_avg_money)?.toLocaleString()}</span>
+                                </div>
+                                <div className="flex justify-between text-xs">
+                                  <span className="text-gray-400">Spent:</span>
+                                  <span className="text-white font-medium">${Math.round(selectedEconomyEvent.meta?.team_avg_spend)?.toLocaleString()} ({selectedEconomyEvent.meta?.team_spend_pct?.toFixed(1)}%)</span>
+                                </div>
+                                <div className="flex justify-between text-xs">
+                                  <span className="text-gray-400">Remaining:</span>
+                                  <span className="text-white font-medium">${Math.round(selectedEconomyEvent.meta?.team_avg_remaining)?.toLocaleString()}</span>
+                                </div>
+                              </div>
+
+                              {/* Weapons */}
+                              {selectedEconomyEvent.meta && (
+                                <div>
+                                  <div className="text-xs font-medium text-gray-400 mb-2">Flagged Player's Equipment:</div>
+                                  <div className="bg-secondary/50 rounded p-2">
+                                    <div className="flex items-center justify-between mb-1">
+                                      <span className="text-white text-sm font-medium">{getPlayerName(selectedEconomyEvent.actorSteamId)}</span>
+                                      <span className="text-xs text-gray-400">
+                                        ${selectedEconomyEvent.meta?.remaining_money}
+                                        <span className="ml-1 text-[10px] text-gray-500">Remaining</span>
+                                      </span>
+                                    </div>
+                                    <div className="flex flex-wrap gap-1">
+                                      {selectedEconomyEvent.meta.weapon_details?.length ? (
+                                        selectedEconomyEvent.meta.weapon_details.map((weapon: any, widx: number) => (
+                                          <span key={widx} className={`text-xs rounded px-2 py-1 font-medium ${
+                                            weapon.purchase === 'bought' ? 'bg-red-500/20 text-red-400' : 
+                                            weapon.purchase === 'saved' ? 'bg-green-500/20 text-green-400' : 
+                                            'bg-yellow-500/20 text-yellow-400'
+                                          }`}>
+                                            {weapon.name} ({weapon.purchase === 'likely_bought' ? '~' : ''}{weapon.purchase})
+                                          </span>
+                                        ))
+                                      ) : (
+                                        <span className="text-xs text-gray-500">Nothing bought</span>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Team Equipment */}
+                              {selectedEconomyEvent.meta?.other_players && selectedEconomyEvent.meta.other_players.length > 0 && (
+                                <div>
+                                  <div className="text-xs font-medium text-gray-400 mb-2">Team Equipment:</div>
+                                  <div className="space-y-2">
+                                    {selectedEconomyEvent.meta.other_players.map((player: any, pidx: number) => (
+                                      <div key={pidx} className="bg-secondary/50 rounded p-2">
+                                        <div className="flex items-center justify-between mb-1">
+                                          <span className="text-white text-sm font-medium">{getPlayerName(player.steamid)}</span>
+                                          <span className="text-xs text-gray-400">
+                                            ${player.money}
+                                            <span className="ml-1 text-[10px] text-gray-500">Remaining</span>
+                                          </span>
+                                        </div>
+                                        <div className="flex flex-wrap gap-1">
+                                          {player.weapons?.length ? (
+                                            player.weapons.map((w: string, widx: number) => (
+                                              <span key={widx} className="text-xs bg-secondary rounded px-2 py-1 text-gray-300">
+                                                {w}
+                                              </span>
+                                            ))
+                                          ) : (
+                                            <span className="text-xs text-gray-500">Nothing bought</span>
+                                          )}
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Body Block (Head Stacking) */}
+                      {bodyBlocks.length > 0 && (
+                        <div className="bg-surface border border-border rounded-lg p-4">
+                          <div className="flex items-center justify-between mb-3">
+                            <button
+                              onClick={() => toggleSection('bodyBlock')}
+                              className="flex items-center gap-2 text-lg font-semibold text-white hover:text-purple-400 transition-colors"
+                            >
+                              <BodyBlockIcon />
+                              Body Block (Head Stacking)
+                              {expandedSections.bodyBlock ? <ChevronDown size={18} className="text-gray-500" /> : <ChevronUp size={18} className="text-gray-500" />}
+                            </button>
+                          </div>
+                          {expandedSections.bodyBlock && (
+                            <div className="flex flex-wrap gap-4">
+                              {bodyBlocks
+                                .sort((a, b) => a.roundIndex - b.roundIndex)
+                                .map((block, idx) => {
+                                  const seconds = block.meta?.seconds || 0
+                                  const stackedTicks = block.meta?.stacked_ticks || 0
+                                  const minXYDist = block.meta?.min_xy_distance || 0
+                                  const avgXYDist = block.meta?.avg_xy_distance || 0
+                                  const avgZDelta = block.meta?.avg_z_delta || 0
+
+                                  return (
+                                    <div key={idx} className="bg-secondary border border-border rounded p-3 min-w-[320px]">
+                                      <div className="flex items-center justify-between mb-2">
+                                        <div className="flex items-center gap-2">
+                                          <span className="font-medium text-white">{getPlayerName(block.actorSteamId)}</span>
+                                          <span className="text-xs text-gray-500">on</span>
+                                          <span className="font-medium text-purple-300">{getPlayerName(block.victimSteamId)}</span>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                          <span className="text-xs text-gray-400">Round {block.roundIndex + 1}</span>
+                                          {demoPath && (
+                                            <div className="flex items-center gap-1">
+                                              <button
+                                                onClick={() => {
+                                                  const round = rounds.find(r => r.roundIndex === block.roundIndex)
+                                                  if (round && block.startTick) {
+                                                    const previewSeconds = 3
+                                                    const previewTicks = previewSeconds * tickRate
+                                                    const targetTick = Math.max(round.startTick || 0, block.startTick - previewTicks)
+                                                    setViewer2D({ roundIndex: block.roundIndex, tick: targetTick })
+                                                  }
+                                                }}
+                                                className="p-1 hover:bg-accent/20 rounded transition-colors"
+                                                title="View in 2D"
+                                              >
+                                                <MapIcon size={14} className="text-gray-400 hover:text-accent" />
+                                              </button>
+                                              <button
+                                                onClick={() => handleCopyCommand(block)}
+                                                className="p-1 hover:bg-accent/20 rounded transition-colors"
+                                                title="Watch this event in CS2"
+                                              >
+                                                <Play size={14} className="text-gray-400 hover:text-accent" />
+                                              </button>
+                                            </div>
+                                          )}
+                                        </div>
+                                      </div>
+                                      <div className="text-xs text-purple-400 font-medium mb-2">
+                                        Head stacking detected
+                                      </div>
+                                      <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+                                        <div className="text-gray-400">
+                                          <span className="font-medium">Duration:</span>
+                                        </div>
+                                        <div className="text-white">
+                                          {seconds.toFixed(1)}s ({stackedTicks} ticks)
+                                        </div>
+                                        <div className="text-gray-400">
+                                          <span className="font-medium">Min XY dist:</span>
+                                        </div>
+                                        <div className="text-white">
+                                          {minXYDist.toFixed(1)} units
+                                        </div>
+                                        <div className="text-gray-400">
+                                          <span className="font-medium">Avg XY dist:</span>
+                                        </div>
+                                        <div className="text-white">
+                                          {avgXYDist.toFixed(1)} units
+                                        </div>
+                                        <div className="text-gray-400">
+                                          <span className="font-medium">Avg Z delta:</span>
+                                        </div>
+                                        <div className="text-white">
+                                          {avgZDelta.toFixed(1)} units
+                                        </div>
+                                      </div>
+                                    </div>
+                                  )
+                                })}
+                            </div>
                           )}
                         </div>
                       )}

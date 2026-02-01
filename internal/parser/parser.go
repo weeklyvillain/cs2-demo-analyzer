@@ -316,7 +316,7 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 	}
 
 	// Helper function to flush events from extractors immediately (for JSON mode)
-	flushExtractorEvents := func(eventsFile *os.File, teamKill, kill, teamDamage, teamFlash, disconnect, afk interface{}) {
+	flushExtractorEvents := func(eventsFile *os.File, teamKill, kill, teamDamage, teamFlash, disconnect, afk, bodyBlock interface{}) {
 		var allEvents []extractors.Event
 
 		if teamKill != nil {
@@ -366,6 +366,15 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 		}
 		if afk != nil {
 			if e, ok := afk.(*extractors.AFKExtractor); ok {
+				events := e.GetEvents()
+				if len(events) > 0 {
+					allEvents = append(allEvents, events...)
+					e.ClearEvents()
+				}
+			}
+		}
+		if bodyBlock != nil {
+			if e, ok := bodyBlock.(*extractors.BodyBlockExtractor); ok {
 				events := e.GetEvents()
 				if len(events) > 0 {
 					allEvents = append(allEvents, events...)
@@ -558,6 +567,8 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 	teamFlashExtractor := extractors.NewTeamFlashExtractor()
 	disconnectExtractor := extractors.NewDisconnectExtractor()
 	afkExtractor := extractors.NewAFKExtractor(tickRate, dbConn)
+	bodyBlockExtractor := extractors.NewBodyBlockExtractor(tickRate, dbConn)
+	economyExtractor := extractors.NewEconomyExtractor()
 
 	// Register handler for ServerInfo to get map name (v5)
 	// Based on: https://github.com/markus-wa/demoinfocs-golang/blob/master/examples/print-events/print_events.go
@@ -763,6 +774,38 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 			currentRound.FreezeEndTick = freezeEndTick
 			// Notify AFK extractor that freeze time has ended
 			afkExtractor.HandleFreezeTimeEnd(currentRound.RoundIndex, tick)
+			
+			// Analyze economy at freeze time end (after buy phase)
+			gs := p.parser.GameState()
+			if gs != nil {
+				participants := gs.Participants()
+				allPlayers := participants.All()
+				economyExtractor.HandleFreezeTimeEnd(currentRound.RoundIndex, tick, allPlayers)
+				
+				// Write economy events immediately to file/DB
+				economyEvents := economyExtractor.GetEvents()
+				if len(economyEvents) > 0 {
+					if eventsFile != nil {
+						// Stream to NDJSON file
+						for _, event := range economyEvents {
+							eventJSON, err := json.Marshal(event)
+							if err != nil {
+								fmt.Fprintf(os.Stderr, "WARN: Failed to marshal economy event to JSON: %v\n", err)
+								continue
+							}
+							if _, err := eventsFile.Write(eventJSON); err != nil {
+								fmt.Fprintf(os.Stderr, "WARN: Failed to write economy event to file: %v\n", err)
+								continue
+							}
+							if _, err := eventsFile.WriteString("\n"); err != nil {
+								fmt.Fprintf(os.Stderr, "WARN: Failed to write newline to events file: %v\n", err)
+							}
+						}
+					}
+					// DO NOT clear events here - they need to be collected at the end of parsing
+					// economyExtractor.ClearEvents()
+				}
+			}
 		}
 	})
 
@@ -783,6 +826,9 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 			}
 			positionBuffer = positionBuffer[:0] // Clear buffer
 		}
+
+		// Note: Body blocking detection moved to post-parse step in main.go
+		// It needs all positions to be fully stored in the database first
 
 		// Notify disconnect extractor of round end (for filtering disconnects within 10s)
 		disconnectExtractor.SetLastRoundEndTick(tick)
@@ -1158,7 +1204,7 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 
 		// In JSON mode, flush events immediately to avoid accumulation
 		if eventsFile != nil {
-			flushExtractorEvents(eventsFile, teamKillExtractor, killExtractor, nil, nil, nil, nil)
+			flushExtractorEvents(eventsFile, teamKillExtractor, killExtractor, nil, nil, nil, nil, bodyBlockExtractor)
 		}
 		// AFK tracking is now done from database after positions are written
 	})
@@ -1191,7 +1237,7 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 
 		// In JSON mode, flush events immediately to avoid accumulation
 		if eventsFile != nil {
-			flushExtractorEvents(eventsFile, nil, nil, teamDamageExtractor, nil, nil, nil)
+			flushExtractorEvents(eventsFile, nil, nil, teamDamageExtractor, nil, nil, nil, bodyBlockExtractor)
 		}
 		// AFK tracking is now done from database after positions are written
 	})
@@ -1224,7 +1270,7 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 
 		// In JSON mode, flush events immediately to avoid accumulation
 		if eventsFile != nil {
-			flushExtractorEvents(eventsFile, nil, nil, nil, teamFlashExtractor, nil, nil)
+			flushExtractorEvents(eventsFile, nil, nil, nil, teamFlashExtractor, nil, nil, bodyBlockExtractor)
 		}
 		// AFK tracking is now done from database after positions are written
 	})
@@ -1256,7 +1302,7 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 
 		// In JSON mode, flush events immediately to avoid accumulation
 		if eventsFile != nil {
-			flushExtractorEvents(eventsFile, nil, nil, nil, nil, disconnectExtractor, nil)
+			flushExtractorEvents(eventsFile, nil, nil, nil, nil, disconnectExtractor, nil, bodyBlockExtractor)
 		}
 		
 		// Mark player as disconnected and record the tick and round
@@ -2681,6 +2727,8 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 		allEvents = append(allEvents, teamFlashExtractor.GetEvents()...)
 		allEvents = append(allEvents, disconnectExtractor.GetEvents()...)
 		allEvents = append(allEvents, afkExtractor.GetEvents()...)
+		allEvents = append(allEvents, economyExtractor.GetEvents()...)
+		allEvents = append(allEvents, bodyBlockExtractor.GetEvents()...)
 
 		if eventsFile != nil {
 			// Write events to file as NDJSON
@@ -2706,6 +2754,8 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 				teamFlashExtractor.ClearEvents()
 				disconnectExtractor.ClearEvents()
 				afkExtractor.ClearEvents()
+				economyExtractor.ClearEvents()
+				bodyBlockExtractor.ClearEvents()
 			}
 		} else {
 			// Store in memory for database mode

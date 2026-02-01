@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS player_scores (
 	team_flash_seconds REAL NOT NULL DEFAULT 0,
 	afk_seconds REAL NOT NULL DEFAULT 0,
 	body_block_seconds REAL NOT NULL DEFAULT 0,
+	economy_grief_count INTEGER NOT NULL DEFAULT 0,
 	grief_score REAL NOT NULL DEFAULT 0,
 	PRIMARY KEY(match_id, steamid),
 	FOREIGN KEY(match_id) REFERENCES matches(id)
@@ -253,6 +254,22 @@ func runMigrations(ctx context.Context, db *sql.DB) error {
 		if err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			// Ignore "duplicate column" errors, but log others
 			fmt.Printf("WARN: Failed to add disconnect_round column: %v\n", err)
+		}
+	}
+	
+	// Check if player_scores table has economy_grief_count column
+	var hasEconomyGriefCount bool
+	checkColumnQuery6 := `SELECT COUNT(*) FROM pragma_table_info('player_scores') WHERE name = 'economy_grief_count'`
+	var count6 int
+	if err := db.QueryRowContext(ctx, checkColumnQuery6).Scan(&count6); err == nil {
+		hasEconomyGriefCount = count6 > 0
+	}
+	
+	if !hasEconomyGriefCount {
+		_, err := db.ExecContext(ctx, `ALTER TABLE player_scores ADD COLUMN economy_grief_count INTEGER NOT NULL DEFAULT 0`)
+		if err != nil && !strings.Contains(err.Error(), "duplicate column") {
+			// Ignore "duplicate column" errors, but log others
+			fmt.Printf("WARN: Failed to add economy_grief_count column: %v\n", err)
 		}
 	}
 	

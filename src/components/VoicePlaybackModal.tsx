@@ -384,6 +384,76 @@ export default function VoicePlaybackModal({
     }
   }
 
+  // Spacebar play/pause
+  useEffect(() => {
+    if (!isOpen || modalState !== 'playback') return
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const isSpace = event.code === 'Space' || event.key === ' '
+      const isArrowLeft = event.code === 'ArrowLeft' || event.key === 'ArrowLeft'
+      const isArrowRight = event.code === 'ArrowRight' || event.key === 'ArrowRight'
+      const isArrowUp = event.code === 'ArrowUp' || event.key === 'ArrowUp'
+      const isArrowDown = event.code === 'ArrowDown' || event.key === 'ArrowDown'
+      if (!isSpace && !isArrowLeft && !isArrowRight && !isArrowUp && !isArrowDown) return
+
+      const target = event.target as HTMLElement | null
+      const isInputTarget =
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable)
+
+      if (isInputTarget) return
+
+      event.preventDefault()
+
+      if (!audioRef.current) return
+
+      if (isSpace) {
+        if (audioRef.current.paused) {
+          audioRef.current.play()
+          setIsPlaying(true)
+        } else {
+          audioRef.current.pause()
+          setIsPlaying(false)
+        }
+        return
+      }
+
+      const volumeStep = 0.05
+
+      if (isArrowUp) {
+        setVolume(prev => Math.min(2, Math.round((prev + volumeStep) * 100) / 100))
+        return
+      }
+
+      if (isArrowDown) {
+        setVolume(prev => Math.max(0, Math.round((prev - volumeStep) * 100) / 100))
+        return
+      }
+
+      if (duration <= 0) return
+
+      if (isArrowLeft) {
+        const newTime = Math.max(0, audioRef.current.currentTime - skipTime)
+        audioRef.current.currentTime = newTime
+        setCurrentTime(newTime)
+      }
+
+      if (isArrowRight) {
+        const newTime = Math.min(duration, audioRef.current.currentTime + skipTime)
+        audioRef.current.currentTime = newTime
+        setCurrentTime(newTime)
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [isOpen, modalState])
+
   // Handle skip backward
   const handleSkipBackward = () => {
     if (audioRef.current) {

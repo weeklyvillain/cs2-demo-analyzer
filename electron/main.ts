@@ -15,6 +15,7 @@ import { pushCommand, getCommandLog } from './commandLog'
 import { cs2OverlayTracker } from './cs2OverlayTracker'
 import { overlayHoverController } from './overlayHoverController'
 import { ClipExportService, ExportOptions } from './clipExportService'
+import { HlaeLauncher, HlaeLogger, CS2CommandSender } from './hlaeRecorder'
 
 let mainWindow: BrowserWindow | null = null
 let splashWindow: BrowserWindow | null = null
@@ -2430,9 +2431,6 @@ ipcMain.handle('clips:export', async (event, payload: ExportOptions) => {
     if (!payload.clipRanges || payload.clipRanges.length === 0) {
       throw new Error('No clip ranges provided')
     }
-    if (payload.playbackSpeed <= 0 || payload.playbackSpeed > 10) {
-      throw new Error('Playback speed must be between 0.1 and 10')
-    }
 
     const netconPort = parseInt(getSetting('cs2_netconport', '2121'), 10)
     const exportService = new ClipExportService(netconPort)
@@ -2442,6 +2440,14 @@ ipcMain.handle('clips:export', async (event, payload: ExportOptions) => {
     if (!payload.outputDir && clipsOutputDir) {
       payload.outputDir = clipsOutputDir
     }
+
+    // Apply defaults
+    if (!payload.width) payload.width = 1280
+    if (!payload.height) payload.height = 720
+    if (!payload.fps) payload.fps = 60
+    if (!payload.timescale) payload.timescale = 4
+    if (payload.montageEnabled === undefined) payload.montageEnabled = false
+    if (!payload.fadeDuration) payload.fadeDuration = 0.5
 
     // Subscribe to progress updates and forward to renderer
     const result = await exportService.exportClips(payload, (progress) => {
@@ -2457,6 +2463,59 @@ ipcMain.handle('clips:export', async (event, payload: ExportOptions) => {
       clips: [],
       error: err instanceof Error ? err.message : 'Unknown error during clip export',
     }
+  }
+})
+
+// HLAE launch/test IPC handler (Windows only)
+ipcMain.handle('hlae:launchCs2', async (_event, opts?: { width?: number; height?: number; launchArgs?: string; movieConfigDir?: string }) => {
+  if (process.platform !== 'win32') {
+    return { success: false, error: 'HLAE launch is only supported on Windows.' }
+  }
+
+  try {
+    const hlaePath = getSetting('hlaeExePath', '') || getSetting('hlae_path', '')
+    const cs2Path = getSetting('cs2ExePath', '') || getSetting('cs2_path', '')
+    const netconPort = parseInt(getSetting('cs2_netconport', '2121'), 10)
+
+    const width = opts?.width ?? parseInt(getSetting('cs2_window_width', '1280'), 10)
+    const height = opts?.height ?? parseInt(getSetting('cs2_window_height', '720'), 10)
+    const launchArgs = opts?.launchArgs ?? getSetting('launchArgs', '')
+
+    let movieConfigDir = opts?.movieConfigDir ?? getSetting('movieConfigDir', '')
+    if (!movieConfigDir) {
+      movieConfigDir = path.join(app.getPath('userData'), 'hlae')
+      setSetting('movieConfigDir', movieConfigDir)
+    }
+
+    const timestamp = Date.now()
+    const jobDir = path.join(app.getPath('userData'), 'hlae-tests', `test-${timestamp}`)
+    if (!fs.existsSync(jobDir)) {
+      fs.mkdirSync(jobDir, { recursive: true })
+    }
+
+    const logger = new HlaeLogger(jobDir, 'hlae-launch.log')
+    logger.log('=== HLAE Launch Test Started ===')
+    logger.log(`HLAE path: ${hlaePath}`)
+    logger.log(`CS2 path: ${cs2Path}`)
+    logger.log(`Netcon port: ${netconPort}`)
+
+    const launcher = new HlaeLauncher(hlaePath, cs2Path, netconPort, logger)
+    await launcher.launch({ width, height, launchArgs, movieConfigDir })
+
+    const commandSender = new CS2CommandSender(netconPort, logger)
+    const hookVerified = await launcher.validateHook(commandSender)
+
+    return {
+      success: true,
+      pid: launcher.getProcessId(),
+      startedAt: new Date().toISOString(),
+      hookVerified,
+      logPath: path.join(jobDir, 'hlae-launch.log'),
+    }
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : String(err)
+    console.error('[HLAE] Launch test failed:', err)
+    return { success: false, error: errorMessage }
   }
 })
 

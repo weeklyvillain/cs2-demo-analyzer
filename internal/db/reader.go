@@ -18,14 +18,15 @@ func NewReader(db *sql.DB) *Reader {
 
 // PlayerScore represents a player's griefing score.
 type PlayerScore struct {
-	MatchID          string
-	SteamID          string
-	TeamKills        int
-	TeamDamage       float64
-	TeamFlashSeconds float64
-	AFKSeconds       float64
-	BodyBlockSeconds float64
-	GriefScore       float64
+	MatchID           string
+	SteamID           string
+	TeamKills         int
+	TeamDamage        float64
+	TeamFlashSeconds  float64
+	AFKSeconds        float64
+	BodyBlockSeconds  float64
+	EconomyGriefCount int
+	GriefScore        float64
 }
 
 // MatchSummary represents a match summary with players and scores.
@@ -46,7 +47,7 @@ type EventQuery struct {
 func (r *Reader) GetPlayerScores(ctx context.Context, matchID string) ([]PlayerScore, error) {
 	query := `
 		SELECT match_id, steamid, team_kills, team_damage, team_flash_seconds,
-		       afk_seconds, body_block_seconds, grief_score
+		       afk_seconds, body_block_seconds, economy_grief_count, grief_score
 		FROM player_scores
 		WHERE match_id = ?
 		ORDER BY grief_score DESC
@@ -63,7 +64,7 @@ func (r *Reader) GetPlayerScores(ctx context.Context, matchID string) ([]PlayerS
 		err := rows.Scan(
 			&score.MatchID, &score.SteamID, &score.TeamKills, &score.TeamDamage,
 			&score.TeamFlashSeconds, &score.AFKSeconds, &score.BodyBlockSeconds,
-			&score.GriefScore,
+			&score.EconomyGriefCount, &score.GriefScore,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan player score: %w", err)

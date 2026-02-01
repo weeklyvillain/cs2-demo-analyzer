@@ -108,6 +108,9 @@ func (s *Scorer) ComputeScores(ctx context.Context, matchID string, reader *db.R
 					}
 				}
 			}
+			
+		case "ECONOMY_GRIEF":
+			agg.economyGriefCount++
 		}
 	}
 
@@ -115,14 +118,15 @@ func (s *Scorer) ComputeScores(ctx context.Context, matchID string, reader *db.R
 	for steamID, agg := range scores {
 		score := s.computeGriefScore(agg)
 		playerScore := db.PlayerScore{
-			MatchID:          matchID,
-			SteamID:          steamID,
-			TeamKills:        agg.teamKills,
-			TeamDamage:       agg.teamDamage,
-			TeamFlashSeconds: agg.teamFlashSeconds,
-			AFKSeconds:       agg.afkSeconds,
-			BodyBlockSeconds: agg.bodyBlockSeconds,
-			GriefScore:       score,
+			MatchID:           matchID,
+			SteamID:           steamID,
+			TeamKills:         agg.teamKills,
+			TeamDamage:        agg.teamDamage,
+			TeamFlashSeconds:  agg.teamFlashSeconds,
+			AFKSeconds:        agg.afkSeconds,
+			BodyBlockSeconds:  agg.bodyBlockSeconds,
+			EconomyGriefCount: agg.economyGriefCount,
+			GriefScore:        score,
 		}
 
 		if err := s.writer.InsertPlayerScore(ctx, playerScore); err != nil {
@@ -134,12 +138,13 @@ func (s *Scorer) ComputeScores(ctx context.Context, matchID string, reader *db.R
 }
 
 type playerAggregate struct {
-	steamID          string
-	teamKills        int
-	teamDamage       float64
-	teamFlashSeconds float64
-	afkSeconds       float64
-	bodyBlockSeconds float64
+	steamID           string
+	teamKills         int
+	teamDamage        float64
+	teamFlashSeconds  float64
+	afkSeconds        float64
+	bodyBlockSeconds  float64
+	economyGriefCount int
 }
 
 // computeGriefScore calculates the grief score (0-100) from aggregates.
@@ -147,11 +152,12 @@ type playerAggregate struct {
 func (s *Scorer) computeGriefScore(agg *playerAggregate) float64 {
 	// Weights
 	const (
-		weightTK        = 0.30 // High
-		weightDamage    = 0.25 // Medium-high
+		weightTK        = 0.25 // High
+		weightDamage    = 0.20 // Medium-high
 		weightFlash     = 0.15 // Medium
 		weightAFK       = 0.15 // Medium
-		weightBodyBlock = 0.15 // Medium
+		weightBodyBlock = 0.10 // Medium-low
+		weightEconomy   = 0.15 // Medium - impacts team strategy
 	)
 
 	// Soft cap functions: tanh-based normalization
@@ -171,13 +177,17 @@ func (s *Scorer) computeGriefScore(agg *playerAggregate) float64 {
 
 	// Body block: soft cap at 30 seconds (tanh(30) ≈ 1.0)
 	bodyBlockScore := math.Tanh(agg.bodyBlockSeconds / 30.0) * 100.0
+	
+	// Economy grief: soft cap at 5 incidents (tanh(5) ≈ 1.0)
+	economyScore := math.Tanh(float64(agg.economyGriefCount) / 5.0) * 100.0
 
 	// Weighted sum
 	totalScore := tkScore*weightTK +
 		damageScore*weightDamage +
 		flashScore*weightFlash +
 		afkScore*weightAFK +
-		bodyBlockScore*weightBodyBlock
+		bodyBlockScore*weightBodyBlock +
+		economyScore*weightEconomy
 
 	// Clamp to 0-100
 	return math.Max(0, math.Min(100, totalScore))

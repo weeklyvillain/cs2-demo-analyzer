@@ -7,6 +7,10 @@ import { t, setLanguage, getLanguage, type Language } from '../utils/translation
 
 interface Settings {
   cs2_path: string
+  cs2ExePath: string
+  hlaeExePath: string
+  movieConfigDir: string
+  launchArgs: string
   clips_output_dir: string
   ffmpeg_path: string
   cs2_window_width: string
@@ -36,6 +40,10 @@ interface Settings {
 function SettingsScreen() {
   const [settings, setSettings] = useState<Settings>({
     cs2_path: '',
+    cs2ExePath: '',
+    hlaeExePath: '',
+    movieConfigDir: '',
+    launchArgs: '',
     clips_output_dir: '',
     ffmpeg_path: '',
     cs2_window_width: '1920',
@@ -74,6 +82,9 @@ function SettingsScreen() {
   const [loadingVersions, setLoadingVersions] = useState(false)
   const [installingVersion, setInstallingVersion] = useState<string | null>(null)
   const [installError, setInstallError] = useState<string | null>(null)
+  const [hlaeTestStatus, setHlaeTestStatus] = useState<'idle' | 'running' | 'success' | 'error'>('idle')
+  const [hlaeTestError, setHlaeTestError] = useState<string | null>(null)
+  const [hlaeTestLogPath, setHlaeTestLogPath] = useState<string | null>(null)
   const [appInfo, setAppInfo] = useState<{
     version: string
     platform: string
@@ -141,6 +152,10 @@ function SettingsScreen() {
       const allSettings = await window.electronAPI.getAllSettings()
       setSettings({
         cs2_path: allSettings.cs2_path || '',
+        cs2ExePath: allSettings.cs2ExePath || allSettings.cs2_path || '',
+        hlaeExePath: allSettings.hlaeExePath || allSettings.hlae_path || '',
+        movieConfigDir: allSettings.movieConfigDir || '',
+        launchArgs: allSettings.launchArgs || '',
         clips_output_dir: allSettings.clips_output_dir || '',
         ffmpeg_path: allSettings.ffmpeg_path || '',
         cs2_window_width: allSettings.cs2_window_width || '1920',
@@ -289,9 +304,60 @@ function SettingsScreen() {
 
     const path = await window.electronAPI.openFileDialog()
     if (path) {
-      setSettings((prev) => ({ ...prev, cs2_path: path }))
+      setSettings((prev) => ({ ...prev, cs2_path: path, cs2ExePath: path }))
       // Save immediately when file is selected
       await handleSaveSingleSetting('cs2_path', path)
+      await handleSaveSingleSetting('cs2ExePath', path)
+    }
+  }
+
+  const handleBrowseHlae = async () => {
+    if (!window.electronAPI) return
+
+    const path = await window.electronAPI.openFileDialog()
+    if (path) {
+      setSettings((prev) => ({ ...prev, hlaeExePath: path }))
+      await handleSaveSingleSetting('hlaeExePath', path)
+    }
+  }
+
+  const handleBrowseMovieConfigDir = async () => {
+    if (!window.electronAPI) return
+
+    const path = await window.electronAPI.openDirectoryDialog()
+    if (path) {
+      setSettings((prev) => ({ ...prev, movieConfigDir: path }))
+      await handleSaveSingleSetting('movieConfigDir', path)
+    }
+  }
+
+  const handleTestHlae = async () => {
+    if (!window.electronAPI) return
+
+    setHlaeTestStatus('running')
+    setHlaeTestError(null)
+    setHlaeTestLogPath(null)
+
+    try {
+      const result = await window.electronAPI.launchHlaeCs2({
+        launchArgs: settings.launchArgs,
+        movieConfigDir: settings.movieConfigDir,
+      })
+
+      if (!result.success) {
+        setHlaeTestStatus('error')
+        setHlaeTestError(result.error || 'Unknown error')
+        return
+      }
+
+      setHlaeTestStatus(result.hookVerified ? 'success' : 'error')
+      setHlaeTestLogPath(result.logPath || null)
+      if (!result.hookVerified) {
+        setHlaeTestError('HLAE hook not detected (mirv commands unavailable).')
+      }
+    } catch (err) {
+      setHlaeTestStatus('error')
+      setHlaeTestError(err instanceof Error ? err.message : String(err))
     }
   }
 
@@ -382,6 +448,10 @@ function SettingsScreen() {
                     type="text"
                     value={settings.cs2_path}
                     onChange={(e) => setSettings((prev) => ({ ...prev, cs2_path: e.target.value }))}
+                    onBlur={async () => {
+                      await handleSaveSingleSetting('cs2_path', settings.cs2_path)
+                      await handleSaveSingleSetting('cs2ExePath', settings.cs2_path)
+                    }}
                     placeholder="C:\Program Files\Steam\steamapps\common\Counter-Strike Global Offensive\game\bin\win64\cs2.exe"
                     className="flex-1 px-3 py-2 bg-surface border border-border rounded text-white text-sm"
                   />
@@ -396,6 +466,106 @@ function SettingsScreen() {
                   {t('settings.cs2PathDesc')}
                 </p>
               </div>
+              {
+                false && /* Hide cs2ExePath field for now, using cs2_path for both */
+                (<>
+                   {/* HLAE Path */}
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  HLAE Executable Path
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={settings.hlaeExePath}
+                    onChange={(e) => setSettings((prev) => ({ ...prev, hlaeExePath: e.target.value }))}
+                    onBlur={() => handleSaveSingleSetting('hlaeExePath', settings.hlaeExePath)}
+                    placeholder="C:\HLAE\HLAE.exe"
+                    className="flex-1 px-3 py-2 bg-surface border border-border rounded text-white text-sm"
+                  />
+                  <button
+                    onClick={handleBrowseHlae}
+                    className="px-4 py-2 bg-accent text-white rounded hover:bg-accent/80 transition-colors text-sm"
+                  >
+                    Browse
+                  </button>
+                </div>
+                <p className="text-xs text-gray-500 mt-1">
+                  Path to HLAE.exe (AfxHookSource2).
+                </p>
+              </div>
+
+              {/* HLAE Movie Config Directory */}
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  HLAE Movie Config Directory (USRLOCALCSGO)
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={settings.movieConfigDir}
+                    onChange={(e) => setSettings((prev) => ({ ...prev, movieConfigDir: e.target.value }))}
+                    onBlur={() => handleSaveSingleSetting('movieConfigDir', settings.movieConfigDir)}
+                    placeholder="C:\Users\YourName\AppData\Roaming\CS2 Demo Analyzer\hlae"
+                    className="flex-1 px-3 py-2 bg-surface border border-border rounded text-white text-sm"
+                  />
+                  <button
+                    onClick={handleBrowseMovieConfigDir}
+                    className="px-4 py-2 bg-accent text-white rounded hover:bg-accent/80 transition-colors text-sm"
+                  >
+                    Browse
+                  </button>
+                </div>
+                <p className="text-xs text-gray-500 mt-1">
+                  Folder for HLAE configs. A cfg/ folder will be created inside.
+                </p>
+              </div>
+
+              {/* HLAE Launch Args */}
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  HLAE Launch Arguments
+                </label>
+                <input
+                  type="text"
+                  value={settings.launchArgs}
+                  onChange={(e) => setSettings((prev) => ({ ...prev, launchArgs: e.target.value }))}
+                  onBlur={() => handleSaveSingleSetting('launchArgs', settings.launchArgs)}
+                  placeholder="-novid -console -windowed -noborder -w 1280 -h 720"
+                  className="w-full px-3 py-2 bg-surface border border-border rounded text-white text-sm"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Additional CS2 launch args appended when HLAE starts CS2.
+                </p>
+              </div>
+
+              {/* HLAE Test Button */}
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={handleTestHlae}
+                  disabled={hlaeTestStatus === 'running'}
+                  className="px-4 py-2 bg-green-600/20 text-green-400 border border-green-600/50 rounded hover:bg-green-600/30 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {hlaeTestStatus === 'running' ? 'Testing HLAE...' : 'Test HLAE'}
+                </button>
+                {hlaeTestStatus === 'success' && (
+                  <span className="text-sm text-green-400">Hook verified</span>
+                )}
+                {hlaeTestStatus === 'error' && (
+                  <span className="text-sm text-red-400">Test failed</span>
+                )}
+                {hlaeTestLogPath && (
+                  <button
+                    onClick={() => window.electronAPI?.showItemInFolder(hlaeTestLogPath)}
+                    className="text-sm text-blue-400 hover:text-blue-300"
+                  >
+                    Show Log
+                  </button>
+                )}
+              </div>
+              {hlaeTestError && (
+                <p className="text-xs text-red-400">{hlaeTestError}</p>
+              )}
 
               {/* Clips Output Directory */}
               <div>
@@ -446,6 +616,10 @@ function SettingsScreen() {
                   Used for speed normalization and montage rendering.
                 </p>
               </div>
+              </>
+                )
+              }
+             
 
             </div>
           </div>

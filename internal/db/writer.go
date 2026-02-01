@@ -197,14 +197,14 @@ func (w *Writer) InsertPlayerScore(ctx context.Context, score PlayerScore) error
 	query := `
 		INSERT OR REPLACE INTO player_scores (
 			match_id, steamid, team_kills, team_damage, team_flash_seconds,
-			afk_seconds, body_block_seconds, grief_score
+			afk_seconds, body_block_seconds, economy_grief_count, grief_score
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 	_, err := w.db.ExecContext(ctx, query,
 		score.MatchID, score.SteamID, score.TeamKills, score.TeamDamage,
 		score.TeamFlashSeconds, score.AFKSeconds, score.BodyBlockSeconds,
-		score.GriefScore,
+		score.EconomyGriefCount, score.GriefScore,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to insert player score: %w", err)

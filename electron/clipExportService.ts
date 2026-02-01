@@ -23,6 +23,13 @@ export interface ExportOptions {
   montageEnabled: boolean
   fadeDuration: number
   tickRate?: number
+  width?: number
+  height?: number
+  fps?: number
+  timescale?: number
+  mapName?: string
+  introEnabled?: boolean
+  introDuration?: number
 }
 
 export interface ExportProgress {
@@ -34,6 +41,16 @@ export interface ExportProgress {
 }
 
 type ProgressCallback = (progress: ExportProgress) => void
+
+/**
+ * Escape text for FFmpeg drawtext filter
+ */
+function ffmpegEscapeDrawtext(text: string): string {
+  return text
+    .replace(/\\/g, "\\\\")
+    .replace(/:/g, "\\:")
+    .replace(/'/g, "\\'")
+}
 
 export class ClipExportService {
   private cs2Process: ChildProcess | null = null
@@ -57,6 +74,9 @@ export class ClipExportService {
       }
       if (!options.clipRanges || options.clipRanges.length === 0) {
         throw new Error('No clip ranges provided')
+      }
+      if (options.playbackSpeed === undefined || options.playbackSpeed === null) {
+        options.playbackSpeed = 1.0
       }
       if (options.playbackSpeed <= 0 || options.playbackSpeed > 10) {
         throw new Error('Playback speed must be between 0.1 and 10')
@@ -101,11 +121,52 @@ export class ClipExportService {
 
       await this.loadDemo(options.demoPath)
 
+      let introRawPath: string | null = null
+      let firstClipOverridePath: string | null = null
+      if (options.introEnabled && options.mapName && options.montageEnabled) {
+        onProgress({
+          stage: 'recording',
+          currentClipIndex: 0,
+          totalClips: options.clipRanges.length + 1,
+          percent: 17,
+          message: 'Recording cinematic map intro...',
+        })
+
+        const introDuration = options.introDuration ?? 4
+        if (options.clipRanges.length > 0) {
+          const combined = await this.recordIntroPlusFirstClip(
+            options.demoPath,
+            options.mapName,
+            options.clipRanges[0],
+            options.playbackSpeed,
+            options.tickRate ?? 64,
+            introDuration,
+            0.5
+          )
+          if (combined) {
+            introRawPath = combined.introRawPath
+            firstClipOverridePath = combined.firstClipPath
+          } else {
+            introRawPath = await this.recordMapIntroClip(options.mapName, introDuration)
+          }
+        } else {
+          introRawPath = await this.recordMapIntroClip(options.mapName, introDuration)
+        }
+      }
+
       // Record each clip
       const tempClips: string[] = []
       const finalClipPaths: string[] = []
       for (let i = 0; i < options.clipRanges.length; i++) {
         const range = options.clipRanges[i]
+
+        if (i === 0 && firstClipOverridePath) {
+          const safeId = range.id.replace(/[^a-zA-Z0-9_-]/g, '_')
+          const finalPath = path.join(clipOutputDir, `${safeId}.mp4`)
+          tempClips.push(firstClipOverridePath)
+          finalClipPaths.push(finalPath)
+          continue
+        }
 
         onProgress({
           stage: 'recording',
@@ -160,6 +221,37 @@ export class ClipExportService {
         normalizedClips.push(finalClipPaths[i])
       }
 
+      let processedIntroPath: string | undefined
+      if (introRawPath && options.mapName && options.montageEnabled) {
+        onProgress({
+          stage: 'ffmpeg',
+          currentClipIndex: 0,
+          totalClips: tempClips.length,
+          percent: 92,
+          message: 'Processing intro with cinematic effects...',
+        })
+
+        const rawIntroMp4 = path.join(clipOutputDir, 'intro_raw.mp4')
+        const introFinalPath = path.join(clipOutputDir, 'intro.mp4')
+        const introFps = options.fps ?? 60
+
+        const introStat = fs.statSync(introRawPath)
+        if (introStat.isDirectory()) {
+          await ffmpegService.encodeImageSequence(introRawPath, introFps, rawIntroMp4, 1)
+        } else {
+          fs.copyFileSync(introRawPath, rawIntroMp4)
+        }
+
+        const introFade = 0.6
+        await this.processIntroWithEffects(rawIntroMp4, options.mapName, introFinalPath, introFade)
+
+        if (fs.existsSync(rawIntroMp4)) {
+          fs.unlinkSync(rawIntroMp4)
+        }
+
+        processedIntroPath = introFinalPath
+      }
+
       // Create montage if enabled
       let montageOutputPath: string | undefined
       if (options.montageEnabled && normalizedClips.length > 0) {
@@ -172,8 +264,11 @@ export class ClipExportService {
         })
 
         montageOutputPath = path.join(outputDir, demoName, 'montage.mp4')
+        const montageClips = processedIntroPath
+          ? [processedIntroPath, ...normalizedClips]
+          : normalizedClips
         await ffmpegService.createMontage(
-          normalizedClips,
+          montageClips,
           montageOutputPath,
           options.fadeDuration
         )
@@ -306,6 +401,297 @@ export class ClipExportService {
   }
 
   /**
+   * Process the raw intro clip with cinematic effects
+   */
+  private async processIntroWithEffects(
+    rawIntroPath: string,
+    mapName: string,
+    outputPath: string,
+    fadeDurationSeconds: number
+  ): Promise<void> {
+    const escapedMapName = ffmpegEscapeDrawtext(mapName.toUpperCase())
+    const filterComplex = [
+      `fade=t=in:st=0:d=${fadeDurationSeconds}`,
+      `drawbox=y=(ih/3-40):color=black@0.7:width=iw:height=80:t=fill`,
+      `drawtext=text='${escapedMapName}':fontfile=/Windows/Fonts/arial.ttf:fontsize=48:fontcolor=white:x=(w-text_w)/2:y=(h/3-text_h/2):shadowcolor=black@0.8:shadowx=2:shadowy=2`,
+    ].join(',')
+
+    const ffmpegPath = getSetting('ffmpeg_path', 'ffmpeg')
+
+    await new Promise<void>((resolve, reject) => {
+      const args = [
+        '-i', rawIntroPath,
+        '-vf', filterComplex,
+        '-c:v', 'libx264',
+        '-preset', 'medium',
+        '-crf', '18',
+        '-c:a', 'copy',
+        '-y',
+        outputPath,
+      ]
+
+      const proc = spawn(ffmpegPath, args)
+      let stderr = ''
+
+      proc.stderr?.on('data', (data) => {
+        stderr += data.toString()
+      })
+
+      proc.on('close', (code) => {
+        if (code === 0) {
+          resolve()
+        } else {
+          reject(new Error(`ffmpeg drawtext failed: ${stderr}`))
+        }
+      })
+
+      proc.on('error', (error) => {
+        reject(new Error(`ffmpeg error: ${error.message}`))
+      })
+    })
+  }
+
+  private async recordIntroPlusFirstClip(
+    demoPath: string,
+    mapName: string,
+    firstClip: ClipRange,
+    timescale: number,
+    tickRate: number,
+    introSeconds: number,
+    preRollSeconds: number
+  ): Promise<{ introRawPath: string; firstClipPath: string } | null> {
+    const preRollTicks = Math.round(preRollSeconds * tickRate)
+    const seekTick = Math.max(0, firstClip.startTick - preRollTicks)
+    const introTicks = Math.round(introSeconds * tickRate)
+    const introEndTick = seekTick + introTicks
+
+    const introDir = path.join(this.tempDir, 'raw', 'intro_plus_clip1')
+    if (!fs.existsSync(introDir)) {
+      fs.mkdirSync(introDir, { recursive: true })
+    }
+
+    const introDirForCs2 = introDir.replace(/\\/g, '/')
+
+    const safeTimescale = Number.isFinite(timescale) ? timescale : 1.0
+    const introWallMs = (introTicks / tickRate) * 1000 / safeTimescale
+    const clipWallMs = ((firstClip.endTick - firstClip.startTick) / tickRate) * 1000 / safeTimescale
+
+    try {
+      await this.sendCommand(`playdemo "${demoPath}"`)
+      await new Promise(resolve => setTimeout(resolve, 600))
+      await this.sendCommand(`demo_gototick ${seekTick}`)
+      await new Promise(resolve => setTimeout(resolve, 600))
+
+      await this.sendCommand('exec clean_capture')
+      await new Promise(resolve => setTimeout(resolve, 300))
+
+      await this.sendCommand('spec_mode 6')
+      await new Promise(resolve => setTimeout(resolve, 200))
+      await this.sendCommand('mirv_cam enable 1')
+      await new Promise(resolve => setTimeout(resolve, 200))
+      await this.sendCommand('mirv_cam setpos 0 0 1200')
+      await new Promise(resolve => setTimeout(resolve, 200))
+      await this.sendCommand('mirv_cam setang 40 180 0')
+      await new Promise(resolve => setTimeout(resolve, 200))
+      await this.sendCommand('mirv_cam drive 1')
+      await new Promise(resolve => setTimeout(resolve, 200))
+      await this.sendCommand('mirv_cam drive speed 40')
+      await new Promise(resolve => setTimeout(resolve, 200))
+
+      await this.sendCommand('mirv_streams settings edit afxDefault format tga')
+      await new Promise(resolve => setTimeout(resolve, 200))
+      await this.sendCommand('mirv_streams settings edit afxDefault screen enabled true')
+      await new Promise(resolve => setTimeout(resolve, 200))
+      await this.sendCommand(`mirv_streams settings edit afxDefault screen path "${introDirForCs2}"`)
+      await new Promise(resolve => setTimeout(resolve, 200))
+
+      await this.sendCommand(`demo_timescale ${safeTimescale}`)
+      await new Promise(resolve => setTimeout(resolve, 200))
+
+      await this.sendCommand('mirv_streams record start')
+      await new Promise(resolve => setTimeout(resolve, 300))
+
+      await new Promise(resolve => setTimeout(resolve, introWallMs))
+
+      await this.sendCommand('mirv_cam drive 0')
+      await new Promise(resolve => setTimeout(resolve, 200))
+
+      await this.sendCommand(`demo_gototick ${firstClip.startTick}`)
+      await new Promise(resolve => setTimeout(resolve, 400))
+
+      if (firstClip.playerName) {
+        const playerQuoted = firstClip.playerName.includes(' ') ? `"${firstClip.playerName}"` : firstClip.playerName
+        await this.sendCommand(`spec_player ${playerQuoted}`)
+        await new Promise(resolve => setTimeout(resolve, 250))
+        await this.sendCommand(`spec_player ${playerQuoted}`)
+        await new Promise(resolve => setTimeout(resolve, 250))
+      }
+
+      await this.sendCommand('mirv_cam enable 0')
+      await new Promise(resolve => setTimeout(resolve, 200))
+
+      await new Promise(resolve => setTimeout(resolve, clipWallMs + 300))
+
+      await this.sendCommand('mirv_streams record stop')
+      await new Promise(resolve => setTimeout(resolve, 600))
+
+      const frames = fs.existsSync(introDir) ? fs.readdirSync(introDir) : []
+      if (frames.length === 0) {
+        console.warn(`[MapIntro] No frames recorded for ${mapName}`)
+        return null
+      }
+
+      const { FfmpegService } = await import('./ffmpegService')
+      const ffmpegService = new FfmpegService()
+      const rawCombinedMp4 = path.join(this.tempDir, 'intro_plus_clip1_raw.mp4')
+      const normalizedMp4 = path.join(this.tempDir, 'intro_plus_clip1_norm.mp4')
+      const introRawMp4 = path.join(this.tempDir, 'intro_raw.mp4')
+      const clip1Mp4 = path.join(this.tempDir, 'clip1.mp4')
+
+      await ffmpegService.encodeImageSequence(introDir, 60, rawCombinedMp4, 1)
+      await ffmpegService.normalizeSpeed(rawCombinedMp4, safeTimescale, normalizedMp4)
+
+      await this.ffmpegSplit(normalizedMp4, introSeconds, introRawMp4, clip1Mp4)
+
+      return { introRawPath: introRawMp4, firstClipPath: clip1Mp4 }
+    } catch (error) {
+      console.warn('[MapIntro] Combined intro+clip1 failed:', error)
+      return null
+    }
+  }
+
+  private async ffmpegSplit(
+    inputPath: string,
+    introSeconds: number,
+    introOutPath: string,
+    clipOutPath: string
+  ): Promise<void> {
+    const ffmpegPath = getSetting('ffmpeg_path', 'ffmpeg')
+    const introArgs = [
+      '-ss', '0',
+      '-to', introSeconds.toFixed(3),
+      '-i', inputPath,
+      '-c:v', 'libx264',
+      '-preset', 'medium',
+      '-crf', '18',
+      '-c:a', 'aac',
+      '-y',
+      introOutPath,
+    ]
+
+    const clipArgs = [
+      '-ss', introSeconds.toFixed(3),
+      '-i', inputPath,
+      '-c:v', 'libx264',
+      '-preset', 'medium',
+      '-crf', '18',
+      '-c:a', 'aac',
+      '-y',
+      clipOutPath,
+    ]
+
+    await new Promise<void>((resolve, reject) => {
+      const proc = spawn(ffmpegPath, introArgs)
+      let stderr = ''
+      proc.stderr?.on('data', (data) => { stderr += data.toString() })
+      proc.on('close', (code) => {
+        if (code === 0) resolve()
+        else reject(new Error(`ffmpeg split intro failed: ${stderr}`))
+      })
+      proc.on('error', (error) => reject(error))
+    })
+
+    await new Promise<void>((resolve, reject) => {
+      const proc = spawn(ffmpegPath, clipArgs)
+      let stderr = ''
+      proc.stderr?.on('data', (data) => { stderr += data.toString() })
+      proc.on('close', (code) => {
+        if (code === 0) resolve()
+        else reject(new Error(`ffmpeg split clip failed: ${stderr}`))
+      })
+      proc.on('error', (error) => reject(error))
+    })
+  }
+
+  /**
+   * Record a cinematic map intro with free camera commands
+   */
+  private async recordMapIntroClip(
+    mapName: string,
+    durationSeconds: number
+  ): Promise<string | null> {
+    const introDir = path.join(this.tempDir, 'raw', 'map_intro')
+    if (!fs.existsSync(introDir)) {
+      fs.mkdirSync(introDir, { recursive: true })
+    }
+
+    const introDirForCs2 = introDir.replace(/\\/g, '/')
+
+    let recordingStarted = false
+    try {
+      await this.sendCommand('spec_mode 5')
+      await new Promise(resolve => setTimeout(resolve, 200))
+      await this.sendCommand('spec_mode 6')
+      await new Promise(resolve => setTimeout(resolve, 200))
+      await this.sendCommand('demo_pause')
+      await new Promise(resolve => setTimeout(resolve, 500))
+      await this.sendCommand('demo_gototick 100')
+      await new Promise(resolve => setTimeout(resolve, 2000))
+
+      await this.sendCommand('exec clean_capture')
+      await new Promise(resolve => setTimeout(resolve, 500))
+
+      await this.sendCommand('mirv_cam enable 1')
+      await new Promise(resolve => setTimeout(resolve, 200))
+      await this.sendCommand('mirv_cam setpos 0 0 1200')
+      await new Promise(resolve => setTimeout(resolve, 200))
+      await this.sendCommand('mirv_cam setang 45 180 0')
+      await new Promise(resolve => setTimeout(resolve, 200))
+      await this.sendCommand('mirv_cam drive 1')
+      await new Promise(resolve => setTimeout(resolve, 200))
+      await this.sendCommand('mirv_cam drive speed 40')
+      await new Promise(resolve => setTimeout(resolve, 200))
+
+      await this.sendCommand('mirv_streams settings edit afxDefault format tga')
+      await new Promise(resolve => setTimeout(resolve, 200))
+      await this.sendCommand('mirv_streams settings edit afxDefault screen enabled true')
+      await new Promise(resolve => setTimeout(resolve, 200))
+      await this.sendCommand(`mirv_streams settings edit afxDefault screen path "${introDirForCs2}"`)
+      await new Promise(resolve => setTimeout(resolve, 200))
+
+      await this.sendCommand('mirv_streams record start')
+      await new Promise(resolve => setTimeout(resolve, 500))
+      recordingStarted = true
+
+      await new Promise(resolve => setTimeout(resolve, durationSeconds * 1000))
+
+      const frames = fs.existsSync(introDir) ? fs.readdirSync(introDir) : []
+      if (frames.length === 0) {
+        console.warn(`[MapIntro] No frames recorded for ${mapName}`)
+        return null
+      }
+
+      return introDir
+    } catch (error) {
+      console.warn('[MapIntro] Recording failed:', error)
+      return null
+    } finally {
+      if (recordingStarted) {
+        await this.sendCommand('mirv_streams record stop')
+        await new Promise(resolve => setTimeout(resolve, 500))
+      }
+      await this.sendCommand('mirv_streams settings edit afxDefault screen enabled false')
+      await new Promise(resolve => setTimeout(resolve, 200))
+      await this.sendCommand('mirv_cam drive 0')
+      await new Promise(resolve => setTimeout(resolve, 200))
+      await this.sendCommand('mirv_cam enable 0')
+      await new Promise(resolve => setTimeout(resolve, 200))
+      await this.sendCommand('demo_timescale 1.0')
+      await new Promise(resolve => setTimeout(resolve, 200))
+    }
+  }
+
+  /**
    * Record a single clip
    */
   private async recordClip(
@@ -314,10 +700,21 @@ export class ClipExportService {
     safeId: string
   ): Promise<string> {
     const clipFilePath = path.join(this.tempDir, `${safeId}.mp4`)
+    const framesDir = path.join(this.tempDir, 'raw', safeId)
+    const safePlaybackSpeed = Number.isFinite(playbackSpeed) ? playbackSpeed : 1.0
     const durationSeconds = (range.endTick - range.startTick) / this.tickRate
-    const recordDurationMs = (durationSeconds * 1000) / playbackSpeed + 500 // Add safety buffer
+    const recordDurationMs = (durationSeconds * 1000) / safePlaybackSpeed + 500 // Add safety buffer
+    const framesDirForCs2 = framesDir.replace(/\\/g, '/')
+
+    if (!fs.existsSync(framesDir)) {
+      fs.mkdirSync(framesDir, { recursive: true })
+    }
 
     const commands: string[] = [
+      'mirv_streams record stop',
+      'mirv_streams settings edit afxDefault screen enabled false',
+      'mirv_cam drive 0',
+      'mirv_cam enable 0',
       'demo_pause',
       `demo_gototick ${range.startTick}`,
     ]
@@ -326,35 +723,43 @@ export class ClipExportService {
     if (range.playerName) {
       const playerQuoted = range.playerName.includes(' ') ? `"${range.playerName}"` : range.playerName
       commands.push(`spec_player ${playerQuoted}`)
+      commands.push(`spec_player ${playerQuoted}`)
     }
 
-    // Set playback speed and start recording
-    commands.push(`demo_timescale ${playbackSpeed}`)
-    const clipFilePathForCs2 = clipFilePath.replace(/\\/g, '/')
-    commands.push(`startmovie "${clipFilePathForCs2}" 0`)
+    // Configure mirv_streams and start recording image sequence
+    commands.push(`demo_timescale ${safePlaybackSpeed}`)
+    commands.push('mirv_streams settings edit afxDefault format tga')
+    commands.push('mirv_streams settings edit afxDefault screen enabled true')
+    commands.push(`mirv_streams settings edit afxDefault screen path "${framesDirForCs2}"`)
+    commands.push('mirv_streams record start')
     commands.push('demo_resume')
 
-    // Send all commands in one connection (more efficient than individual sends)
     await this.sendCommandsSequentially(commands)
 
-    // Wait for recording duration
     await new Promise(resolve => setTimeout(resolve, recordDurationMs))
 
-    // Stop recording
     await this.sendCommandsSequentially([
-      'endmovie',
+      'mirv_streams record stop',
       'demo_pause',
+      'mirv_streams settings edit afxDefault screen enabled false',
       'demo_timescale 1.0'
     ])
 
-    const recordedPath = await this.waitForRecordedFile(clipFilePath, safeId)
-    if (recordedPath !== clipFilePath) {
-      try {
-        fs.copyFileSync(recordedPath, clipFilePath)
-        fs.unlinkSync(recordedPath)
-      } catch (error) {
-        console.warn('[ClipExport] Failed to move recording to temp dir:', error)
+    const frames = fs.existsSync(framesDir) ? fs.readdirSync(framesDir) : []
+    if (frames.length === 0) {
+      throw new Error(`Recording failed: no frames captured for ${safeId}`)
+    }
+
+    const { FfmpegService } = await import('./ffmpegService')
+    const ffmpegService = new FfmpegService()
+    await ffmpegService.encodeImageSequence(framesDir, 60, clipFilePath, safePlaybackSpeed)
+
+    try {
+      if (fs.existsSync(framesDir)) {
+        fs.rmSync(framesDir, { recursive: true, force: true })
       }
+    } catch (cleanupError) {
+      console.warn('[ClipExport] Failed to cleanup clip frames:', cleanupError)
     }
 
     return clipFilePath

@@ -38,6 +38,7 @@ export interface ElectronAPI {
   runQuery: (matchId: string, sql: string) => Promise<{ columns: string[]; rows: any[][] }>
   launchCS2: (demoPath: string, startTick?: number, playerName?: string, confirmLoadDemo?: boolean) => Promise<{ success: boolean; tick: number; commands: string; alreadyRunning?: boolean; needsDemoLoad?: boolean; currentDemo?: string | null; newDemo?: string; error?: string }>
   copyCS2Commands: (demoPath: string, startTick?: number, playerName?: string) => Promise<{ success: boolean; commands: string; error?: string }>
+  launchHlaeCs2: (opts?: { width?: number; height?: number; launchArgs?: string; movieConfigDir?: string }) => Promise<{ success: boolean; pid?: number | null; startedAt?: string; hookVerified?: boolean; logPath?: string; error?: string }>
   getSetting: (key: string, defaultValue?: string) => Promise<string>
   setSetting: (key: string, value: string) => Promise<{ success: boolean }>
   getAllSettings: () => Promise<Record<string, string>>
@@ -82,16 +83,27 @@ export interface ElectronAPI {
   cleanupVoiceFiles: (outputPath: string) => Promise<{ success: boolean; error?: string }>
   exportClips: (payload: {
     demoPath: string
-    clipRanges: Array<{ id: string; startTick: number; endTick: number; label?: string; playerName?: string; playerSteamId?: string; eventType?: string }>
+    clipRanges: Array<{ 
+      id: string
+      startTick: number
+      endTick: number
+      label?: string
+      playerName?: string
+      playerSteamId?: string
+      playerSlot?: number
+      eventType?: string
+    }>
     outputDir?: string
-    resolutionPreset: '720p' | '1080p'
-    playbackSpeed: number
-    montageEnabled: boolean
-    fadeDuration: number
-    tickRate?: number
+    width?: number
+    height?: number
+    fps?: number
+    timescale?: number
+    tickrate?: number
+    montageEnabled?: boolean
+    fadeDuration?: number
   }) => Promise<{ success: boolean; clips: string[]; montage?: string; error?: string }>
   onClipsExportProgress: (callback: (progress: {
-    stage: 'launch_cs2' | 'load_demo' | 'recording' | 'ffmpeg' | 'done'
+    stage: 'validate' | 'launch' | 'load_demo' | 'seek' | 'pov' | 'recording' | 'encode' | 'montage' | 'done'
     currentClipIndex: number
     totalClips: number
     percent: number
