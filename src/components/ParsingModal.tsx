@@ -2,10 +2,16 @@ import { useState, useEffect, useRef } from 'react'
 import Modal from './Modal'
 import { parseNDJSONLine } from '../utils/ndjson'
 import { X } from 'lucide-react'
+import { t } from '../utils/translations'
+import { useParsingStatus } from '../contexts/ParsingStatusContext'
 
 interface ParsingModalProps {
   demosToParse: string[] // Array of demo file paths to parse
   onClose: () => void
+  /** When true, modal stays mounted but renders nothing (so queue can continue in background). */
+  isMinimized?: boolean
+  /** Call this instead of onClose when user clicks "Run in background". */
+  onRunInBackground?: () => void
 }
 
 interface LogEntry {
@@ -25,6 +31,8 @@ interface ProgressState {
 export default function ParsingModal({
   demosToParse,
   onClose,
+  isMinimized = false,
+  onRunInBackground,
 }: ParsingModalProps) {
   const [isParsing, setIsParsing] = useState(false)
   const [logs, setLogs] = useState<LogEntry[]>([])
@@ -34,20 +42,60 @@ export default function ParsingModal({
   const [showAbortConfirm, setShowAbortConfirm] = useState(false)
   const [matchId, setMatchId] = useState<string | null>(null)
   const [currentDemoIndex, setCurrentDemoIndex] = useState(0)
+  const [settingsLoaded, setSettingsLoaded] = useState(false)
+  const [parallelEnabled, setParallelEnabled] = useState(false)
+  const [maxParallel, setMaxParallel] = useState(2)
   const stoppedByUserRef = useRef(false)
-  const parsingStartedRef = useRef(false) // Track if we've actually started parsing
+  const parsingStartedRef = useRef(false)
   const logIdRef = useRef(0)
   const logsEndRef = useRef<HTMLDivElement>(null)
-  
+  const currentDemoIndexRef = useRef(0)
+  const demosToParseRef = useRef<string[]>([])
+  const onCloseRef = useRef(onClose)
+  const inFlightCountRef = useRef(0)
+  const nextIndexToStartRef = useRef(0)
+  const hasParallelStartedRef = useRef(false)
+  const parallelEnabledRef = useRef(false)
+  const maxParallelRef = useRef(2)
+  const startNextBatchRef = useRef<(() => void) | null>(null)
+  onCloseRef.current = onClose
+  const { setQueueTotal, setParsingEnded } = useParsingStatus()
+
+  currentDemoIndexRef.current = currentDemoIndex
+  demosToParseRef.current = demosToParse ?? []
+  parallelEnabledRef.current = parallelEnabled
+  maxParallelRef.current = maxParallel
+
   const totalDemos = demosToParse?.length || 0
 
   const maxLogs = 100
+
+  // Load parallel parsing settings once when we have demos
+  useEffect(() => {
+    if (!window.electronAPI || totalDemos === 0) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const [enabled, count] = await Promise.all([
+          window.electronAPI.getSetting('parallel_parsing_enabled', 'false'),
+          window.electronAPI.getSetting('parallel_parsing_count', '2'),
+        ])
+        if (cancelled) return
+        setParallelEnabled(enabled === 'true')
+        setMaxParallel(Math.max(1, Math.min(8, parseInt(count, 10) || 2)))
+      } finally {
+        if (!cancelled) setSettingsLoaded(true)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [totalDemos])
 
   useEffect(() => {
     if (!window.electronAPI) return
 
     // Set up IPC listeners
-    const handleMessage = (message: string) => {
+    const handleMessage = (payload: string | { processId: string; message: string }) => {
+      const message = typeof payload === 'string' ? payload : payload.message
       const parsed = parseNDJSONLine(message)
       if (!parsed) return
 
@@ -76,53 +124,97 @@ export default function ParsingModal({
       addLog('info', log)
     }
 
-    const handleExit = (data: { code: number | null; signal: string | null }) => {
+    const startNextBatch = () => {
+      if (stoppedByUserRef.current) {
+        if (inFlightCountRef.current === 0) {
+          addLog('info', 'Parser stopped by user')
+          setIsParsing(false)
+          setParsingEnded()
+        }
+        return
+      }
+      const total = demosToParseRef.current.length
+      const maxP = maxParallelRef.current
+      while (nextIndexToStartRef.current < total && inFlightCountRef.current < maxP) {
+        const idx = nextIndexToStartRef.current
+        nextIndexToStartRef.current++
+        inFlightCountRef.current++
+        const path = demosToParseRef.current[idx]
+        window.electronAPI!.parseDemo({ demoPath: path }).then(() => {
+          // Process started; parser:exit will decrement and call startNextBatch again
+        }).catch((err: unknown) => {
+          nextIndexToStartRef.current--
+          inFlightCountRef.current--
+          addLog('error', `Failed to start parse: ${err}`)
+          startNextBatchRef.current?.()
+        })
+      }
+      if (nextIndexToStartRef.current >= total && inFlightCountRef.current === 0) {
+        setParsingEnded()
+        setIsParsing(false)
+        addLog('info', 'All demos parsed successfully')
+        setTimeout(() => onCloseRef.current(), 1000)
+      }
+    }
+    startNextBatchRef.current = startNextBatch
+
+    const handleExit = (data: { code: number | null; signal: string | null; processId?: string }) => {
+      const isParallel = parallelEnabledRef.current && maxParallelRef.current > 1
+      if (isParallel) {
+        inFlightCountRef.current--
+        if (data.code === 0) {
+          addLog('info', 'Parsing completed successfully')
+        } else {
+          if (!stoppedByUserRef.current && data.signal !== 'SIGKILL') {
+            const errorMsg = `Parser exited with code ${data.code}${data.signal ? ` (signal: ${data.signal})` : ''}`
+            addLog('error', errorMsg)
+            setError((prev) => prev || errorMsg)
+            setHasError(true)
+          }
+        }
+        startNextBatch()
+        return
+      }
+
       setIsParsing(false)
       if (data.code === 0) {
         addLog('info', 'Parsing completed successfully')
         setError(null)
         setHasError(false)
-        
-        // Check if there are more demos to parse
-        if (currentDemoIndex < (demosToParse?.length || 0) - 1) {
-          // Move to next demo in queue
+
+        const total = demosToParseRef.current.length
+        const idx = currentDemoIndexRef.current
+        if (idx < total - 1) {
           setTimeout(() => {
-            setCurrentDemoIndex(prev => prev + 1)
+            setCurrentDemoIndex((prev) => prev + 1)
             setIsParsing(false)
             setProgress(null)
             setLogs([])
             parsingStartedRef.current = false
-            // The auto-start effect will pick up the new demoPath
           }, 500)
         } else {
-          // All demos parsed - close modal and return to previous screen
+          setParsingEnded()
           setTimeout(() => {
-            onClose()
+            onCloseRef.current()
           }, 1000)
         }
       } else {
-        // On error or user stop, keep modal open so user can copy logs
         if (stoppedByUserRef.current) {
           addLog('info', 'Parser stopped by user')
-          stoppedByUserRef.current = false // Reset for next time
-          setHasError(false) // User stop is not an error
+          stoppedByUserRef.current = false
+          setHasError(false)
         } else {
-          // This is an error - keep modal open
-          // Ignore SIGKILL signals if parsing hasn't actually started yet (cleanup of old process)
           if (data.signal === 'SIGKILL' && !parsingStartedRef.current) {
-            // Process was killed before we started parsing (cleanup) - not an error
             addLog('info', 'Previous parser process cleaned up')
             setHasError(false)
-            parsingStartedRef.current = false // Reset
+            parsingStartedRef.current = false
           } else {
-            // Actual error occurred
             const errorMsg = `Parser exited with code ${data.code}${data.signal ? ` (signal: ${data.signal})` : ''}`
             addLog('error', errorMsg)
             setError(errorMsg)
             setHasError(true)
           }
         }
-        // Don't auto-close - let user close manually after copying logs
       }
     }
 
@@ -135,18 +227,19 @@ export default function ParsingModal({
       // Keep modal open on error - don't auto-close
     }
 
-    window.electronAPI.onParserMessage(handleMessage)
-    window.electronAPI.onParserLog(handleLog)
-    window.electronAPI.onParserExit(handleExit)
-    window.electronAPI.onParserError(handleError)
+    const unsubMessage = window.electronAPI.onParserMessage(handleMessage)
+    const unsubLog = window.electronAPI.onParserLog(handleLog)
+    const unsubExit = window.electronAPI.onParserExit(handleExit)
+    const unsubError = window.electronAPI.onParserError(handleError)
 
     return () => {
-      window.electronAPI.removeAllListeners('parser:message')
-      window.electronAPI.removeAllListeners('parser:log')
-      window.electronAPI.removeAllListeners('parser:exit')
-      window.electronAPI.removeAllListeners('parser:error')
+      unsubMessage()
+      unsubLog()
+      unsubExit()
+      unsubError()
     }
-  }, [onClose, currentDemoIndex])
+    // Empty deps: run once; cleanup removes only this modal's listeners so ParsingStatusContext keeps receiving
+  }, [])
 
   useEffect(() => {
     logsEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -180,7 +273,11 @@ export default function ParsingModal({
     setError(null)
     setHasError(false)
     setLogs([])
-    
+    // Only set total when starting the first demo; context decrements on each finish
+    if (currentDemoIndex === 0) {
+      setQueueTotal(totalDemos)
+    }
+
     if (totalDemos > 1) {
       addLog('info', `Starting parse ${currentDemoIndex + 1} of ${totalDemos}: ${pathToParse.split(/[/\\]/).pop()}`)
     } else {
@@ -278,20 +375,41 @@ export default function ParsingModal({
     }
   }
 
-  // Auto-start parsing when modal opens or when moving to next demo
+  // Parallel: start batch once when settings are loaded
   useEffect(() => {
-    if (currentDemoPath && !isParsing) {
-      handleStartParse()
+    if (!settingsLoaded || !parallelEnabled || maxParallel <= 1 || totalDemos === 0 || hasParallelStartedRef.current) return
+    hasParallelStartedRef.current = true
+    setQueueTotal(totalDemos)
+    setIsParsing(true)
+    setProgress(null)
+    setError(null)
+    setHasError(false)
+    setLogs([])
+    if (totalDemos > 1) {
+      addLog('info', `Starting parallel parse of ${totalDemos} demos (max ${maxParallel} at a time)`)
     }
+    startNextBatchRef.current?.()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentDemoPath, currentDemoIndex])
+  }, [settingsLoaded, parallelEnabled, maxParallel, totalDemos])
+
+  // Sequential: auto-start when modal opens or when moving to next demo
+  useEffect(() => {
+    if (!settingsLoaded || parallelEnabled || !currentDemoPath || isParsing) return
+    handleStartParse()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settingsLoaded, parallelEnabled, currentDemoPath, currentDemoIndex, isParsing])
+
+  // When minimized (run in background), stay mounted but don't render UI so queue continues
+  if (isMinimized) {
+    return null
+  }
 
   return (
     <>
       <Modal
         isOpen={true}
         onClose={handleClose}
-        title={totalDemos > 1 ? `Parsing Demo (${currentDemoIndex + 1} of ${totalDemos})` : 'Parsing Demo'}
+        title={parallelEnabled && totalDemos > 1 ? `Parsing ${totalDemos} demos (parallel)` : totalDemos > 1 ? `Parsing Demo (${currentDemoIndex + 1} of ${totalDemos})` : 'Parsing Demo'}
         size="lg"
         canClose={!isParsing} // Disable closing while parsing is in progress
       >
@@ -334,12 +452,23 @@ export default function ParsingModal({
           <div className="px-4 py-2 border-b border-border flex-shrink-0 flex items-center justify-between">
             <h3 className="text-sm font-medium text-gray-300">Console Log</h3>
             {isParsing && (
-              <button
-                onClick={handleStop}
-                className="px-3 py-1 text-xs bg-red-600 text-white rounded hover:bg-red-700 transition-colors"
-              >
-                Stop
-              </button>
+              <div className="flex items-center gap-2">
+                {onRunInBackground && (
+                  <button
+                    onClick={onRunInBackground}
+                    className="px-3 py-1 text-xs bg-surface border border-border text-gray-300 rounded hover:bg-surface/80 transition-colors"
+                    title={t('parsing.runInBackgroundDesc')}
+                  >
+                    {t('parsing.runInBackground')}
+                  </button>
+                )}
+                <button
+                  onClick={handleStop}
+                  className="px-3 py-1 text-xs bg-red-600 text-white rounded hover:bg-red-700 transition-colors"
+                >
+                  Stop
+                </button>
+              </div>
             )}
           </div>
           <div className="flex-1 overflow-y-auto p-4 font-mono text-xs min-h-0">

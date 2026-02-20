@@ -131,6 +131,13 @@ func (e *EconomyExtractor) detectEconomyGriefing(roundIndex int, tick int, team 
 	avgStartMoney = float64(totalStartMoney) / float64(len(snapshots))
 	avgSpent = float64(totalSpent) / float64(len(snapshots))
 	teamSpendPct := avgSpent / avgStartMoney
+
+	// Calculate team average remaining money once per team
+	var totalRemaining int
+	for _, s := range snapshots {
+		totalRemaining += s.Money
+	}
+	avgRemaining := float64(totalRemaining) / float64(len(snapshots))
 	
 	// Determine majority weapon type
 	majorityWeaponType := "other"
@@ -179,6 +186,16 @@ func (e *EconomyExtractor) detectEconomyGriefing(roundIndex int, tick int, team 
 			"other":  0,
 		}
 
+		// Calculate remaining money alignment with team average
+		remainingDiffPct := 0.0
+		if avgRemaining > 0 {
+			remainingDiff := math.Abs(float64(snapshot.Money) - avgRemaining)
+			remainingDiffPct = remainingDiff / avgRemaining
+		}
+
+		// If remaining money is within 15% of team average, they evened out the economy (likely legitimate)
+		evenedOut := avgRemaining > 0 && remainingDiffPct < 0.15
+
 		// Pattern 1: Equipment mismatch (bought WORSE weapon than team majority)
 		// Only flag if player bought a cheaper/worse weapon AND spent significantly less than team
 		playerValue := weaponValue[playerWeaponType]
@@ -186,7 +203,7 @@ func (e *EconomyExtractor) detectEconomyGriefing(roundIndex int, tick int, team 
 		spendDifference := teamSpendPct - spendPct
 		
 		if playerValue < majorityValue && playerWeaponType != "other" && majorityWeaponType != "other" &&
-			snapshot.StartRoundMoney > 3000 && snapshot.MoneySpent > 1500 && spendDifference > 0.25 {
+			snapshot.StartRoundMoney > 3000 && snapshot.MoneySpent > 1500 && spendDifference > 0.25 && !evenedOut {
 			fmt.Fprintf(os.Stderr, "[ECONOMY]     ✓ Pattern 1: Equipment mismatch (%s %s when team majority is %s, $%d spent vs team avg $%d, diff %.1f%%)\n",
 				playerWeaponType, snapshot.PrimaryWeapon, majorityWeaponType, snapshot.MoneySpent, int(avgSpent), spendDifference*100.0)
 			isGriefing = true
@@ -196,20 +213,13 @@ func (e *EconomyExtractor) detectEconomyGriefing(roundIndex int, tick int, team 
 		}
 
 		// Pattern 2: Not buying with team (accounting for saved equipment)
+		// Consider "good weapon" if they have a rifle/SMG as primary OR if they have a saved rifle/SMG (low spend + rifle/SMG in inventory)
 		hasGoodWeapon := isRifle(snapshot.PrimaryWeapon) || (isSMG(snapshot.PrimaryWeapon) && majorityWeaponType == "smg")
-		spendDifference = teamSpendPct - spendPct
-		
-		// Calculate team average remaining money
-		var totalRemaining int
-		for _, s := range snapshots {
-			totalRemaining += s.Money
+		hasSavedWeapon := snapshot.MoneySpent < 1000 && hasRifleOrSMGInInventory(snapshot.AllWeapons)
+		if hasSavedWeapon {
+			hasGoodWeapon = true
 		}
-		avgRemaining := float64(totalRemaining) / float64(len(snapshots))
-		remainingDiff := math.Abs(float64(snapshot.Money) - avgRemaining)
-		remainingDiffPct := remainingDiff / avgRemaining
-		
-		// If remaining money is within 15% of team average, they evened out the economy (probably legitimate)
-		evenedOut := remainingDiffPct < 0.15
+		spendDifference = teamSpendPct - spendPct
 		
 		if !isGriefing && !hasGoodWeapon && teamSpendPct > 0.4 && spendPct < 0.25 && snapshot.StartRoundMoney > 2000 && spendDifference > 0.25 && !evenedOut {
 			fmt.Fprintf(os.Stderr, "[ECONOMY]     ✓ Pattern 2: Not buying with team (team %.1f%%, player %.1f%%, diff %.1f%%, remaining diff %.1f%%, no proper weapon)\n",
@@ -365,6 +375,16 @@ func isPistol(weapon string) bool {
 	pistols := []string{"Glock-18", "USP-S", "P2000", "P250", "Five-SeveN", "Tec-9", "CZ75-Auto", "Desert Eagle", "Dual Berettas", "R8 Revolver"}
 	for _, p := range pistols {
 		if weapon == p {
+			return true
+		}
+	}
+	return false
+}
+
+// hasRifleOrSMGInInventory returns true if the player has any rifle or SMG in their weapon list (e.g. saved from last round).
+func hasRifleOrSMGInInventory(weapons []string) bool {
+	for _, w := range weapons {
+		if isRifle(w) || isSMG(w) {
 			return true
 		}
 	}

@@ -20,6 +20,7 @@ function UnparsedDemosPage() {
   const [searchQuery, setSearchQuery] = useState<string>('')
   const [selectedDemos, setSelectedDemos] = useState<Set<string>>(new Set())
   const [showParsingModal, setShowParsingModal] = useState(false)
+  const [parsingInBackground, setParsingInBackground] = useState(false)
   const [demosToParse, setDemosToParse] = useState<string[]>([])
   const [sortBy, setSortBy] = useState<'name' | 'date' | 'size'>('date')
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc')
@@ -302,13 +303,20 @@ function UnparsedDemosPage() {
         )}
       </div>
 
-      {/* Parsing Modal */}
-      {showParsingModal && (
+      {/* Parsing Modal - stay mounted when running in background so queue continues */}
+      {(showParsingModal || parsingInBackground) && demosToParse.length > 0 && (
         <ParsingModal
           demosToParse={demosToParse}
           onClose={() => {
             setShowParsingModal(false)
+            setParsingInBackground(false)
+            setDemosToParse([])
             fetchUnparsedDemos()
+          }}
+          isMinimized={parsingInBackground}
+          onRunInBackground={() => {
+            setShowParsingModal(false)
+            setParsingInBackground(true)
           }}
         />
       )}

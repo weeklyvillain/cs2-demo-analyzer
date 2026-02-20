@@ -1,5 +1,21 @@
-import { X, Clock, Skull, Zap, WifiOff, ChevronDown, ChevronUp, Play } from 'lucide-react'
+import { useState } from 'react'
+import { X, Clock, Skull, Zap, WifiOff, ChevronDown, ChevronUp, Play, Info, Map as MapIcon } from 'lucide-react'
 import { formatDisconnectReason } from '../utils/disconnectReason'
+
+const DollarIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="64" cy="64" r="54" fill="#F4C430"/>
+    <circle cx="64" cy="64" r="44" fill="#FFD966"/>
+    <text x="64" y="78" textAnchor="middle" fontSize="48" fontWeight="bold" fill="#B8860B">$</text>
+  </svg>
+)
+
+const ECONOMY_GRIEF_TYPE_LABELS: Record<string, string> = {
+  equipment_mismatch: 'Wrong weapon choice',
+  no_buy_with_team: 'Not buying with team',
+  excessive_saving: 'Excessive saving',
+  full_save_high_money: 'Full save with high money',
+}
 
 interface PlayerEvent {
   type: string
@@ -48,6 +64,7 @@ interface PlayerModalProps {
   setAfkSortBy: (value: 'round' | 'duration') => void
   filteredEvents: PlayerEvent[]
   eventsByType: Record<string, PlayerEvent[]>
+  rounds?: Array<{ roundIndex: number; freezeEndTick?: number | null; startTick: number }>
 }
 
 export default function PlayerModal({
@@ -73,7 +90,10 @@ export default function PlayerModal({
   setAfkSortBy,
   filteredEvents,
   eventsByType,
+  rounds = [],
 }: PlayerModalProps) {
+  const [selectedEconomyEvent, setSelectedEconomyEvent] = useState<PlayerEvent | null>(null)
+
   return (
     <div
       className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
@@ -130,9 +150,20 @@ export default function PlayerModal({
                 const afkEvents = filteredEvents.filter(e => e.type === 'AFK_STILLNESS')
                 const teamFlashes = filteredEvents.filter(e => e.type === 'TEAM_FLASH')
                 const disconnects = filteredEvents.filter(e => e.type === 'DISCONNECT')
-                
+                const economyGriefs = filteredEvents.filter(e => e.type === 'ECONOMY_GRIEF')
+
                 return (
                   <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+                    {economyGriefs.length > 0 && (
+                      <div className="bg-surface border border-border rounded-lg p-4">
+                        <div className="flex items-center gap-2 mb-2 text-gray-400">
+                          <DollarIcon />
+                          <span className="text-sm font-medium">Economy Grief</span>
+                        </div>
+                        <div className="text-3xl font-bold mb-1 text-yellow-400">{economyGriefs.length}</div>
+                        <div className="text-xs text-gray-500">Buy phase / economy griefing</div>
+                      </div>
+                    )}
                     {teamKills.length > 0 && (
                       <div className="bg-surface border border-border rounded-lg p-4">
                         <div className="flex items-center gap-2 mb-2 text-gray-400">
@@ -196,6 +227,7 @@ export default function PlayerModal({
                   AFK_STILLNESS: <Clock size={18} />,
                   TEAM_FLASH: <Zap size={18} />,
                   DISCONNECT: <WifiOff size={18} />,
+                  ECONOMY_GRIEF: <DollarIcon />,
                 }
                 return (
                   <div key={eventType} className="bg-surface border border-border rounded-lg overflow-hidden">
@@ -275,7 +307,83 @@ export default function PlayerModal({
                                 return 0
                               })
                             }
-                            return sortedEvents.map((event, idx) => (
+                            return sortedEvents.map((event, idx) => {
+                              if (eventType === 'ECONOMY_GRIEF') {
+                                const griefType = event.meta?.grief_type || 'unknown'
+                                const startMoney = event.meta?.start_money || 0
+                                const moneySpent = event.meta?.money_spent || 0
+                                const spendPct = event.meta?.spend_pct || 0
+                                const teamAvgSpend = event.meta?.team_avg_spend || 0
+                                const teamAvgMoney = event.meta?.team_avg_money || 0
+                                const teamSpendPct = event.meta?.team_spend_pct || 0
+                                const round = rounds.find(r => r.roundIndex === event.roundIndex)
+                                const view2DTick = round ? (round.freezeEndTick ?? round.startTick) : event.startTick
+                                return (
+                                  <div key={idx} className="bg-secondary border border-border rounded p-3 min-w-[320px] flex-1">
+                                    <div className="flex items-center justify-between mb-2">
+                                      <span className="font-medium text-white">{getPlayerName(event.actorSteamId)}</span>
+                                      <div className="flex items-center gap-2">
+                                        <button
+                                          onClick={() => setSelectedEconomyEvent(event)}
+                                          className="p-1 hover:bg-accent/20 rounded transition-colors"
+                                          title="View details"
+                                        >
+                                          <Info size={14} className="text-gray-400 hover:text-accent" />
+                                        </button>
+                                        <span className="text-xs text-gray-400">Round {event.roundIndex + 1}</span>
+                                        {demoPath && (
+                                          <div className="flex items-center gap-1">
+                                            <button
+                                              onClick={() => onView2D(event.roundIndex, view2DTick)}
+                                              className="p-1 hover:bg-accent/20 rounded transition-colors"
+                                              title="View in 2D"
+                                            >
+                                              <MapIcon size={14} className="text-gray-400 hover:text-accent" />
+                                            </button>
+                                            <button
+                                              onClick={() => onCopyCommand(event)}
+                                              className="p-1 hover:bg-accent/20 rounded transition-colors"
+                                              title="Watch this event in CS2"
+                                            >
+                                              <Play size={14} className="text-gray-400 hover:text-accent" />
+                                            </button>
+                                          </div>
+                                        )}
+                                      </div>
+                                    </div>
+                                    <div className="text-xs text-yellow-400 font-medium mb-2">
+                                      {ECONOMY_GRIEF_TYPE_LABELS[griefType] || griefType}
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+                                      <div className="text-gray-400">
+                                        <span className="font-medium">Start money:</span>
+                                      </div>
+                                      <div className="text-white">
+                                        ${startMoney.toLocaleString()}
+                                      </div>
+                                      <div className="text-gray-400">
+                                        <span className="font-medium">Spent:</span>
+                                      </div>
+                                      <div className="text-white">
+                                        ${moneySpent.toLocaleString()} ({spendPct.toFixed(1)}%)
+                                      </div>
+                                      <div className="text-gray-400">
+                                        <span className="font-medium">Team avg money:</span>
+                                      </div>
+                                      <div className="text-gray-300">
+                                        ${Math.round(teamAvgMoney).toLocaleString()}
+                                      </div>
+                                      <div className="text-gray-400">
+                                        <span className="font-medium">Team avg spent:</span>
+                                      </div>
+                                      <div className="text-gray-300">
+                                        ${Math.round(teamAvgSpend).toLocaleString()} ({teamSpendPct.toFixed(1)}%)
+                                      </div>
+                                    </div>
+                                  </div>
+                                )
+                              }
+                              return (
                             <div
                               key={idx}
                               className="bg-secondary border border-border rounded p-3 min-w-[300px] flex-1"
@@ -351,7 +459,8 @@ export default function PlayerModal({
                                 </div>
                               )}
                             </div>
-                            ))
+                            )
+                            })
                           })()}
                         </div>
                       </div>
@@ -359,6 +468,129 @@ export default function PlayerModal({
                   </div>
                 )
               })}
+
+              {/* Economy event detail modal */}
+              {selectedEconomyEvent && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4">
+                  <div className="bg-surface border border-border rounded-lg max-w-md w-full max-h-[80vh] overflow-y-auto">
+                    <div className="sticky top-0 bg-surface border-b border-border p-4 flex items-center justify-between">
+                      <h2 className="text-lg font-semibold text-white">
+                        {getPlayerName(selectedEconomyEvent.actorSteamId)} - Round {selectedEconomyEvent.roundIndex + 1}
+                      </h2>
+                      <button
+                        onClick={() => setSelectedEconomyEvent(null)}
+                        className="p-1 hover:bg-secondary rounded transition-colors"
+                      >
+                        <X size={18} className="text-gray-400" />
+                      </button>
+                    </div>
+
+                    <div className="p-4 space-y-4">
+                      <div>
+                        <div className="text-xs font-medium text-gray-400 mb-1">Grief Type:</div>
+                        <div className="text-yellow-400 font-medium">
+                          {selectedEconomyEvent.meta?.grief_type === 'equipment_mismatch' && 'Wrong weapon choice'}
+                          {selectedEconomyEvent.meta?.grief_type === 'no_buy_with_team' && 'Not buying with team'}
+                          {selectedEconomyEvent.meta?.grief_type === 'excessive_saving' && 'Excessive saving'}
+                          {selectedEconomyEvent.meta?.grief_type === 'full_save_high_money' && 'Full save with high money'}
+                          {!['equipment_mismatch', 'no_buy_with_team', 'excessive_saving', 'full_save_high_money'].includes(selectedEconomyEvent.meta?.grief_type) && selectedEconomyEvent.meta?.grief_type}
+                        </div>
+                      </div>
+
+                      <div className="bg-secondary/50 rounded p-3 space-y-2">
+                        <div className="flex justify-between text-xs">
+                          <span className="text-gray-400">Start money:</span>
+                          <span className="text-white font-medium">${selectedEconomyEvent.meta?.start_money?.toLocaleString()}</span>
+                        </div>
+                        <div className="flex justify-between text-xs">
+                          <span className="text-gray-400">Spent:</span>
+                          <span className="text-white font-medium">${selectedEconomyEvent.meta?.money_spent?.toLocaleString()} ({selectedEconomyEvent.meta?.spend_pct?.toFixed(1)}%)</span>
+                        </div>
+                        <div className="flex justify-between text-xs">
+                          <span className="text-gray-400">Remaining:</span>
+                          <span className="text-white font-medium">${selectedEconomyEvent.meta?.remaining_money?.toLocaleString()}</span>
+                        </div>
+                      </div>
+
+                      <div className="bg-secondary/50 rounded p-3 space-y-2">
+                        <div className="text-xs font-medium text-gray-400 mb-2">Team Average:</div>
+                        <div className="flex justify-between text-xs">
+                          <span className="text-gray-400">Start money:</span>
+                          <span className="text-white font-medium">${Math.round(selectedEconomyEvent.meta?.team_avg_money)?.toLocaleString()}</span>
+                        </div>
+                        <div className="flex justify-between text-xs">
+                          <span className="text-gray-400">Spent:</span>
+                          <span className="text-white font-medium">${Math.round(selectedEconomyEvent.meta?.team_avg_spend)?.toLocaleString()} ({selectedEconomyEvent.meta?.team_spend_pct?.toFixed(1)}%)</span>
+                        </div>
+                        <div className="flex justify-between text-xs">
+                          <span className="text-gray-400">Remaining:</span>
+                          <span className="text-white font-medium">${Math.round(selectedEconomyEvent.meta?.team_avg_remaining)?.toLocaleString()}</span>
+                        </div>
+                      </div>
+
+                      {selectedEconomyEvent.meta && (
+                        <div>
+                          <div className="text-xs font-medium text-gray-400 mb-2">Flagged Player&apos;s Equipment:</div>
+                          <div className="bg-secondary/50 rounded p-2">
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="text-white text-sm font-medium">{getPlayerName(selectedEconomyEvent.actorSteamId)}</span>
+                              <span className="text-xs text-gray-400">
+                                ${selectedEconomyEvent.meta?.remaining_money}
+                                <span className="ml-1 text-[10px] text-gray-500">Remaining</span>
+                              </span>
+                            </div>
+                            <div className="flex flex-wrap gap-1">
+                              {selectedEconomyEvent.meta.weapon_details?.length ? (
+                                selectedEconomyEvent.meta.weapon_details.map((weapon: any, widx: number) => (
+                                  <span key={widx} className={`text-xs rounded px-2 py-1 font-medium ${
+                                    weapon.purchase === 'bought' ? 'bg-red-500/20 text-red-400' :
+                                    weapon.purchase === 'saved' ? 'bg-green-500/20 text-green-400' :
+                                    'bg-yellow-500/20 text-yellow-400'
+                                  }`}>
+                                    {weapon.name} ({weapon.purchase === 'likely_bought' ? '~' : ''}{weapon.purchase})
+                                  </span>
+                                ))
+                              ) : (
+                                <span className="text-xs text-gray-500">Nothing bought</span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {selectedEconomyEvent.meta?.other_players && selectedEconomyEvent.meta.other_players.length > 0 && (
+                        <div>
+                          <div className="text-xs font-medium text-gray-400 mb-2">Team Equipment:</div>
+                          <div className="space-y-2">
+                            {selectedEconomyEvent.meta.other_players.map((player: any, pidx: number) => (
+                              <div key={pidx} className="bg-secondary/50 rounded p-2">
+                                <div className="flex items-center justify-between mb-1">
+                                  <span className="text-white text-sm font-medium">{getPlayerName(player.steamid)}</span>
+                                  <span className="text-xs text-gray-400">
+                                    ${player.money}
+                                    <span className="ml-1 text-[10px] text-gray-500">Remaining</span>
+                                  </span>
+                                </div>
+                                <div className="flex flex-wrap gap-1">
+                                  {player.weapons?.length ? (
+                                    player.weapons.map((w: string, widx: number) => (
+                                      <span key={widx} className="text-xs bg-secondary rounded px-2 py-1 text-gray-300">
+                                        {w}
+                                      </span>
+                                    ))
+                                  ) : (
+                                    <span className="text-xs text-gray-500">Nothing bought</span>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>

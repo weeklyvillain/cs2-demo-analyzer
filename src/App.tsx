@@ -9,6 +9,10 @@ import UnparsedDemosPage from './components/UnparsedDemosPage'
 import OverlayScreen from './components/OverlayScreen'
 import WhatsNewModal from './components/WhatsNewModal'
 import TitleBar from './components/TitleBar'
+import ToastStack from './components/ToastStack'
+import ParsingPanelModal from './components/ParsingPanelModal'
+import { useToast } from './contexts/ToastContext'
+import { t } from './utils/translations'
 
 type Screen = 'matches' | 'settings' | 'dbviewer' | 'stats' | 'unparsed'
 
@@ -19,6 +23,23 @@ function App() {
   const [enableDbViewer, setEnableDbViewer] = useState(false)
   const [showWhatsNew, setShowWhatsNew] = useState(false)
   const [appVersion, setAppVersion] = useState<string>('')
+  const { addToast } = useToast()
+
+  // Toasts when a demo finishes parsing (works when parsing in background or with modal)
+  useEffect(() => {
+    if (!window.electronAPI) return
+    const onParserDone = (data: { success: boolean; matchId: string; demoPath: string; error?: string }) => {
+      const name = data.demoPath.replace(/^.*[/\\]/, '') || data.matchId
+      if (data.success) {
+        addToast(t('toast.demoParsed').replace('{name}', name), 'success', 5000)
+      } else {
+        const msg = data.error ? `${t('toast.demoParseFailed').replace('{name}', name)} — ${data.error}` : t('toast.demoParseFailed').replace('{name}', name)
+        addToast(msg, 'error', 7000)
+      }
+    }
+    const unsub = window.electronAPI.onParserDone(onParserDone)
+    return unsub
+  }, [addToast])
 
   useEffect(() => {
     // Check if we're in overlay mode (via hash)
@@ -118,6 +139,8 @@ function App() {
       {showWhatsNew && appVersion && (
         <WhatsNewModal version={appVersion} onClose={handleWhatsNewClose} />
       )}
+      <ParsingPanelModal />
+      <ToastStack />
     </div>
   )
 }

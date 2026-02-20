@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import Viewer2D from './Viewer2D'
 import Modal from './Modal'
 import PlayerModal from './PlayerModal'
@@ -35,6 +35,66 @@ const BodyBlockIcon = () => (
     <rect x="56" y="68" width="16" height="8" rx="4" fill="#FF5722"/>
   </svg>
 )
+
+/** Lazy-loads the map thumbnail when the card enters the viewport to avoid loading many images at once. */
+function LazyMapThumbnail({
+  thumbnail,
+  alt,
+  className,
+}: {
+  thumbnail: string | null
+  alt: string
+  className?: string
+}) {
+  const [isInView, setIsInView] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el || !thumbnail) return
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          observer.disconnect()
+          setIsInView(true)
+        }
+      },
+      { rootMargin: '100px', threshold: 0 }
+    )
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [thumbnail])
+
+  if (!thumbnail) {
+    return (
+      <div className={`w-full h-full flex items-center justify-center bg-gradient-to-br from-surface to-secondary ${className ?? ''}`}>
+        <span className="text-4xl">🗺️</span>
+      </div>
+    )
+  }
+
+  if (!isInView) {
+    return (
+      <div
+        ref={containerRef}
+        className={`w-full h-full flex items-center justify-center bg-gradient-to-br from-surface to-secondary ${className ?? ''}`}
+      >
+        <span className="text-4xl">🗺️</span>
+      </div>
+    )
+  }
+
+  return (
+    <img
+      src={thumbnail}
+      alt={alt}
+      className={className}
+      onError={(e) => {
+        e.currentTarget.style.display = 'none'
+      }}
+    />
+  )
+}
 
 interface Match {
   id: string
@@ -437,60 +497,60 @@ function MatchesScreen() {
     }
   }, [])
 
-  // Fetch stats for all matches
+  // Fetch stats for all matches (in parallel batches; yield to UI between batches)
+  const STATS_BATCH_SIZE = 20
   useEffect(() => {
-    const fetchAllMatchStats = async () => {
-      if (!window.electronAPI || matches.length === 0) return
+    const defaultStats: MatchStats = {
+      roundCount: 0,
+      duration: 0,
+      teamKills: 0,
+      teamDamage: 0,
+      afkSeconds: 0,
+      teamFlashSeconds: 0,
+      disconnects: 0,
+      tWins: 0,
+      ctWins: 0,
+    }
 
-      const statsMap = new Map<string, MatchStats>()
-      
-      for (const match of matches) {
-        try {
-          const [roundsData, eventsData, scoresData] = await Promise.all([
-            window.electronAPI.getMatchRounds(match.id),
-            window.electronAPI.getMatchEvents(match.id),
-            window.electronAPI.getMatchSummary(match.id),
-          ])
-          
-          const rounds = roundsData.rounds || []
-          const events = eventsData.events || []
-          const scores = scoresData.players || []
-          
-          // Calculate basic stats
-          let roundCount = rounds.length
-          let duration = 0
-          let tWins = 0
-          let ctWins = 0
-          
-          if (rounds.length > 0) {
-            const firstRound = rounds[0]
-            const lastRound = rounds[rounds.length - 1]
-            const tickRate = 64
-            const startTick = firstRound.startTick || 0
-            const endTick = lastRound.endTick || startTick
-            duration = (endTick - startTick) / tickRate
-            
-            // Get wins from last round
-            if (lastRound.tWins !== undefined) tWins = lastRound.tWins
-            if (lastRound.ctWins !== undefined) ctWins = lastRound.ctWins
-          }
-          
-          // Calculate event stats
-          const teamKills = events.filter((e: any) => e.type === 'TEAM_KILL').length
-          const teamDamage = events
-            .filter((e: any) => e.type === 'TEAM_DAMAGE')
-            .reduce((sum: number, e: any) => sum + (e.meta?.damage || 0), 0)
-          
-          // Use pre-calculated AFK seconds from player_scores (sum across all players)
-          const afkSeconds = scores.reduce((sum: number, score: any) => sum + (score.afkSeconds || 0), 0)
-          
-          const teamFlashSeconds = events
-            .filter((e: any) => e.type === 'TEAM_FLASH')
-            .reduce((sum: number, e: any) => sum + (e.meta?.blind_duration || 0), 0)
-          
-          const disconnects = events.filter((e: any) => e.type === 'DISCONNECT').length
-          
-          statsMap.set(match.id, {
+    const fetchOneMatchStats = async (match: Match): Promise<{ id: string; stats: MatchStats }> => {
+      try {
+        const [roundsData, eventsData, scoresData] = await Promise.all([
+          window.electronAPI!.getMatchRounds(match.id),
+          window.electronAPI!.getMatchEvents(match.id),
+          window.electronAPI!.getMatchSummary(match.id),
+        ])
+        const rounds = roundsData.rounds || []
+        const events = eventsData.events || []
+        const scores = scoresData.players || []
+
+        let roundCount = rounds.length
+        let duration = 0
+        let tWins = 0
+        let ctWins = 0
+        if (rounds.length > 0) {
+          const firstRound = rounds[0]
+          const lastRound = rounds[rounds.length - 1]
+          const tickRate = 64
+          const startTick = firstRound.startTick || 0
+          const endTick = lastRound.endTick || startTick
+          duration = (endTick - startTick) / tickRate
+          if (lastRound.tWins !== undefined) tWins = lastRound.tWins
+          if (lastRound.ctWins !== undefined) ctWins = lastRound.ctWins
+        }
+
+        const teamKills = events.filter((e: any) => e.type === 'TEAM_KILL').length
+        const teamDamage = events
+          .filter((e: any) => e.type === 'TEAM_DAMAGE')
+          .reduce((sum: number, e: any) => sum + (e.meta?.damage || 0), 0)
+        const afkSeconds = scores.reduce((sum: number, score: any) => sum + (score.afkSeconds || 0), 0)
+        const teamFlashSeconds = events
+          .filter((e: any) => e.type === 'TEAM_FLASH')
+          .reduce((sum: number, e: any) => sum + (e.meta?.blind_duration || 0), 0)
+        const disconnects = events.filter((e: any) => e.type === 'DISCONNECT').length
+
+        return {
+          id: match.id,
+          stats: {
             roundCount,
             duration,
             teamKills,
@@ -500,24 +560,25 @@ function MatchesScreen() {
             disconnects,
             tWins,
             ctWins,
-          })
-        } catch (err) {
-          // If we can't fetch stats, set defaults
-          statsMap.set(match.id, {
-            roundCount: 0,
-            duration: 0,
-            teamKills: 0,
-            teamDamage: 0,
-            afkSeconds: 0,
-            teamFlashSeconds: 0,
-            disconnects: 0,
-            tWins: 0,
-            ctWins: 0,
-          })
+          },
         }
+      } catch {
+        return { id: match.id, stats: defaultStats }
       }
-      
-      setMatchStats(statsMap)
+    }
+
+    const fetchAllMatchStats = async () => {
+      if (!window.electronAPI || matches.length === 0) return
+
+      const statsMap = new Map<string, MatchStats>()
+
+      for (let i = 0; i < matches.length; i += STATS_BATCH_SIZE) {
+        const batch = matches.slice(i, i + STATS_BATCH_SIZE)
+        const results = await Promise.all(batch.map((match) => fetchOneMatchStats(match)))
+        results.forEach(({ id, stats }) => statsMap.set(id, stats))
+        setMatchStats(new Map(statsMap))
+        await new Promise((r) => requestAnimationFrame(r))
+      }
     }
 
     fetchAllMatchStats()
@@ -1299,6 +1360,7 @@ function MatchesScreen() {
     TEAM_FLASH: t('matches.sections.teamFlashes'),
     AFK_STILLNESS: t('matches.sections.afk'),
     DISCONNECT: t('matches.sections.disconnects'),
+    ECONOMY_GRIEF: 'Economy Griefing',
   }
 
   // Drag and drop handlers for parsing demos
@@ -1554,92 +1616,77 @@ function MatchesScreen() {
                     <button
                       onClick={(e) => {
                         if (e.ctrlKey || e.metaKey) {
-                          // CTRL + Click (or CMD + Click on Mac) to toggle selection
                           e.preventDefault()
                           e.stopPropagation()
                           toggleMatchSelection(match.id)
                         } else {
-                          // Normal click to open match
                           handleMatchClick(match.id)
                         }
                       }}
                       className="flex-1 flex flex-col"
                     >
-                    <div className="relative h-64 bg-surface overflow-hidden w-full">
-                      {thumbnail ? (
-                        <img
-                          src={thumbnail}
+                      <div className="relative h-64 bg-surface overflow-hidden w-full">
+                        <LazyMapThumbnail
+                          thumbnail={thumbnail}
                           alt={match.map || t('matches.unknownMap')}
                           className="w-full h-full object-cover object-center group-hover:scale-110 transition-transform duration-300"
-                          onError={(e) => {
-                            // Hide image on error
-                            e.currentTarget.style.display = 'none'
-                          }}
                         />
-                      ) : (
-                        <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-surface to-secondary">
-                          <span className="text-4xl">🗺️</span>
-                        </div>
-                      )}
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
-                      <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between gap-2">
-                        <div className="font-semibold text-white text-base truncate">
-                          {match.map || 'Unknown Map'}
-                        </div>
-                        {match.source && getSourceIcon(match.source) && (
-                          <img
-                            src={getSourceIcon(match.source)!}
-                            alt={match.source}
-                            className="h-5 w-5 flex-shrink-0 object-contain"
-                            title={match.source}
-                            onError={(e) => {
-                              // Hide icon on error
-                              e.currentTarget.style.display = 'none'
-                            }}
-                          />
-                        )}
-                      </div>
-                    </div>
-                    <div className="p-4 bg-secondary border-t border-border/50">
-                      <div className="text-sm font-bold text-white font-mono mb-3 truncate text-left" title={match.id}>
-                        {match.id}
-                      </div>
-                      
-                      {/* Stats Row */}
-                      <div className="flex items-center gap-3 flex-wrap text-xs">
-                        {stats && stats.roundCount > 0 && (
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-gray-500">{t('matches.rounds')}:</span>
-                            <span className="text-sm font-semibold text-accent">
-                              {stats.roundCount}
-                            </span>
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
+                        <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between gap-2">
+                          <div className="font-semibold text-white text-base truncate">
+                            {match.map || 'Unknown Map'}
                           </div>
-                        )}
-                        {stats && stats.duration > 0 && (
+                          {match.source && getSourceIcon(match.source) && (
+                            <img
+                              src={getSourceIcon(match.source)!}
+                              alt={match.source}
+                              className="h-5 w-5 flex-shrink-0 object-contain"
+                              title={match.source}
+                              onError={(e) => {
+                                e.currentTarget.style.display = 'none'
+                              }}
+                            />
+                          )}
+                        </div>
+                      </div>
+                      <div className="p-4 bg-secondary border-t border-border/50">
+                        <div className="text-sm font-bold text-white font-mono mb-3 truncate text-left" title={match.id}>
+                          {match.id}
+                        </div>
+                        <div className="flex items-center gap-3 flex-wrap text-xs">
+                          {stats && stats.roundCount > 0 && (
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-gray-500">{t('matches.rounds')}:</span>
+                              <span className="text-sm font-semibold text-accent">
+                                {stats.roundCount}
+                              </span>
+                            </div>
+                          )}
+                          {stats && stats.duration > 0 && (
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-gray-500">{t('matches.duration')}:</span>
+                              <span className="text-sm font-semibold text-accent">
+                                {formatDuration(stats.duration)}
+                              </span>
+                            </div>
+                          )}
+                          {stats && (stats.tWins > 0 || stats.ctWins > 0) && (
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-gray-500">{t('matches.score')}:</span>
+                              <span className="text-sm font-semibold text-gray-300">
+                                {t('matches.teamA')} {stats.tWins} - {t('matches.teamB')} {stats.ctWins}
+                              </span>
+                            </div>
+                          )}
                           <div className="flex items-center gap-1.5">
-                            <span className="text-gray-500">{t('matches.duration')}:</span>
-                            <span className="text-sm font-semibold text-accent">
-                              {formatDuration(stats.duration)}
-                            </span>
-                          </div>
-                        )}
-                        {stats && (stats.tWins > 0 || stats.ctWins > 0) && (
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-gray-500">{t('matches.score')}:</span>
+                            <span className="text-gray-500">{t('matches.players')}:</span>
                             <span className="text-sm font-semibold text-gray-300">
-                              {t('matches.teamA')} {stats.tWins} - {t('matches.teamB')} {stats.ctWins}
+                              {match.playerCount}
                             </span>
                           </div>
-                        )}
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-gray-500">{t('matches.players')}:</span>
-                          <span className="text-sm font-semibold text-gray-300">
-                            {match.playerCount}
-                          </span>
                         </div>
                       </div>
-                    </div>
-                  </button>
+                    </button>
                   </div>
                 )
               })}
@@ -2851,10 +2898,6 @@ function MatchesScreen() {
                                 .sort((a, b) => a.roundIndex - b.roundIndex)
                                 .map((block, idx) => {
                                   const seconds = block.meta?.seconds || 0
-                                  const stackedTicks = block.meta?.stacked_ticks || 0
-                                  const minXYDist = block.meta?.min_xy_distance || 0
-                                  const avgXYDist = block.meta?.avg_xy_distance || 0
-                                  const avgZDelta = block.meta?.avg_z_delta || 0
 
                                   return (
                                     <div key={idx} className="bg-secondary border border-border rounded p-3 min-w-[320px]">
@@ -2897,31 +2940,9 @@ function MatchesScreen() {
                                       <div className="text-xs text-purple-400 font-medium mb-2">
                                         Head stacking detected
                                       </div>
-                                      <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
-                                        <div className="text-gray-400">
-                                          <span className="font-medium">Duration:</span>
-                                        </div>
-                                        <div className="text-white">
-                                          {seconds.toFixed(1)}s ({stackedTicks} ticks)
-                                        </div>
-                                        <div className="text-gray-400">
-                                          <span className="font-medium">Min XY dist:</span>
-                                        </div>
-                                        <div className="text-white">
-                                          {minXYDist.toFixed(1)} units
-                                        </div>
-                                        <div className="text-gray-400">
-                                          <span className="font-medium">Avg XY dist:</span>
-                                        </div>
-                                        <div className="text-white">
-                                          {avgXYDist.toFixed(1)} units
-                                        </div>
-                                        <div className="text-gray-400">
-                                          <span className="font-medium">Avg Z delta:</span>
-                                        </div>
-                                        <div className="text-white">
-                                          {avgZDelta.toFixed(1)} units
-                                        </div>
+                                      <div className="text-xs text-gray-400">
+                                        <span className="font-medium">Duration:</span>{' '}
+                                        <span className="text-white">{seconds.toFixed(1)}s</span>
                                       </div>
                                     </div>
                                   )
@@ -3552,6 +3573,7 @@ function MatchesScreen() {
             setAfkSortBy={setAfkSortBy}
             filteredEvents={filteredEvents}
             eventsByType={eventsByType}
+            rounds={rounds}
           />
         )}
 
@@ -3576,15 +3598,17 @@ function MatchesScreen() {
           onClose={() => setToast(null)}
         />
 
-        {/* Parsing Modal */}
-        {demoToParse && (
+        {/* Parsing Modal - stay mounted while queue has demos so second+ demo can start */}
+        {(demoToParse != null || demosToParse.length > 0) && (
           <ParsingModal
-            demosToParse={[demoToParse, ...demosToParse]}
+            demosToParse={demoToParse != null ? [demoToParse, ...demosToParse] : demosToParse}
             onClose={() => {
               setShowParsingModal(false)
               setDemoToParse(null)
               setDemosToParse([])
             }}
+            isMinimized={!showParsingModal}
+            onRunInBackground={() => setShowParsingModal(false)}
           />
         )}
 

@@ -115,10 +115,11 @@ export default function VoicePlaybackModal({
           steamIds: [playerSteamId],
         })
 
-        // Map extracted files to audio file objects
-        const extractedFiles = (result.filePaths || result.files.map(f => `${result.outputPath}/${f}`)).map((filePath, index) => {
+        const rawFiles = result.filePaths || (result.files || []).map((f: string) => `${result.outputPath}/${f}`)
+        const extractedFiles = rawFiles.map((filePath: string, index: number) => {
           const fullPath = filePath.replace(/\\/g, '/')
-          const fileName = result.files[index] || fullPath.split('/').pop() || fullPath.split('\\').pop() || 'audio.wav'
+          const fileList = result.files || []
+          const fileName = fileList[index] || fullPath.split('/').pop() || fullPath.split('\\').pop() || 'audio.wav'
           return {
             path: fullPath,
             name: fileName,
@@ -129,7 +130,7 @@ export default function VoicePlaybackModal({
 
         // Check if any files were extracted
         if (extractedFiles.length === 0) {
-          // No files found - transition to playback state so modal can be closed
+          // No files found - show info state (not an error)
           setModalState('playback')
           setAudioFiles([])
           setOutputPath(result.outputPath)
@@ -140,8 +141,17 @@ export default function VoicePlaybackModal({
         }
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : 'Failed to extract voice'
-        setExtractionError(errorMessage)
-        // Keep modal in extracting state so user can see the error
+        // Treat "no voice data" as info, not error (e.g. extractor exit code when nothing found)
+        const isNoData =
+          /no voice|no data|not found|0 file|no file|nothing to extract|exit code 1/i.test(errorMessage) ||
+          /no voice data|no audio/i.test(errorMessage)
+        if (isNoData) {
+          setModalState('playback')
+          setAudioFiles([])
+          setOutputPath(null)
+        } else {
+          setExtractionError(errorMessage)
+        }
       }
     }
 
@@ -602,15 +612,11 @@ export default function VoicePlaybackModal({
         {modalState === 'playback' && (
           <div className="space-y-4">
             {audioFiles.length === 0 ? (
-              <div className="text-center text-gray-400 py-8 space-y-4">
-                <p>No audio files available</p>
-                <p className="text-sm text-gray-500">No voice data was found in this demo file.</p>
-                <button
-                  onClick={handleClose}
-                  className="px-4 py-2 bg-secondary hover:bg-surface text-white rounded transition-colors text-sm font-medium"
-                >
-                  Close
-                </button>
+              <div className="bg-blue-900/20 border border-blue-500/50 rounded p-4">
+                <p className="text-blue-400 font-semibold mb-1">No voice data found</p>
+                <p className="text-blue-300 text-sm">
+                  There was no audio found for: {playerName}
+                </p>
               </div>
             ) : (
               <>

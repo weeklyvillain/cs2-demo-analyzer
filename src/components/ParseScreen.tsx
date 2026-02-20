@@ -34,7 +34,8 @@ function ParseScreen() {
     if (!window.electronAPI) return
 
     // Set up IPC listeners
-    const handleMessage = (message: string) => {
+    const handleMessage = (payload: string | { processId: string; message: string }) => {
+      const message = typeof payload === 'string' ? payload : payload.message
       const parsed = parseNDJSONLine(message)
       if (!parsed) return
 
@@ -67,7 +68,7 @@ function ParseScreen() {
       addLog('info', log)
     }
 
-    const handleExit = (data: { code: number | null; signal: string | null }) => {
+    const handleExit = (data: { code: number | null; signal: string | null; processId?: string }) => {
       setIsParsing(false)
       if (data.code === 0) {
         addLog('info', 'Parsing completed successfully')
@@ -81,16 +82,16 @@ function ParseScreen() {
       addLog('error', `Parser error: ${error}`)
     }
 
-    window.electronAPI.onParserMessage(handleMessage)
-    window.electronAPI.onParserLog(handleLog)
-    window.electronAPI.onParserExit(handleExit)
-    window.electronAPI.onParserError(handleError)
+    const unsubMessage = window.electronAPI.onParserMessage(handleMessage)
+    const unsubLog = window.electronAPI.onParserLog(handleLog)
+    const unsubExit = window.electronAPI.onParserExit(handleExit)
+    const unsubError = window.electronAPI.onParserError(handleError)
 
     return () => {
-      window.electronAPI.removeAllListeners('parser:message')
-      window.electronAPI.removeAllListeners('parser:log')
-      window.electronAPI.removeAllListeners('parser:exit')
-      window.electronAPI.removeAllListeners('parser:error')
+      unsubMessage()
+      unsubLog()
+      unsubExit()
+      unsubError()
     }
   }, [])
 

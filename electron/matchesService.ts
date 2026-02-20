@@ -1,9 +1,11 @@
 import * as path from 'path'
 import * as fs from 'fs'
+import * as fsPromises from 'fs/promises'
 import { app } from 'electron'
 import { getSetting } from './settings'
 
 const initSqlJs = require('sql.js')
+const LIST_MATCHES_BATCH_SIZE = 10
 
 export interface MatchInfo {
   id: string
@@ -197,105 +199,125 @@ export async function performStartupIntegrityCheck(): Promise<Array<{ matchId: s
 }
 
 /**
- * List all matches with integrity status
+ * Load one match's info from a db file (single read, single DB open). Used by listMatches in parallel.
  */
-export async function listMatches(): Promise<MatchInfo[]> {
-  const matchesDir = getMatchesDir()
-  
-  if (!fs.existsSync(matchesDir)) {
-    return []
-  }
-  
-  const files = fs.readdirSync(matchesDir)
-  const matches: MatchInfo[] = []
-  const SQL = await initSqlJs()
-  
-  for (const file of files) {
-    if (!file.endsWith('.sqlite')) continue
-    
-    const matchId = path.basename(file, '.sqlite')
-    const dbPath = path.join(matchesDir, file)
-    
+async function loadOneMatchInfo(
+  dbPath: string,
+  matchId: string,
+  SQL: any
+): Promise<MatchInfo | null> {
+  try {
+    const buffer = await fsPromises.readFile(dbPath)
+    const db = new SQL.Database(buffer)
+
+    let demoPath: string | null = null
+    let createdAtIso: string | null = null
     try {
-      const buffer = fs.readFileSync(dbPath)
-      const db = new SQL.Database(buffer)
-      
-      // Get player count
-      const playerStmt = db.prepare('SELECT COUNT(*) FROM players WHERE match_id = ?')
-      playerStmt.bind([matchId])
-      const playerCount = playerStmt.step() ? playerStmt.get()[0] : 0
-      playerStmt.free()
-      
-      // Get demo path and created_at
-      const demoPath = await getDemoPathFromDb(dbPath)
-      const createdAtIso = await getCreatedAtIso(dbPath)
-      
-      // Check if demo is missing
-      const isMissingDemo = !demoPath || !fs.existsSync(demoPath)
-      
-      // Get match info
-      // Try to get source column, but handle case where it doesn't exist (older databases)
-      let matchResult: { map: any; started_at: any; source: string | null } | null = null
+      const metaStmt = db.prepare('SELECT key, value FROM meta WHERE key IN (?, ?)')
+      metaStmt.bind(['demo_path', 'created_at_iso'])
+      while (metaStmt.step()) {
+        const row = metaStmt.get()
+        if (row[0] === 'demo_path') demoPath = row[1] || null
+        if (row[0] === 'created_at_iso') createdAtIso = row[1] || null
+      }
+      metaStmt.free()
+    } catch {
+      // Meta table might not exist; try matches.demo_path for demo path
       try {
-        const matchStmt = db.prepare('SELECT map, started_at, source FROM matches WHERE id = ?')
+        const matchStmt = db.prepare('SELECT demo_path FROM matches LIMIT 1')
+        if (matchStmt.step()) {
+          const o = matchStmt.getAsObject()
+          demoPath = (o as any).demo_path || null
+        }
+        matchStmt.free()
+      } catch {
+        /* ignore */
+      }
+    }
+
+    const playerStmt = db.prepare('SELECT COUNT(*) FROM players WHERE match_id = ?')
+    playerStmt.bind([matchId])
+    const playerCount = playerStmt.step() ? playerStmt.get()[0] : 0
+    playerStmt.free()
+
+    let matchResult: { map: any; started_at: any; source: string | null } | null = null
+    try {
+      const matchStmt = db.prepare('SELECT map, started_at, source FROM matches WHERE id = ?')
+      matchStmt.bind([matchId])
+      if (matchStmt.step()) {
+        const result = matchStmt.get()
+        matchStmt.free()
+        matchResult = { map: result[0], started_at: result[1], source: result[2] || null }
+      } else {
+        matchStmt.free()
+      }
+    } catch (err: any) {
+      if (err?.message?.includes('no such column: source')) {
+        const matchStmt = db.prepare('SELECT map, started_at FROM matches WHERE id = ?')
         matchStmt.bind([matchId])
         if (matchStmt.step()) {
           const result = matchStmt.get()
           matchStmt.free()
-          matchResult = {
-            map: result[0],
-            started_at: result[1],
-            source: result[2] || null
-          }
+          matchResult = { map: result[0], started_at: result[1], source: null }
         } else {
           matchStmt.free()
         }
-      } catch (err: any) {
-        // If source column doesn't exist, try without it
-        if (err?.message?.includes('no such column: source')) {
-          const matchStmt = db.prepare('SELECT map, started_at FROM matches WHERE id = ?')
-          matchStmt.bind([matchId])
-          if (matchStmt.step()) {
-            const result = matchStmt.get()
-            matchStmt.free()
-            matchResult = {
-              map: result[0],
-              started_at: result[1],
-              source: null // Source column doesn't exist in this database
-            }
-          } else {
-            matchStmt.free()
-          }
-        } else {
-          // Re-throw if it's a different error
-          throw err
-        }
+      } else {
+        throw err
       }
-      
-      db.close()
-      
-      if (!matchResult) {
-        // No match found, skip
-        continue
-      }
-      
-      matches.push({
-        id: matchId,
-        map: matchResult.map || matchId,
-        startedAt: matchResult.started_at || null,
-        playerCount: playerCount || 0,
-        demoPath: demoPath || null,
-        isMissingDemo,
-        createdAtIso: createdAtIso || null,
-        source: matchResult.source,
+    }
+
+    db.close()
+
+    if (!matchResult) return null
+
+    const isMissingDemo = !demoPath || !fs.existsSync(demoPath)
+    return {
+      id: matchId,
+      map: matchResult.map || matchId,
+      startedAt: matchResult.started_at || null,
+      playerCount: playerCount || 0,
+      demoPath: demoPath || null,
+      isMissingDemo,
+      createdAtIso: createdAtIso || null,
+      source: matchResult.source,
+    }
+  } catch (err) {
+    console.error(`Failed to read match ${matchId}:`, err)
+    return null
+  }
+}
+
+/**
+ * List all matches with integrity status (loads DBs in parallel batches).
+ */
+export async function listMatches(): Promise<MatchInfo[]> {
+  const matchesDir = getMatchesDir()
+
+  if (!fs.existsSync(matchesDir)) {
+    return []
+  }
+
+  const files = fs.readdirSync(matchesDir).filter((f) => f.endsWith('.sqlite'))
+  if (files.length === 0) return []
+
+  const SQL = await initSqlJs()
+  const matches: MatchInfo[] = []
+
+  for (let i = 0; i < files.length; i += LIST_MATCHES_BATCH_SIZE) {
+    const batch = files.slice(i, i + LIST_MATCHES_BATCH_SIZE)
+    const results = await Promise.all(
+      batch.map((file) => {
+        const matchId = path.basename(file, '.sqlite')
+        const dbPath = path.join(matchesDir, file)
+        return loadOneMatchInfo(dbPath, matchId, SQL)
       })
-    } catch (err) {
-      // Skip corrupted databases (they should be cleaned up by integrity check)
-      console.error(`Failed to read match ${matchId}:`, err)
+    )
+    for (const m of results) {
+      if (m) matches.push(m)
     }
   }
-  
-  // Sort by created_at_iso descending, or started_at, or id
+
   return matches.sort((a, b) => {
     if (a.createdAtIso && b.createdAtIso) {
       return new Date(b.createdAtIso).getTime() - new Date(a.createdAtIso).getTime()

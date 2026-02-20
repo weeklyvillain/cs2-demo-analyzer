@@ -10,7 +10,7 @@ export interface Incident {
 
 export interface ElectronAPI {
   deleteDemo: (demoPath: string | null, deleteFile: boolean) => Promise<void>
-  openFileDialog: (allowMultiple?: boolean) => Promise<string | null | string[]>
+  openFileDialog: (allowMultiple?: boolean, fileFilter?: 'exe' | 'demo') => Promise<string | null | string[]>
   openDirectoryDialog: () => Promise<string | null>
   parseDemo: (args: { demoPath: string }) => Promise<{ matchId: string; dbPath: string }>
   stopParser: () => Promise<void>
@@ -110,10 +110,12 @@ export interface ElectronAPI {
     message: string
   }) => void) => void
   showItemInFolder: (filePath: string) => Promise<void>
-  onParserMessage: (callback: (message: string) => void) => void
-  onParserLog: (callback: (log: string) => void) => void
-  onParserExit: (callback: (data: { code: number | null; signal: string | null }) => void) => void
-  onParserError: (callback: (error: string) => void) => void
+  onParserMessage: (callback: (message: string | { processId: string; message: string }) => void) => () => void
+  onParserLog: (callback: (log: string) => void) => () => void
+  onParserExit: (callback: (data: { code: number | null; signal: string | null; processId?: string }) => void) => () => void
+  onParserStarted: (callback: (data: { matchId: string; demoPath: string }) => void) => () => void
+  onParserDone: (callback: (data: { success: boolean; matchId: string; demoPath: string; error?: string }) => void) => () => void
+  onParserError: (callback: (error: string) => void) => () => void
   onDemosFileAdded: (callback: (data: { filePath: string }) => void) => void
   onDemosFileRemoved: (callback: (data: { filePath: string }) => void) => void
   onMatchesCleanup: (callback: (data: { deleted: number; details: Array<{ matchId: string; reason: string }> }) => void) => void

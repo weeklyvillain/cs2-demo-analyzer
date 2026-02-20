@@ -1,15 +1,25 @@
 import { useState, useEffect } from 'react'
-import { t, getLanguage } from '../utils/translations'
+import { t } from '../utils/translations'
+import { useParsingStatus } from '../contexts/ParsingStatusContext'
 
 interface SidebarProps {
   currentScreen: 'matches' | 'settings' | 'dbviewer' | 'stats' | 'unparsed'
   onNavigate: (screen: 'matches' | 'settings' | 'dbviewer' | 'stats' | 'unparsed') => void
 }
 
+const SIZE = 44
+const STROKE = 4
+const R = (SIZE - STROKE) / 2
+const CIRCUMFERENCE = 2 * Math.PI * R
+
 function Sidebar({ currentScreen, onNavigate }: SidebarProps) {
   const [enableDbViewer, setEnableDbViewer] = useState(false)
   const [logoUrl, setLogoUrl] = useState<string | null>(null)
   const [, forceUpdate] = useState(0)
+  const { isParsing, progress, demoFileName, queueTotal, openParsingPanel, stopParsing } = useParsingStatus()
+
+  // Open the parsing details panel only (progress + logs). Do not reopen the queue modal.
+  const handleOpenParsing = () => openParsingPanel()
 
   useEffect(() => {
     const loadSetting = async () => {
@@ -47,10 +57,12 @@ function Sidebar({ currentScreen, onNavigate }: SidebarProps) {
     const checkLanguage = () => {
       forceUpdate((prev) => prev + 1)
     }
-    // Check language every second (simple polling approach)
     const interval = setInterval(checkLanguage, 1000)
     return () => clearInterval(interval)
   }, [])
+
+  const pct = progress ? Math.min(1, Math.max(0, progress.pct)) : 0
+  const strokeDashoffset = CIRCUMFERENCE * (1 - pct)
 
   return (
     <aside className="w-64 bg-secondary border-r border-border flex flex-col">
@@ -140,6 +152,67 @@ function Sidebar({ currentScreen, onNavigate }: SidebarProps) {
           )}
         </ul>
       </nav>
+
+      {/* Bottom: parsing progress when active */}
+      {isParsing && (
+        <div className="p-4 border-t border-border flex-shrink-0">
+          <div className="rounded-lg bg-surface border border-border p-3 space-y-3">
+            <div className="flex items-center gap-3">
+              <div className="relative flex-shrink-0" style={{ width: SIZE, height: SIZE }}>
+                <svg width={SIZE} height={SIZE} className="rotate-[-90deg]">
+                  <circle
+                    cx={SIZE / 2}
+                    cy={SIZE / 2}
+                    r={R}
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={STROKE}
+                    className="text-border"
+                  />
+                  <circle
+                    cx={SIZE / 2}
+                    cy={SIZE / 2}
+                    r={R}
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={STROKE}
+                    strokeLinecap="round"
+                    className="text-accent transition-all duration-300"
+                    strokeDasharray={CIRCUMFERENCE}
+                    strokeDashoffset={strokeDashoffset}
+                  />
+                </svg>
+                <span className="absolute inset-0 flex items-center justify-center text-xs font-medium text-gray-300">
+                  {Math.round(pct * 100)}%
+                </span>
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-white truncate">
+                  {t('sidebar.parsing')}
+                  {demoFileName ? `: ${demoFileName}` : ''}
+                </p>
+                <p className="text-xs text-gray-500">
+                  {t('sidebar.parsingRemaining').replace('{count}', String(queueTotal ?? 1))}
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={handleOpenParsing}
+                className="flex-1 px-3 py-1.5 text-xs bg-surface border border-border text-gray-300 rounded hover:bg-white/10 hover:text-white transition-colors"
+              >
+                {t('sidebar.openParsing')}
+              </button>
+              <button
+                onClick={() => stopParsing()}
+                className="px-3 py-1.5 text-xs bg-red-600/80 text-white rounded hover:bg-red-600 transition-colors"
+              >
+                {t('sidebar.stopParsing')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </aside>
   )
 }

@@ -22,6 +22,7 @@ type bodyBlockPosition struct {
 	x       float64
 	y       float64
 	z       float64
+	health  *int // nil = unknown; <= 0 = dead (do not count headstack on dead players)
 }
 
 type bodyBlockState struct {
@@ -65,7 +66,7 @@ func (e *BodyBlockExtractor) ProcessRoundFromDatabase(matchID string, roundIndex
 	)
 
 	query := `
-		SELECT tick, steamid, x, y, z, team
+		SELECT tick, steamid, x, y, z, team, health
 		FROM player_positions
 		WHERE match_id = ? AND round_index = ? AND tick BETWEEN ? AND ?
 		ORDER BY tick
@@ -122,6 +123,11 @@ func (e *BodyBlockExtractor) ProcessRoundFromDatabase(matchID string, roundIndex
 					zDelta = -zDelta
 				}
 
+				// Do not count headstacking when the bottom player (being stood on) is dead
+				if bottom.health != nil && *bottom.health <= 0 {
+					continue
+				}
+
 				distXY := math.Sqrt(distSq)
 				key := fmt.Sprintf("%s_%s", top.steamID, bottom.steamID)
 
@@ -170,8 +176,9 @@ func (e *BodyBlockExtractor) ProcessRoundFromDatabase(matchID string, roundIndex
 		var steamID string
 		var x, y, z float64
 		var team string
+		var health sql.NullInt64
 
-		if err := rows.Scan(&tick, &steamID, &x, &y, &z, &team); err != nil {
+		if err := rows.Scan(&tick, &steamID, &x, &y, &z, &team, &health); err != nil {
 			continue
 		}
 
@@ -185,12 +192,18 @@ func (e *BodyBlockExtractor) ProcessRoundFromDatabase(matchID string, roundIndex
 			currentTick = tick
 		}
 
+		var healthPtr *int
+		if health.Valid {
+			h := int(health.Int64)
+			healthPtr = &h
+		}
 		positions = append(positions, bodyBlockPosition{
 			steamID: steamID,
 			team:    team,
 			x:       x,
 			y:       y,
 			z:       z,
+			health:  healthPtr,
 		})
 	}
 

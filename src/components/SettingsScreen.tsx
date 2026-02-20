@@ -27,6 +27,8 @@ interface Settings {
   voice_skip_time: string
   position_extraction_interval: string
   ram_only_parsing: string
+  parallel_parsing_enabled: string
+  parallel_parsing_count: string
   voiceCacheSizeLimitMB: string
   autoUpdateEnabled: string
   manualVersion: string
@@ -60,6 +62,8 @@ function SettingsScreen() {
     voice_skip_time: '10',
     position_extraction_interval: '4',
     ram_only_parsing: 'false',
+    parallel_parsing_enabled: 'false',
+    parallel_parsing_count: '2',
     voiceCacheSizeLimitMB: '50',
     autoUpdateEnabled: 'true',
     manualVersion: '',
@@ -172,6 +176,8 @@ function SettingsScreen() {
         voice_skip_time: allSettings.voice_skip_time || '10',
         position_extraction_interval: allSettings.position_extraction_interval || '4',
         ram_only_parsing: allSettings.ram_only_parsing || 'false',
+        parallel_parsing_enabled: allSettings.parallel_parsing_enabled || 'false',
+        parallel_parsing_count: allSettings.parallel_parsing_count || '2',
         voiceCacheSizeLimitMB: allSettings.voiceCacheSizeLimitMB || '50',
         autoUpdateEnabled: allSettings.autoUpdateEnabled || 'true',
         manualVersion: allSettings.manualVersion || '',
@@ -302,8 +308,8 @@ function SettingsScreen() {
   const handleBrowseCS2 = async () => {
     if (!window.electronAPI) return
 
-    const path = await window.electronAPI.openFileDialog()
-    if (path) {
+    const path = await window.electronAPI.openFileDialog(false, 'exe')
+    if (path && typeof path === 'string') {
       setSettings((prev) => ({ ...prev, cs2_path: path, cs2ExePath: path }))
       // Save immediately when file is selected
       await handleSaveSingleSetting('cs2_path', path)
@@ -781,6 +787,55 @@ function SettingsScreen() {
                   <div className="w-11 h-6 bg-surface peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-accent"></div>
                 </label>
               </div>
+
+              <div className="flex items-center justify-between">
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-1">
+                    {t('settings.parallelParsing')}
+                  </label>
+                  <p className="text-xs text-gray-500">
+                    {t('settings.parallelParsingDesc')}
+                  </p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.parallel_parsing_enabled === 'true'}
+                    onChange={async (e) => {
+                      const value = e.target.checked ? 'true' : 'false'
+                      setSettings((prev) => ({ ...prev, parallel_parsing_enabled: value }))
+                      await handleSaveSingleSetting('parallel_parsing_enabled', value)
+                    }}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-surface peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-accent"></div>
+                </label>
+              </div>
+
+              {settings.parallel_parsing_enabled === 'true' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    {t('settings.parallelParsingCount')}
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={8}
+                    value={settings.parallel_parsing_count}
+                    onChange={async (e) => {
+                      const raw = e.target.value
+                      const num = Math.max(1, Math.min(8, parseInt(raw, 10) || 2))
+                      const value = String(num)
+                      setSettings((prev) => ({ ...prev, parallel_parsing_count: value }))
+                      await handleSaveSingleSetting('parallel_parsing_count', value)
+                    }}
+                    className="w-full px-3 py-2 bg-surface border border-border rounded text-white text-sm max-w-[6rem]"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    {t('settings.parallelParsingCountDesc')}
+                  </p>
+                </div>
+              )}
             </div>
           </div>
 

@@ -780,7 +780,28 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 			if gs != nil {
 				participants := gs.Participants()
 				allPlayers := participants.All()
-				economyExtractor.HandleFreezeTimeEnd(currentRound.RoundIndex, tick, allPlayers)
+				// Exclude disconnected players: they can't buy, so economy griefing doesn't apply
+				filteredPlayers := make([]*common.Player, 0, len(allPlayers))
+				for _, pl := range allPlayers {
+					if pl == nil {
+						continue
+					}
+					disconnected, ok := playerDisconnected[pl.SteamID64]
+					if !ok || !disconnected {
+						filteredPlayers = append(filteredPlayers, pl)
+						continue
+					}
+					dcTick := playerDisconnectTick[pl.SteamID64]
+					dcRound := playerDisconnectRound[pl.SteamID64]
+					if dcRound == currentRound.RoundIndex && dcTick <= tick {
+						continue
+					}
+					if dcRound < currentRound.RoundIndex {
+						continue
+					}
+					filteredPlayers = append(filteredPlayers, pl)
+				}
+				economyExtractor.HandleFreezeTimeEnd(currentRound.RoundIndex, tick, filteredPlayers)
 				
 				// Write economy events immediately to file/DB
 				economyEvents := economyExtractor.GetEvents()
@@ -830,8 +851,6 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 		// Note: Body blocking detection moved to post-parse step in main.go
 		// It needs all positions to be fully stored in the database first
 
-		// Notify disconnect extractor of round end (for filtering disconnects within 10s)
-		disconnectExtractor.SetLastRoundEndTick(tick)
 		
 		// Store round end tick for filtering team kills near round end
 		roundEndTicks[currentRound.RoundIndex] = tick
@@ -2704,6 +2723,9 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 	if err := flushBuffers(); err != nil {
 		return nil, fmt.Errorf("failed to flush buffers before event collection: %w", err)
 	}
+
+	// Tell disconnect extractor when the game ended so it can filter disconnects within 10s of game end
+	disconnectExtractor.SetGameEndTick(finalTick, tickRate)
 
 	// Collect all extracted events
 	// Progress: 85-90% for event extraction

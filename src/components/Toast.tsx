@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { Check, X } from 'lucide-react'
+import { Check, X, AlertCircle, Info } from 'lucide-react'
 
 interface ToastProps {
   message: string
@@ -45,7 +45,9 @@ export default function Toast({
     type === 'success' ? (
       <Check size={18} className={textColor} />
     ) : type === 'error' ? (
-      <X size={18} className={textColor} />
+      <AlertCircle size={18} className={textColor} />
+    ) : type === 'info' ? (
+      <Info size={18} className={textColor} />
     ) : null
 
   return (

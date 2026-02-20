@@ -20,7 +20,19 @@ import { HlaeLauncher, HlaeLogger, CS2CommandSender } from './hlaeRecorder'
 let mainWindow: BrowserWindow | null = null
 let splashWindow: BrowserWindow | null = null
 let overlayWindow: BrowserWindow | null = null
+/** Single process when parallel is off; unused when using parserJobs map. */
 let parserProcess: ChildProcess | null = null
+/** When parallel parsing is enabled, multiple jobs run at once keyed by matchId. */
+interface ParserJob {
+  process: ChildProcess
+  matchId: string
+  demoPath: string
+  dbPath: string
+  parsingStartTime: number
+  demoSizeBytes: number
+  parserLogs: string[]
+}
+const parserJobs = new Map<string, ParserJob>()
 let extractorProcess: ChildProcess | null = null // Track voice extractor process
 let audiowaveformProcess: ChildProcess | null = null // Track audiowaveform process
 let startupCleanupDeleted: Array<{ matchId: string; reason: string }> = []
@@ -250,6 +262,19 @@ function createWindow() {
   mainWindow.on('unmaximize', () => {
     if (mainWindow) {
       mainWindow.webContents.send('window:maximized', false)
+    }
+  })
+
+  // When minimized and parsing, show "Parsing..." in taskbar title
+  mainWindow.on('minimize', () => {
+    if (mainWindow && parserProcess) {
+      mainWindow.setTitle('CS2 Demo Analyzer (Parsing...)')
+    }
+  })
+
+  mainWindow.on('restore', () => {
+    if (mainWindow) {
+      mainWindow.setTitle('CS2 Demo Analyzer')
     }
   })
 }
@@ -1098,15 +1123,23 @@ function setupDemoFolderWatcher(folderPaths: string[]) {
 
 // IPC Handlers
 
-ipcMain.handle('dialog:openFile', async (_, allowMultiple: boolean = false) => {
+ipcMain.handle('dialog:openFile', async (_, allowMultiple: boolean = false, fileFilter?: 'exe' | 'demo') => {
   if (!mainWindow) return null
+
+  const filters =
+    fileFilter === 'exe'
+      ? [
+          { name: 'Executables', extensions: ['exe'] },
+          { name: 'All Files', extensions: ['*'] },
+        ]
+      : [
+          { name: 'CS2 Demo Files', extensions: ['dem'] },
+          { name: 'All Files', extensions: ['*'] },
+        ]
 
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: allowMultiple ? ['openFile', 'multiSelections'] : ['openFile'],
-    filters: [
-      { name: 'CS2 Demo Files', extensions: ['dem'] },
-      { name: 'All Files', extensions: ['*'] },
-    ],
+    filters,
   })
 
   if (result.canceled || result.filePaths.length === 0) {
@@ -1130,32 +1163,49 @@ ipcMain.handle('dialog:openDirectory', async () => {
   return result.filePaths[0]
 })
 
-ipcMain.handle('parser:parse', async (_, { demoPath }: { demoPath: string }) => {
-  // Force stop any existing parser process before starting a new one
+function killAllParserJobs(): void {
   if (parserProcess) {
-    console.log('[Parser] Stopping existing parser process before starting new one')
-    const process = parserProcess
-    parserProcess = null
-    
-    // Remove all event listeners to prevent exit/error events from being sent
-    // This prevents the UI from showing errors for intentionally killed processes
-    process.removeAllListeners('exit')
-    process.removeAllListeners('error')
-    process.stdout?.removeAllListeners('data')
-    process.stderr?.removeAllListeners('data')
-    
-    // Force kill the existing process
     try {
-      process.kill('SIGKILL')
+      parserProcess.removeAllListeners('exit')
+      parserProcess.removeAllListeners('error')
+      parserProcess.stdout?.removeAllListeners('data')
+      parserProcess.stderr?.removeAllListeners('data')
+      parserProcess.kill('SIGKILL')
     } catch (err) {
-      console.error('[Parser] Error killing existing process:', err)
+      console.error('[Parser] Error killing parser process:', err)
     }
-    
-    // Don't wait - the process is killed immediately and will be cleaned up by the OS
+    parserProcess = null
   }
+  for (const [id, job] of parserJobs) {
+    try {
+      job.process.removeAllListeners('exit')
+      job.process.removeAllListeners('error')
+      job.process.stdout?.removeAllListeners('data')
+      job.process.stderr?.removeAllListeners('data')
+      job.process.kill('SIGKILL')
+    } catch (err) {
+      console.error('[Parser] Error killing job:', id, err)
+    }
+  }
+  parserJobs.clear()
+}
 
+ipcMain.handle('parser:parse', async (_, { demoPath }: { demoPath: string }) => {
   if (!mainWindow) {
     throw new Error('Main window not available')
+  }
+
+  const parallelEnabled = getSetting('parallel_parsing_enabled', 'false') === 'true'
+  const maxParallel = Math.max(1, Math.min(8, parseInt(getSetting('parallel_parsing_count', '2'), 10) || 2))
+
+  // Sequential mode: kill any existing and run single process
+  if (!parallelEnabled || maxParallel <= 1) {
+    killAllParserJobs()
+  } else {
+    // Parallel mode: reject if at capacity
+    if (parserJobs.size >= maxParallel) {
+      throw new Error('PARSER_AT_CAPACITY')
+    }
   }
 
   // Generate match ID from filename
@@ -1222,76 +1272,102 @@ ipcMain.handle('parser:parse', async (_, { demoPath }: { demoPath: string }) => 
     // All data will be accumulated in memory during parsing
   }
   
+  const useParallel = parallelEnabled && maxParallel > 1
+  const processId = useParallel ? matchId : undefined
+
   // Spawn parser process with descriptive name
-  parserProcess = spawn(parserPath, parserArgs, {
+  const proc = spawn(parserPath, parserArgs, {
     env: {
       ...process.env,
-      // Set process name via environment variable for identification
       PROCESS_NAME: 'CS2 Demo Parser',
     },
   })
 
-  // Track parsing start time
+  if (useParallel) {
+    parserJobs.set(matchId, {
+      process: proc,
+      matchId,
+      demoPath,
+      dbPath,
+      parsingStartTime: Date.now(),
+      demoSizeBytes: fs.statSync(demoPath).size,
+      parserLogs: [],
+    })
+  } else {
+    parserProcess = proc
+  }
+
   const parsingStartTime = Date.now()
   const demoDemoSizeBytes = fs.statSync(demoPath).size
-
-  // Collect parser logs (both stdout and stderr)
   const parserLogs: string[] = []
+  const logsRef = useParallel ? parserJobs.get(matchId)!.parserLogs : parserLogs
 
-  // Handle stdout (NDJSON - progress and info logs)
-  parserProcess.stdout?.on('data', (data: Buffer) => {
-    const lines = data.toString().split('\n').filter(line => line.trim())
+  mainWindow?.webContents.send('parser:started', processId != null ? { matchId, demoPath, processId } : { matchId, demoPath })
+
+  proc.stdout?.on('data', (data: Buffer) => {
+    const lines = data.toString().split('\n').filter((line: string) => line.trim())
     for (const line of lines) {
       try {
-        // Parse NDJSON and format for display
         const json = JSON.parse(line)
         if (json.type === 'log') {
-          // Format log message: "[LEVEL] message"
-          parserLogs.push(`[${json.level?.toUpperCase() || 'INFO'}] ${json.msg}`)
+          logsRef.push(`[${json.level?.toUpperCase() || 'INFO'}] ${json.msg}`)
         } else if (json.type === 'progress') {
-          // Format progress: "stage: X/Y (Zz%) - tick: N"
           const pctStr = (json.pct * 100).toFixed(1)
-          parserLogs.push(`[PROGRESS] ${json.stage}: ${pctStr}% (round ${json.round}, tick ${json.tick})`)
+          logsRef.push(`[PROGRESS] ${json.stage}: ${pctStr}% (round ${json.round}, tick ${json.tick})`)
         } else if (json.type === 'error') {
-          parserLogs.push(`[ERROR] ${json.msg}`)
+          logsRef.push(`[ERROR] ${json.msg}`)
         }
       } catch {
-        // If not valid JSON, treat as plain log line
-        parserLogs.push(line)
+        logsRef.push(line)
       }
-      mainWindow?.webContents.send('parser:message', line)
+      if (processId != null) {
+        mainWindow?.webContents.send('parser:message', { processId, message: line })
+      } else {
+        mainWindow?.webContents.send('parser:message', line)
+      }
     }
   })
 
-  // Handle stderr (error messages and warnings)
-  parserProcess.stderr?.on('data', (data: Buffer) => {
-    const lines = data.toString().split('\n').filter(line => line.trim())
+  proc.stderr?.on('data', (data: Buffer) => {
+    const lines = data.toString().split('\n').filter((line: string) => line.trim())
     for (const line of lines) {
-      // Check if line is a DEBUG log
       if (line.startsWith('DEBUG:')) {
-        parserLogs.push(`[DEBUG] ${line.substring(6).trim()}`)
+        logsRef.push(`[DEBUG] ${line.substring(6).trim()}`)
       } else {
-        // Prefix other stderr with [STDERR] to distinguish from stdout logs
-        parserLogs.push(`[STDERR] ${line}`)
+        logsRef.push(`[STDERR] ${line}`)
       }
       mainWindow?.webContents.send('parser:log', line)
     }
   })
 
-  // Handle process exit
-  parserProcess.on('exit', async (code, signal) => {
-    parserProcess = null
-    mainWindow?.webContents.send('parser:exit', { code, signal })
+  proc.on('exit', async (code, signal) => {
+    const exitLogs = useParallel ? (parserJobs.get(matchId)?.parserLogs ?? []) : parserLogs
+    if (useParallel) {
+      parserJobs.delete(matchId)
+    } else {
+      parserProcess = null
+    }
+
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (!useParallel || parserJobs.size === 0) {
+        mainWindow.setTitle('CS2 Demo Analyzer')
+      }
+    }
+
+    const success = code === 0
+    const errorMsg = success ? undefined : (exitLogs.length > 0 ? exitLogs[exitLogs.length - 1] : `Parser exited with code ${code}${signal ? ` (${signal})` : ''}`)
+    mainWindow?.webContents.send('parser:done', { success, matchId, demoPath, error: errorMsg })
+    mainWindow?.webContents.send('parser:exit', processId != null ? { code, signal, processId } : { code, signal })
     
     // Store parser logs to database
-    if (parserLogs.length > 0) {
+    if (exitLogs.length > 0) {
       try {
         const initSqlJs = require('sql.js')
         const SQL = await initSqlJs()
         const buffer = fs.readFileSync(dbPath)
         const db = new SQL.Database(buffer)
         
-        const logContent = parserLogs.join('\n')
+        const logContent = exitLogs.join('\n')
         const stmt = db.prepare('INSERT OR REPLACE INTO parser_logs (match_id, logs, created_at) VALUES (?, ?, ?)')
         stmt.bind([matchId, logContent, new Date().toISOString()])
         stmt.step()
@@ -1364,9 +1440,12 @@ ipcMain.handle('parser:parse', async (_, { demoPath }: { demoPath: string }) => 
     }
   })
 
-  // Handle errors
-  parserProcess.on('error', (error) => {
-    parserProcess = null
+  proc.on('error', (error) => {
+    if (useParallel) {
+      parserJobs.delete(matchId)
+    } else {
+      parserProcess = null
+    }
     mainWindow?.webContents.send('parser:error', error.message)
   })
 
@@ -1374,46 +1453,57 @@ ipcMain.handle('parser:parse', async (_, { demoPath }: { demoPath: string }) => 
 })
 
 ipcMain.handle('parser:stop', async () => {
-  if (parserProcess) {
-    return new Promise<void>((resolve) => {
-      const process = parserProcess
-      if (!process) {
-        resolve()
-        return
-      }
+  const hadWork = parserProcess || parserJobs.size > 0
+  if (!hadWork) return
 
-      // Set parserProcess to null immediately to prevent new parses
+  return new Promise<void>((resolve) => {
+    const toKill: ChildProcess[] = []
+    if (parserProcess) {
+      toKill.push(parserProcess)
       parserProcess = null
+    }
+    for (const job of parserJobs.values()) {
+      toKill.push(job.process)
+    }
+    parserJobs.clear()
 
-      // Try graceful shutdown first
+    let pending = toKill.length
+    const maybeResolve = () => {
+      pending--
+      if (pending <= 0) {
+        clearTimeout(timeout)
+        resolve()
+      }
+    }
+
+    for (const process of toKill) {
+      process.removeAllListeners('exit')
+      process.removeAllListeners('error')
+      process.stdout?.removeAllListeners('data')
+      process.stderr?.removeAllListeners('data')
       process.kill('SIGTERM')
+      process.once('exit', maybeResolve)
+      process.once('error', maybeResolve)
+    }
 
-      // Wait for process to exit, with timeout
-      const timeout = setTimeout(() => {
-        // Force kill if still running after 2 seconds
-        if (process && !process.killed) {
+    const timeout = setTimeout(() => {
+      for (const p of toKill) {
+        if (p && !p.killed) {
           try {
-            process.kill('SIGKILL')
+            p.kill('SIGKILL')
           } catch (err) {
             console.error('Error force killing parser:', err)
           }
         }
-        resolve()
-      }, 2000)
+      }
+      resolve()
+    }, 2000)
 
-      // Resolve when process exits
-      process.once('exit', () => {
-        clearTimeout(timeout)
-        resolve()
-      })
-
-      // Also handle error case
-      process.once('error', () => {
-        clearTimeout(timeout)
-        resolve()
-      })
-    })
-  }
+    if (toKill.length === 0) {
+      clearTimeout(timeout)
+      resolve()
+    }
+  })
 })
 
 // Matches IPC handlers
@@ -3987,12 +4077,45 @@ function isAkrosRunning(): Promise<boolean> {
   })
 }
 
+function isFaceitRunning(): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (process.platform === 'win32') {
+      exec('tasklist /FI "IMAGENAME eq faceitclient.exe"', (error, stdout) => {
+        if (error) {
+          resolve(false)
+          return
+        }
+        resolve(stdout.toLowerCase().includes('faceitclient.exe'))
+      })
+    } else {
+      // For non-Windows, use ps command
+      exec('ps aux | grep -i faceit | grep -v grep', (error, stdout) => {
+        resolve(!error && stdout.trim().length > 0)
+      })
+    }
+  })
+}
+
 // CS2 Launch handler
 ipcMain.handle('cs2:launch', async (_, demoPath: string, startTick?: number, playerName?: string, confirmLoadDemo?: boolean): Promise<{ success: boolean; tick: number; commands: string; alreadyRunning?: boolean; pid?: number; needsDemoLoad?: boolean; currentDemo?: string | null; newDemo?: string; error?: string }> => {
   // Check if Akros anti-cheat is running
   const akrosRunning = await isAkrosRunning()
   if (akrosRunning) {
     const errorMsg = 'Akros anti-cheat is running, close it before you can continue'
+    console.error('[CS2]', errorMsg)
+    
+    return { 
+      success: false, 
+      tick: 0, 
+      commands: '', 
+      error: errorMsg 
+    }
+  }
+
+  // Check if FACEIT anti-cheat is running
+  const faceitRunning = await isFaceitRunning()
+  if (faceitRunning) {
+    const errorMsg = 'FACEIT anti-cheat is running, close it before you can continue'
     console.error('[CS2]', errorMsg)
     
     return { 
@@ -4555,6 +4678,19 @@ ipcMain.handle('cs2:copyCommands', async (_, demoPath: string, startTick?: numbe
   const akrosRunning = await isAkrosRunning()
   if (akrosRunning) {
     const errorMsg = 'Akros anti-cheat is running, close it before you can continue'
+    console.error('[CS2]', errorMsg)
+    
+    return { 
+      success: false, 
+      commands: '', 
+      error: errorMsg 
+    }
+  }
+
+  // Check if FACEIT anti-cheat is running
+  const faceitRunning = await isFaceitRunning()
+  if (faceitRunning) {
+    const errorMsg = 'FACEIT anti-cheat is running, close it before you can continue'
     console.error('[CS2]', errorMsg)
     
     return { 

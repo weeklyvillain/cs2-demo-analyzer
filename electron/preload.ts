@@ -4,7 +4,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 // the ipcRenderer without exposing the entire object
 contextBridge.exposeInMainWorld('electronAPI', {
   // Dialog
-  openFileDialog: (allowMultiple?: boolean) => ipcRenderer.invoke('dialog:openFile', allowMultiple),
+  openFileDialog: (allowMultiple?: boolean, fileFilter?: 'exe' | 'demo') => ipcRenderer.invoke('dialog:openFile', allowMultiple, fileFilter),
   openDirectoryDialog: () => ipcRenderer.invoke('dialog:openDirectory'),
 
   // Parser
@@ -103,18 +103,36 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   showItemInFolder: (filePath: string) => ipcRenderer.invoke('file:showInFolder', filePath),
 
-  // Listeners
-  onParserMessage: (callback: (message: string) => void) => {
-    ipcRenderer.on('parser:message', (_, message) => callback(message))
+  // Listeners (return unsubscribe so callers can remove only their own listener)
+  onParserMessage: (callback: (message: string | { processId: string; message: string }) => void) => {
+    const wrapper = (_: unknown, message: string | { processId: string; message: string }) => callback(message)
+    ipcRenderer.on('parser:message', wrapper)
+    return () => ipcRenderer.removeListener('parser:message', wrapper)
   },
   onParserLog: (callback: (log: string) => void) => {
-    ipcRenderer.on('parser:log', (_, log) => callback(log))
+    const wrapper = (_: unknown, log: string) => callback(log)
+    ipcRenderer.on('parser:log', wrapper)
+    return () => ipcRenderer.removeListener('parser:log', wrapper)
   },
-  onParserExit: (callback: (data: { code: number | null; signal: string | null }) => void) => {
-    ipcRenderer.on('parser:exit', (_, data) => callback(data))
+  onParserExit: (callback: (data: { code: number | null; signal: string | null; processId?: string }) => void) => {
+    const wrapper = (_: unknown, data: { code: number | null; signal: string | null; processId?: string }) => callback(data)
+    ipcRenderer.on('parser:exit', wrapper)
+    return () => ipcRenderer.removeListener('parser:exit', wrapper)
+  },
+  onParserStarted: (callback: (data: { matchId: string; demoPath: string }) => void) => {
+    const wrapper = (_: unknown, data: { matchId: string; demoPath: string }) => callback(data)
+    ipcRenderer.on('parser:started', wrapper)
+    return () => ipcRenderer.removeListener('parser:started', wrapper)
+  },
+  onParserDone: (callback: (data: { success: boolean; matchId: string; demoPath: string; error?: string }) => void) => {
+    const wrapper = (_: unknown, data: { success: boolean; matchId: string; demoPath: string; error?: string }) => callback(data)
+    ipcRenderer.on('parser:done', wrapper)
+    return () => ipcRenderer.removeListener('parser:done', wrapper)
   },
   onParserError: (callback: (error: string) => void) => {
-    ipcRenderer.on('parser:error', (_, error) => callback(error))
+    const wrapper = (_: unknown, error: string) => callback(error)
+    ipcRenderer.on('parser:error', wrapper)
+    return () => ipcRenderer.removeListener('parser:error', wrapper)
   },
   onDemosFileAdded: (callback: (data: { filePath: string }) => void) => {
     ipcRenderer.on('demos:fileAdded', (_, data) => callback(data))
