@@ -716,7 +716,11 @@ function SettingsScreen() {
                 </label>
                 <select
                   value={settings.cs2_window_mode}
-                  onChange={(e) => setSettings((prev) => ({ ...prev, cs2_window_mode: e.target.value }))}
+                  onChange={(e) => {
+                    const el = e.currentTarget
+                    setSettings((prev) => ({ ...prev, cs2_window_mode: e.target.value }))
+                    el?.blur()
+                  }}
                   className="w-full px-3 py-2 bg-surface border border-border rounded text-white text-sm"
                 >
                   <option value="windowed">{t('settings.windowed')}</option>
@@ -749,9 +753,11 @@ function SettingsScreen() {
                 <select
                   value={settings.position_extraction_interval}
                   onChange={async (e) => {
+                    const el = e.currentTarget
                     const value = e.target.value
                     setSettings((prev) => ({ ...prev, position_extraction_interval: value }))
                     await handleSaveSingleSetting('position_extraction_interval', value)
+                    el?.blur()
                   }}
                   className="w-full px-3 py-2 bg-surface border border-border rounded text-white text-sm"
                 >
@@ -896,9 +902,11 @@ function SettingsScreen() {
                   <select
                     value={settings.default_sort_field}
                     onChange={async (e) => {
+                      const el = e.currentTarget
                       const value = e.target.value
                       setSettings((prev) => ({ ...prev, default_sort_field: value }))
                       await handleSaveSingleSetting('default_sort_field', value)
+                      el?.blur()
                     }}
                     className="w-full px-3 py-2 bg-surface border border-border rounded text-white text-sm"
                   >
@@ -910,9 +918,11 @@ function SettingsScreen() {
                   <select
                     value={settings.default_sort_direction}
                     onChange={async (e) => {
+                      const el = e.currentTarget
                       const value = e.target.value
                       setSettings((prev) => ({ ...prev, default_sort_direction: value }))
                       await handleSaveSingleSetting('default_sort_direction', value)
+                      el?.blur()
                     }}
                     className="w-full px-3 py-2 bg-surface border border-border rounded text-white text-sm"
                   >
@@ -1160,9 +1170,11 @@ function SettingsScreen() {
                 <select
                   value={settings.language}
                   onChange={async (e) => {
+                    const el = e.currentTarget
                     const value = e.target.value
                     setSettings((prev) => ({ ...prev, language: value }))
                     await handleSaveSingleSetting('language', value)
+                    el?.blur()
                   }}
                   className="w-full px-3 py-2 bg-surface border border-border rounded text-white text-sm"
                 >
@@ -1425,10 +1437,12 @@ function SettingsScreen() {
                     <select
                       value={settings.manualVersion}
                       onChange={async (e) => {
+                        const el = e.currentTarget
                         const value = e.target.value
                         setSettings((prev) => ({ ...prev, manualVersion: value }))
                         await handleSaveSingleSetting('manualVersion', value)
                         setInstallError(null)
+                        el?.blur()
                       }}
                       className="flex-1 px-3 py-2 bg-surface border border-border rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                       disabled={loadingVersions || installingVersion !== null}

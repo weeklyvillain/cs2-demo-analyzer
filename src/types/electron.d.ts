@@ -142,6 +142,7 @@ export interface ElectronAPI {
     close: () => Promise<boolean>
     show: () => Promise<boolean>
     hide: () => Promise<boolean>
+    isVisible: () => Promise<boolean>
     setInteractiveRegionHovered: (hovered: boolean) => Promise<void>
     getInteractiveRegionHovered: () => Promise<boolean>
     onInteractive: (callback: (value: boolean) => void) => void

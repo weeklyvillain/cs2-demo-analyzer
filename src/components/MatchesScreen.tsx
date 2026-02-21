@@ -47,6 +47,7 @@ function LazyMapThumbnail({
   className?: string
 }) {
   const [isInView, setIsInView] = useState(false)
+  const [imageLoaded, setImageLoaded] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -65,6 +66,10 @@ function LazyMapThumbnail({
     return () => observer.disconnect()
   }, [thumbnail])
 
+  useEffect(() => {
+    if (!isInView || !thumbnail) setImageLoaded(false)
+  }, [isInView, thumbnail])
+
   if (!thumbnail) {
     return (
       <div className={`w-full h-full flex items-center justify-center bg-gradient-to-br from-surface to-secondary ${className ?? ''}`}>
@@ -79,20 +84,33 @@ function LazyMapThumbnail({
         ref={containerRef}
         className={`w-full h-full flex items-center justify-center bg-gradient-to-br from-surface to-secondary ${className ?? ''}`}
       >
-        <span className="text-4xl">🗺️</span>
+        <div className="flex flex-col items-center gap-2">
+          <Loader2 className="w-8 h-8 animate-spin text-accent" />
+          <span className="text-xs text-gray-500">Loading…</span>
+        </div>
       </div>
     )
   }
 
   return (
-    <img
-      src={thumbnail}
-      alt={alt}
-      className={className}
-      onError={(e) => {
-        e.currentTarget.style.display = 'none'
-      }}
-    />
+    <div className="relative w-full h-full">
+      {!imageLoaded && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-br from-surface to-secondary">
+          <Loader2 className="w-8 h-8 animate-spin text-accent" />
+          <span className="text-xs text-gray-500 mt-2">Loading…</span>
+        </div>
+      )}
+      <img
+        src={thumbnail}
+        alt={alt}
+        className={`w-full h-full ${className ?? ''} ${imageLoaded ? 'opacity-100' : 'opacity-0'} transition-[opacity,transform] duration-300`}
+        onLoad={() => setImageLoaded(true)}
+        onError={(e) => {
+          e.currentTarget.style.display = 'none'
+          setImageLoaded(true)
+        }}
+      />
+    </div>
   )
 }
 
@@ -179,7 +197,7 @@ function MatchesScreen() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [toast, setToast] = useState<{ message: string; type?: 'success' | 'error' | 'info' } | null>(null)
-  const [activeTab, setActiveTab] = useState<'overview' | 'players' | 'rounds' | 'chat' | '2d-viewer'>('overview')
+  const [activeTab, setActiveTab] = useState<'overview' | 'players' | 'chat' | '2d-viewer'>('overview')
   const [allEvents, setAllEvents] = useState<any[]>([])
   const [allPlayers, setAllPlayers] = useState<Array<{ 
     steamId: string
@@ -834,9 +852,6 @@ function MatchesScreen() {
     if (!mapName) return null
     // Normalize map name: de_cache_b -> de_cache
     let mapKey = mapName.toLowerCase()
-    if (mapKey === 'de_cache_b') {
-      mapKey = 'de_cache'
-    }
     try {
       // Check if we have it in resources
       return `map://${mapKey}.png`
@@ -1600,10 +1615,10 @@ function MatchesScreen() {
                   <div
                     key={match.id}
                     onContextMenu={(e) => handleContextMenu(e, match)}
-                    className={`bg-secondary rounded-lg border overflow-hidden transition-all hover:shadow-xl group flex flex-col relative ${
+                    className={`bg-secondary rounded-lg border-2 overflow-hidden transition-all hover:shadow-xl group flex flex-col relative box-border ${
                       isSelected
-                        ? 'border-accent border-2'
-                        : 'border-border hover:border-accent/50'
+                        ? 'border-accent'
+                        : 'border-transparent hover:border-accent/50'
                     }`}
                   >
                     {isSelected && (
@@ -1958,18 +1973,6 @@ function MatchesScreen() {
                     }`}
                   >
                     {t('matches.tabs.players')}
-                  </button>
-                  <button
-                    onClick={() => {
-                      setActiveTab('rounds')
-                    }}
-                    className={`px-4 py-2 font-medium transition-colors ${
-                      activeTab === 'rounds'
-                        ? 'text-accent border-b-2 border-accent'
-                        : 'text-gray-400 hover:text-white'
-                    }`}
-                  >
-                    {t('matches.tabs.rounds')}
                   </button>
                   <button
                     onClick={() => {
@@ -3239,97 +3242,6 @@ function MatchesScreen() {
                     )}
                   </div>
                 )
-              ) : activeTab === 'rounds' ? (
-                <div className="space-y-4">
-                  {rounds.length === 0 ? (
-                    <div className="text-center text-gray-400 py-8">No rounds available</div>
-                  ) : (
-                    rounds.map((round) => {
-                      const stats = roundStats.get(round.roundIndex)
-                      return (
-                        <div
-                          key={round.roundIndex}
-                          className="bg-surface rounded-lg border border-border p-4"
-                        >
-                          <div className="flex justify-between items-center mb-3">
-                            <h4 className="font-semibold">Round {round.roundIndex + 1}</h4>
-                            <div className="text-sm text-gray-400">
-                              {round.winner && (
-                                <span className="mr-2">Winner: {round.winner}</span>
-                              )}
-                              <span>
-                                Score: Team A {round.tWins} - Team B {round.ctWins}
-                              </span>
-                            </div>
-                          </div>
-
-                          {stats && (
-                            <div className="grid grid-cols-4 gap-4 mb-3 text-sm">
-                              <div>
-                                <div className="text-gray-400">{t('matches.teamKills')}</div>
-                                <div className="font-semibold text-red-400">{stats.teamKills}</div>
-                              </div>
-                              <div>
-                                <div className="text-gray-400">{t('matches.teamDamage')}</div>
-                                <div className="font-semibold text-yellow-400">
-                                  {stats.teamDamage.toFixed(1)}
-                                </div>
-                              </div>
-                              <div>
-                                <div className="text-gray-400">{t('matches.flashSeconds')}</div>
-                                <div className="font-semibold text-orange-400">
-                                  {stats.teamFlashSeconds.toFixed(1)}s
-                                </div>
-                              </div>
-                              <div>
-                                <div className="text-gray-400">{t('matches.afkSeconds')}</div>
-                                <div className="font-semibold text-blue-400">
-                                  {stats.afkSeconds.toFixed(1)}s
-                                </div>
-                              </div>
-                            </div>
-                          )}
-
-                          {stats && stats.events.length > 0 && (
-                            <div className="mt-3">
-                              <div className="text-xs font-semibold text-gray-500 uppercase mb-2">
-                                Events
-                              </div>
-                              <div className="space-y-1 text-xs">
-                                {stats.events.map((event, idx) => (
-                                  <div
-                                    key={idx}
-                                    className="flex items-center gap-2 text-gray-300 bg-surface/50 p-2 rounded"
-                                  >
-                                    <span className="font-mono text-accent">{event.type}</span>
-                                    <span className="text-gray-400">
-                                      {getPlayerName(event.actorSteamId)}
-                                    </span>
-                                    {event.victimSteamId && (
-                                      <>
-                                        <span className="text-gray-500">→</span>
-                                        <span className="text-gray-400">
-                                          {getPlayerName(event.victimSteamId)}
-                                        </span>
-                                      </>
-                                    )}
-                                    {event.meta && (
-                                      <span className="text-gray-500 ml-auto">
-                                        {event.meta.weapon || event.meta.total_damage
-                                          ? `(${event.meta.weapon || `${event.meta.total_damage} ${t('matches.dmg')}`})`
-                                          : ''}
-                                      </span>
-                                    )}
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      )
-                    })
-                  )}
-                </div>
               ) : activeTab === 'chat' ? (
                 <div className="space-y-4">
                   {/* Filter by player and view mode */}

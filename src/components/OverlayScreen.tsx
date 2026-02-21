@@ -300,7 +300,6 @@ function OverlayScreen() {
               {parseAcceleratorToIcons(hotkey).map((iconName, index) => {
                 const iconDataUrl = keyboardIcons.get(iconName)
                 const iconNames = parseAcceleratorToIcons(hotkey)
-                // Modifier keys should be larger
                 const isModifier = ['keyboard_ctrl', 'keyboard_shift', 'keyboard_alt', 'keyboard_command', 'keyboard_win'].includes(iconName)
                 const iconSize = isModifier ? 'h-8 w-8' : 'h-6 w-6'
                 return (
@@ -310,7 +309,7 @@ function OverlayScreen() {
                         src={iconDataUrl}
                         alt={iconName}
                         className={`${iconSize} object-contain`}
-                        style={{ 
+                        style={{
                           filter: 'brightness(0) invert(1)',
                           imageRendering: 'crisp-edges'
                         }}

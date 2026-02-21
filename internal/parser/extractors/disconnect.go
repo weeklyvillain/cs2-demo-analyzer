@@ -48,7 +48,7 @@ func (e *DisconnectExtractor) HandlePlayerDisconnected(event events.PlayerDiscon
 
 	steamIDStr := *steamID
 
-	// (Filtering of disconnects within 10s of game end is done in GetEvents after gameEndTick is set.)
+	// All disconnects are included; the user determines if it's a proper abandon.
 
 	// Build metadata
 	meta := make(map[string]interface{})
@@ -163,7 +163,7 @@ func (e *DisconnectExtractor) HandlePlayerConnect(event events.PlayerConnect, ro
 }
 
 // SetGameEndTick records the tick when the game (demo) ended and the tick rate.
-// Used in GetEvents to filter out disconnects that happen within 10 seconds of game end.
+// Kept for API compatibility; disconnect events are no longer filtered by game end.
 func (e *DisconnectExtractor) SetGameEndTick(tick int, tickRate float64) {
 	e.gameEndTick = &tick
 	e.gameEndTickRate = tickRate
@@ -176,27 +176,10 @@ func (e *DisconnectExtractor) FinalizeRound(roundIndex int) {
 	// We could optionally mark them here, but for now we'll leave them as-is
 }
 
-// GetEvents returns all extracted events, excluding disconnects within 10 seconds of game end.
+// GetEvents returns all extracted disconnect events. The user determines whether
+// a given disconnect is a proper abandon (e.g. vs end-of-game leave).
 func (e *DisconnectExtractor) GetEvents() []Event {
-	if e.gameEndTick == nil || e.gameEndTickRate <= 0 {
-		return e.events
-	}
-	gameEnd := *e.gameEndTick
-	rate := e.gameEndTickRate
-	filtered := make([]Event, 0, len(e.events))
-	for _, ev := range e.events {
-		if ev.Type != "DISCONNECT" {
-			filtered = append(filtered, ev)
-			continue
-		}
-		secondsBeforeGameEnd := float64(gameEnd-ev.StartTick) / rate
-		if secondsBeforeGameEnd < 10.0 {
-			// Disconnect within 10 seconds of game end - skip (normal end-of-game leave)
-			continue
-		}
-		filtered = append(filtered, ev)
-	}
-	return filtered
+	return e.events
 }
 
 // ClearEvents clears all extracted events from memory.

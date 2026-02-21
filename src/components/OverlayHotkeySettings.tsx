@@ -271,8 +271,7 @@ function OverlayHotkeySettings() {
 
         <div className="pt-2 border-t border-border">
           <p className="text-xs text-gray-400">
-            <strong>Note:</strong> The overlay window must be created first before the hotkey will work.
-            Use the overlay controls in the main application to show/hide the overlay.
+            <strong>Note:</strong> Press the hotkey to toggle the overlay (show/hide).
           </p>
         </div>
     </div>

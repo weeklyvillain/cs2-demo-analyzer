@@ -336,6 +336,16 @@ function createOverlayWindow() {
     return overlayWindow
   }
 
+  // Raise process priority so the overlay stays responsive during demo playback (CS2 uses a lot of CPU)
+  try {
+    if (typeof os.setPriority === 'function' && os.constants?.priority?.PRIORITY_HIGH != null) {
+      os.setPriority(process.pid, os.constants.priority.PRIORITY_HIGH)
+      console.log('[Overlay] Set process priority to HIGH for responsive overlay')
+    }
+  } catch (err) {
+    console.warn('[Overlay] Could not set process priority:', err)
+  }
+
   const primaryDisplay = screen.getPrimaryDisplay()
   const { width, height } = primaryDisplay.workAreaSize
 
@@ -367,7 +377,9 @@ function createOverlayWindow() {
   // Set overlay to stay on top with highest level
   overlayWindow.setAlwaysOnTop(true, 'screen-saver', 1)
   overlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
-  
+  // Set opacity before any paint so the window never flashes at full opacity
+  overlayWindow.setOpacity(overlayInteractive ? 0.85 : 0.95)
+
   // Set click-through by default
   overlayWindow.setIgnoreMouseEvents(true, { forward: true })
 
@@ -392,10 +404,9 @@ function createOverlayWindow() {
 
   overlayWindow.once('ready-to-show', () => {
     if (overlayWindow && !overlayWindow.isDestroyed()) {
-      overlayWindow.showInactive() // Use showInactive to prevent stealing focus
-      // Set initial opacity based on interactive state (click-through = more opaque)
+      // Set opacity before showing to avoid a frame at wrong opacity (flash)
       updateOverlayOpacity(!overlayInteractive)
-      // Register overlay window with hover controller
+      overlayWindow.showInactive()
       overlayHoverController.setOverlayWindow(overlayWindow)
     }
   })
@@ -609,23 +620,14 @@ app.whenReady().then(async () => {
     // Create overlay window if it doesn't exist
     if (!overlayWindow || overlayWindow.isDestroyed()) {
       createOverlayWindow()
-      // Wait a bit for window to be ready
+      overlayExplicitlyShown = true
       setTimeout(() => {
         if (overlayWindow && !overlayWindow.isDestroyed()) {
-          // Toggle show/hide instead of interactive state
-          overlayExplicitlyShown = !overlayExplicitlyShown
-          if (overlayExplicitlyShown) {
+          if (!overlayWindow.isVisible()) {
             overlayWindow.showInactive()
-            // Notify tracker that overlay is explicitly shown
-            if (process.platform === 'win32') {
-              cs2OverlayTracker.setOverlayExplicitlyShown(true)
-            }
-          } else {
-            overlayWindow.hide()
-            // Notify tracker that overlay is explicitly hidden
-            if (process.platform === 'win32') {
-              cs2OverlayTracker.setOverlayExplicitlyShown(false)
-            }
+          }
+          if (process.platform === 'win32') {
+            cs2OverlayTracker.setOverlayExplicitlyShown(true)
           }
         }
       }, 500)
@@ -663,19 +665,14 @@ app.whenReady().then(async () => {
       globalShortcut.register(defaultHotkey, () => {
         if (!overlayWindow || overlayWindow.isDestroyed()) {
           createOverlayWindow()
+          overlayExplicitlyShown = true
           setTimeout(() => {
             if (overlayWindow && !overlayWindow.isDestroyed()) {
-              overlayExplicitlyShown = !overlayExplicitlyShown
-              if (overlayExplicitlyShown) {
+              if (!overlayWindow.isVisible()) {
                 overlayWindow.showInactive()
-                if (process.platform === 'win32') {
-                  cs2OverlayTracker.setOverlayExplicitlyShown(true)
-                }
-              } else {
-                overlayWindow.hide()
-                if (process.platform === 'win32') {
-                  cs2OverlayTracker.setOverlayExplicitlyShown(false)
-                }
+              }
+              if (process.platform === 'win32') {
+                cs2OverlayTracker.setOverlayExplicitlyShown(true)
               }
             }
           }, 500)
@@ -3384,6 +3381,10 @@ ipcMain.handle('overlay:hide', () => {
     overlayWindow.hide()
   }
   return true
+})
+
+ipcMain.handle('overlay:isVisible', () => {
+  return !!(overlayWindow && !overlayWindow.isDestroyed() && overlayWindow.isVisible())
 })
 
 // Overlay hover IPC handlers
