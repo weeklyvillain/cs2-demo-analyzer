@@ -1840,7 +1840,7 @@ function MatchesScreen() {
           </div>
 
           {/* Match Details */}
-          <div className="flex-1 bg-secondary rounded-lg border border-border p-4 overflow-auto min-h-0">
+          <div className="flex-1 bg-secondary rounded-lg border border-border p-4 overflow-auto min-h-0 [scrollbar-gutter:stable]">
             {selectedMatch ? (
             <>
               <div className="mb-4">

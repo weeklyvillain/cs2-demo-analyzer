@@ -610,6 +610,7 @@ func run(ctx context.Context, demoPath, outPath, matchID string, positionInterva
 				if posData.Team != "" {
 					team = &posData.Team
 				}
+				// Legacy in-memory positions don't carry view direction; keep yaw only for them.
 				var yaw *float64
 				if posData.Yaw != 0 {
 					yaw = &posData.Yaw
@@ -623,6 +624,8 @@ func run(ctx context.Context, demoPath, outPath, matchID string, positionInterva
 					Y:          posData.Y,
 					Z:          posData.Z,
 					Yaw:        yaw,
+					ViewDirX:   nil,
+					ViewDirY:   nil,
 					Team:       team,
 					Health:     posData.Health,
 					Armor:      posData.Armor,
@@ -978,6 +981,7 @@ func run(ctx context.Context, demoPath, outPath, matchID string, positionInterva
 			if posData.Team != "" {
 				team = &posData.Team
 			}
+			// Legacy in-memory positions don't carry view direction; keep yaw only for them.
 			var yaw *float64
 			if posData.Yaw != 0 {
 				yaw = &posData.Yaw
@@ -991,6 +995,8 @@ func run(ctx context.Context, demoPath, outPath, matchID string, positionInterva
 				Y:          posData.Y,
 				Z:          posData.Z,
 				Yaw:        yaw,
+				ViewDirX:   nil,
+				ViewDirY:   nil,
 				Team:       team,
 				Health:     posData.Health,
 				Armor:      posData.Armor,

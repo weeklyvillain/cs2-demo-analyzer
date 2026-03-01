@@ -901,9 +901,10 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
             ctx.save()
             ctx.translate(screenX, screenY)
             
-            // Rotate based on yaw (if available)
+            // Rotate based on yaw (if available), with a 180° offset so the
+            // image artwork faces the same way as the white view indicator.
             if (pos.yaw !== null && pos.yaw !== undefined) {
-              const playerAngle = -degreesToRadians(pos.yaw)
+              const playerAngle = -degreesToRadians(pos.yaw + 90)
               ctx.rotate(playerAngle)
             }
             
@@ -1025,7 +1026,7 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
             // Draw view direction - matching CS Demo Analyzer exactly
             // CS Demo Analyzer uses: -degreesToRadians(position.yaw)
             if (pos.yaw !== null && pos.yaw !== undefined) {
-              const playerAngle = -degreesToRadians(pos.yaw)
+              const playerAngle = degreesToRadians(pos.yaw)
               const isHoldingKnife = pos.weapon?.toLowerCase().includes('knife') || false
               const weaponLower = pos.weapon?.toLowerCase() || ''
               const isHoldingGrenade = 
@@ -1185,72 +1186,6 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
         }
       }
       
-      // Helper functions for drawing effects (matching cs-demo-manager)
-      const drawSmokeEffect = (smokeStart: typeof grenadeEvents[0], smokeExpirePosition: typeof grenadePositions[0] | undefined) => {
-        const coords = transformCoords(smokeStart.x, smokeStart.y, smokeStart.z)
-        const x = coords.x
-        const y = coords.y
-        const grenadeColor = getGrenadeColor('smokegrenade')
-        
-        ctx.beginPath()
-        ctx.fillStyle = `${grenadeColor}7f`
-        ctx.lineWidth = zoomedSize(2)
-        const teamColor = smokeStart.throwerTeam === 'T' ? '#ff6b35' : smokeStart.throwerTeam === 'CT' ? '#4a90e2' : grenadeColor
-        ctx.strokeStyle = `${teamColor}7f`
-        ctx.arc(x, y, zoomedSize(26), 0, 2 * Math.PI)
-        ctx.stroke()
-        ctx.fill()
-        
-        ctx.beginPath()
-        ctx.strokeStyle = '#ffffffbb'
-        ctx.lineWidth = 2
-        const elapsedTickCount = currentTick - smokeStart.tick
-        const secondsElapsed = elapsedTickCount / tickrate
-        let smokeDuration = 18
-        if (smokeExpirePosition !== undefined) {
-          smokeDuration = (smokeExpirePosition.tick - smokeStart.tick) / tickrate
-        }
-        const percentage = -(secondsElapsed / smokeDuration)
-        const startAngle = -Math.PI / 2
-        const endAngle = startAngle + Math.PI * 2 * percentage
-        ctx.arc(x, y, zoomedSize(8), startAngle, endAngle)
-        ctx.stroke()
-      }
-      
-      const drawHeGrenadeExplode = (heGrenadeExplode: typeof grenadeEvents[0]) => {
-        const effectDurationSeconds = 1
-        const elapsedSinceExplosionTickCount = currentTick - heGrenadeExplode.tick
-        const secondsElapsed = elapsedSinceExplosionTickCount / tickrate
-        if (secondsElapsed > effectDurationSeconds) {
-          return
-        }
-        
-        const coords = transformCoords(heGrenadeExplode.x, heGrenadeExplode.y, heGrenadeExplode.z)
-        const x = coords.x
-        const y = coords.y
-        const grenadeColor = getGrenadeColor('hegrenade')
-        ctx.beginPath()
-        ctx.fillStyle = grenadeColor
-        const scale = 1 - secondsElapsed / effectDurationSeconds
-        const size = zoomedSize(20 * scale)
-        ctx.arc(x, y, size, 0, 2 * Math.PI)
-        ctx.closePath()
-        ctx.fill()
-      }
-      
-      const drawDecoyEffect = (position: typeof grenadePositions[0]) => {
-        const coords = transformCoords(position.x, position.y, position.z)
-        const x = coords.x
-        const y = coords.y
-        const grenadeColor = getGrenadeColor(position.grenadeName)
-        ctx.beginPath()
-        ctx.fillStyle = grenadeColor
-        ctx.lineWidth = zoomedSize(1)
-        ctx.arc(x, y, grenadeCircleSize, 0, 2 * Math.PI)
-        ctx.closePath()
-        ctx.fill()
-      }
-      
       // Process each grenade at current tick (cs-demo-manager pattern)
       for (const [projectileId, position] of grenadesAtCurrentTick) {
         const { grenadeName } = position
@@ -1266,27 +1201,7 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
               ge.tick <= currentTick
             )
             if (smokeEvent !== undefined) {
-              // Calculate smoke start tick (event.tick is when smoke ends)
-              const smokeDuration = 18
-              const smokeDurationTicks = Math.floor(smokeDuration * tickrate)
-              const smokeStartTick = smokeEvent.tick - smokeDurationTicks
-              
-              // Only show smoke if currentTick is within smoke duration
-              if (currentTick >= smokeStartTick && currentTick <= smokeEvent.tick) {
-                // Find smoke expire position (last position for this projectileId)
-                const smokeExpirePosition = filteredGrenadePositions
-                  .filter(p => p.projectileId === projectileId && p.tick >= currentTick)
-                  .sort((a, b) => a.tick - b.tick)
-                  .at(-1)
-                
-                // Create a smokeStart event with the calculated start tick
-                const smokeStartEvent = {
-                  ...smokeEvent,
-                  tick: smokeStartTick
-                }
-                drawSmokeEffect(smokeStartEvent, smokeExpirePosition)
-              }
-              // Always skip trajectory if smoke event exists (even if smoke has expired)
+              // Grenade has exploded (smoke started) - don't draw explosion or trajectory
               continue
             }
             break
@@ -1298,8 +1213,8 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
               ge.tick <= currentTick
             )
             if (heGrenadeExplode !== undefined) {
-              drawHeGrenadeExplode(heGrenadeExplode)
-              continue // Skip trajectory
+              // Grenade has exploded - don't draw explosion or trajectory
+              continue
             }
             break
           }
@@ -1310,8 +1225,8 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
               ge.tick <= currentTick
             )
             if (decoyStart !== undefined) {
-              drawDecoyEffect(position)
-              continue // Skip trajectory
+              // Grenade has exploded/started - don't draw explosion or trajectory
+              continue
             }
             break
           }
@@ -1409,28 +1324,7 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
         ctx.fill()
       }
       
-      // Handle flashbang explosions separately (cs-demo-manager pattern)
-      const flashbangExplodes = grenadeEvents.filter(ge =>
-        ge.eventType === 'flash_explode' && ge.tick <= currentTick
-      )
-      for (const flashbangExplode of flashbangExplodes) {
-        const secondsElapsedSinceExplosion = (currentTick - flashbangExplode.tick) / tickrate
-        if (secondsElapsedSinceExplosion > 1) {
-          continue
-        }
-        
-        const coords = transformCoords(flashbangExplode.x, flashbangExplode.y, flashbangExplode.z)
-        const x = coords.x
-        const y = coords.y
-        const grenadeColor = getGrenadeColor('flashbang')
-        ctx.beginPath()
-        ctx.fillStyle = grenadeColor
-        const scale = 1 - secondsElapsedSinceExplosion
-        const size = zoomedSize(20 * scale)
-        ctx.arc(x, y, size, 0, 2 * Math.PI)
-        ctx.closePath()
-        ctx.fill()
-      }
+      // When a grenade explodes we don't draw its explosion or trajectory (handled in loop above)
 
       // Draw shots (animated lines extending from player position)
       // Use a ref to track animated shots that fade out over time
@@ -1465,7 +1359,7 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
         const screenY = coords.y
 
         // Calculate player angle from yaw (convert degrees to radians, and invert like CS Demo Analyzer)
-        const playerAngle = -degreesToRadians(shot.yaw)
+        const playerAngle = -degreesToRadians(shot.yaw);
         const playerRadius = zoomedSize(8)
         
         // Start position: player position + radius offset in view direction
@@ -1507,9 +1401,6 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
             const scaleX = mapTransform.drawWidth / mapTransform.radarSize
             const scaleY = mapTransform.drawHeight / mapTransform.radarSize
             
-            // Calculate center of canvas
-            const centerX = canvas.width / 2
-            const centerY = canvas.height / 2
             
             // Calculate pan needed to center the player
             // drawX = centerX - drawWidth/2 + panX
@@ -1563,9 +1454,7 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
     if (isPlaying) {
       // Use requestAnimationFrame for smooth updates
       // Calculate tick increment based on playback speed and frame rate
-      const targetFPS = 60
       const tickRate = 64 // CS2 tick rate
-      const ticksPerFrame = (tickRate * playbackSpeed) / targetFPS
 
       let accumulatedTicks = 0
       let lastTime = performance.now()

@@ -278,8 +278,10 @@ type PlayerPosition struct {
 	X          float64
 	Y          float64
 	Z          float64
-	Yaw        *float64 // View angle (yaw) in degrees
-	Team       *string // "T" or "CT"
+	Yaw        *float64 // View angle (yaw) in degrees (legacy, may be nil for new data)
+	ViewDirX   *float64 // View direction X component (unit vector on X axis)
+	ViewDirY   *float64 // View direction Y component (unit vector on Y axis)
+	Team       *string  // "T" or "CT"
 	Health     *int
 	Armor      *int
 	Weapon     *string
@@ -341,9 +343,9 @@ func (w *Writer) InsertPlayerPositions(ctx context.Context, positions []PlayerPo
 	// Now insert positions
 	query := `
 		INSERT OR REPLACE INTO player_positions (
-			match_id, round_index, tick, steamid, x, y, z, yaw, team, health, armor, weapon
+			match_id, round_index, tick, steamid, x, y, z, yaw, view_dir_x, view_dir_y, team, health, armor, weapon
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	stmt, err := tx.PrepareContext(ctx, query)
@@ -354,8 +356,20 @@ func (w *Writer) InsertPlayerPositions(ctx context.Context, positions []PlayerPo
 
 	for _, pos := range positions {
 		_, err := stmt.ExecContext(ctx,
-			pos.MatchID, pos.RoundIndex, pos.Tick, pos.SteamID, pos.X, pos.Y, pos.Z, pos.Yaw, pos.Team,
-			pos.Health, pos.Armor, pos.Weapon,
+			pos.MatchID,
+			pos.RoundIndex,
+			pos.Tick,
+			pos.SteamID,
+			pos.X,
+			pos.Y,
+			pos.Z,
+			pos.Yaw,
+			pos.ViewDirX,
+			pos.ViewDirY,
+			pos.Team,
+			pos.Health,
+			pos.Armor,
+			pos.Weapon,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to insert player position: %w", err)

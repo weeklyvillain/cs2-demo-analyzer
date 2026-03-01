@@ -124,7 +124,7 @@ export default function ParsingModal({
       addLog('info', log)
     }
 
-    const startNextBatch = () => {
+      const startNextBatch = () => {
       if (stoppedByUserRef.current) {
         if (inFlightCountRef.current === 0) {
           addLog('info', 'Parser stopped by user')
@@ -134,11 +134,15 @@ export default function ParsingModal({
         return
       }
       const total = demosToParseRef.current.length
-      const maxP = maxParallelRef.current
+      // When parallel is off, use max 1 (same flow as parallel with one slot)
+      const maxP = (parallelEnabledRef.current && maxParallelRef.current > 1)
+        ? maxParallelRef.current
+        : 1
       while (nextIndexToStartRef.current < total && inFlightCountRef.current < maxP) {
         const idx = nextIndexToStartRef.current
         nextIndexToStartRef.current++
         inFlightCountRef.current++
+        setCurrentDemoIndex(idx)
         const path = demosToParseRef.current[idx]
         window.electronAPI!.parseDemo({ demoPath: path }).then(() => {
           // Process started; parser:exit will decrement and call startNextBatch again
@@ -159,63 +163,18 @@ export default function ParsingModal({
     startNextBatchRef.current = startNextBatch
 
     const handleExit = (data: { code: number | null; signal: string | null; processId?: string }) => {
-      const isParallel = parallelEnabledRef.current && maxParallelRef.current > 1
-      if (isParallel) {
-        inFlightCountRef.current--
-        if (data.code === 0) {
-          addLog('info', 'Parsing completed successfully')
-        } else {
-          if (!stoppedByUserRef.current && data.signal !== 'SIGKILL') {
-            const errorMsg = `Parser exited with code ${data.code}${data.signal ? ` (signal: ${data.signal})` : ''}`
-            addLog('error', errorMsg)
-            setError((prev) => prev || errorMsg)
-            setHasError(true)
-          }
-        }
-        startNextBatch()
-        return
-      }
-
-      setIsParsing(false)
+      inFlightCountRef.current--
       if (data.code === 0) {
         addLog('info', 'Parsing completed successfully')
-        setError(null)
-        setHasError(false)
-
-        const total = demosToParseRef.current.length
-        const idx = currentDemoIndexRef.current
-        if (idx < total - 1) {
-          setTimeout(() => {
-            setCurrentDemoIndex((prev) => prev + 1)
-            setIsParsing(false)
-            setProgress(null)
-            setLogs([])
-            parsingStartedRef.current = false
-          }, 500)
-        } else {
-          setParsingEnded()
-          setTimeout(() => {
-            onCloseRef.current()
-          }, 1000)
-        }
       } else {
-        if (stoppedByUserRef.current) {
-          addLog('info', 'Parser stopped by user')
-          stoppedByUserRef.current = false
-          setHasError(false)
-        } else {
-          if (data.signal === 'SIGKILL' && !parsingStartedRef.current) {
-            addLog('info', 'Previous parser process cleaned up')
-            setHasError(false)
-            parsingStartedRef.current = false
-          } else {
-            const errorMsg = `Parser exited with code ${data.code}${data.signal ? ` (signal: ${data.signal})` : ''}`
-            addLog('error', errorMsg)
-            setError(errorMsg)
-            setHasError(true)
-          }
+        if (!stoppedByUserRef.current && data.signal !== 'SIGKILL') {
+          const errorMsg = `Parser exited with code ${data.code}${data.signal ? ` (signal: ${data.signal})` : ''}`
+          addLog('error', errorMsg)
+          setError((prev) => prev || errorMsg)
+          setHasError(true)
         }
       }
+      startNextBatch()
     }
 
     const handleError = (error: string) => {
@@ -375,29 +334,27 @@ export default function ParsingModal({
     }
   }
 
-  // Parallel: start batch once when settings are loaded
+  // Start batch once when settings are loaded (same flow for parallel and non-parallel; non-parallel uses max 1)
   useEffect(() => {
-    if (!settingsLoaded || !parallelEnabled || maxParallel <= 1 || totalDemos === 0 || hasParallelStartedRef.current) return
+    if (!settingsLoaded || totalDemos === 0 || hasParallelStartedRef.current) return
     hasParallelStartedRef.current = true
+    nextIndexToStartRef.current = 0
+    inFlightCountRef.current = 0
     setQueueTotal(totalDemos)
     setIsParsing(true)
     setProgress(null)
     setError(null)
     setHasError(false)
     setLogs([])
-    if (totalDemos > 1) {
-      addLog('info', `Starting parallel parse of ${totalDemos} demos (max ${maxParallel} at a time)`)
+    const maxP = parallelEnabled && maxParallel > 1 ? maxParallel : 1
+    if (totalDemos > 1 && maxP > 1) {
+      addLog('info', `Starting parallel parse of ${totalDemos} demos (max ${maxP} at a time)`)
+    } else if (totalDemos > 1) {
+      addLog('info', `Starting parse of ${totalDemos} demos`)
     }
     startNextBatchRef.current?.()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settingsLoaded, parallelEnabled, maxParallel, totalDemos])
-
-  // Sequential: auto-start when modal opens or when moving to next demo
-  useEffect(() => {
-    if (!settingsLoaded || parallelEnabled || !currentDemoPath || isParsing) return
-    handleStartParse()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settingsLoaded, parallelEnabled, currentDemoPath, currentDemoIndex, isParsing])
 
   // When minimized (run in background), stay mounted but don't render UI so queue continues
   if (isMinimized) {
@@ -409,7 +366,7 @@ export default function ParsingModal({
       <Modal
         isOpen={true}
         onClose={handleClose}
-        title={parallelEnabled && totalDemos > 1 ? `Parsing ${totalDemos} demos (parallel)` : totalDemos > 1 ? `Parsing Demo (${currentDemoIndex + 1} of ${totalDemos})` : 'Parsing Demo'}
+        title={parallelEnabled && totalDemos > 1 && maxParallel > 1 ? `Parsing ${totalDemos} demos (parallel)` : totalDemos > 1 ? `Parsing Demo (${currentDemoIndex + 1} of ${totalDemos})` : 'Parsing Demo'}
         size="lg"
         canClose={!isParsing} // Disable closing while parsing is in progress
       >

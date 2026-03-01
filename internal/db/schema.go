@@ -99,6 +99,8 @@ CREATE TABLE IF NOT EXISTS player_positions (
 	y REAL NOT NULL,
 	z REAL NOT NULL,
 	yaw REAL,
+	view_dir_x REAL,
+	view_dir_y REAL,
 	team TEXT,
 	health INTEGER,
 	armor INTEGER,

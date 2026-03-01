@@ -1943,6 +1943,8 @@ ipcMain.handle('matches:positionsForRound', async (_, matchId: string, roundInde
           y REAL NOT NULL,
           z REAL NOT NULL,
           yaw REAL,
+          view_dir_x REAL,
+          view_dir_y REAL,
           team TEXT,
           health INTEGER,
           armor INTEGER,
@@ -1964,7 +1966,7 @@ ipcMain.handle('matches:positionsForRound', async (_, matchId: string, roundInde
 
     // Get all positions for the round
     const query = `
-      SELECT pp.tick, pp.steamid, pp.x, pp.y, pp.z, pp.yaw, pp.team, pp.health, pp.armor, pp.weapon, p.name
+      SELECT pp.tick, pp.steamid, pp.x, pp.y, pp.z, pp.yaw, pp.view_dir_x, pp.view_dir_y, pp.team, pp.health, pp.armor, pp.weapon, p.name
       FROM player_positions pp
       LEFT JOIN players p ON pp.match_id = p.match_id AND pp.steamid = p.steamid
       WHERE pp.match_id = ? AND pp.round_index = ?
@@ -1981,6 +1983,8 @@ ipcMain.handle('matches:positionsForRound', async (_, matchId: string, roundInde
       y: number
       z: number
       yaw: number | null
+      viewDirX: number | null
+      viewDirY: number | null
       team: string | null
       name: string | null
       health: number | null
@@ -1990,13 +1994,26 @@ ipcMain.handle('matches:positionsForRound', async (_, matchId: string, roundInde
 
     while (stmt.step()) {
       const row = stmt.getAsObject()
+      const rawYaw = row.yaw as number | null
+      const rawViewDirX = row.view_dir_x as number | null
+      const rawViewDirY = row.view_dir_y as number | null
+
+      // yaw in our pipeline is the same value as viewDirectionX from the demo.
+      // Prefer the stored yaw if present; otherwise, fall back to view_dir_x directly.
+      let yaw: number | null = rawYaw
+      if ((yaw === null || Number.isNaN(yaw)) && rawViewDirX !== null) {
+        yaw = rawViewDirX
+      }
+
       positions.push({
         tick: row.tick as number,
         steamid: row.steamid as string,
         x: row.x as number,
         y: row.y as number,
         z: row.z as number,
-        yaw: row.yaw as number | null,
+        yaw,
+        viewDirX: rawViewDirX,
+        viewDirY: rawViewDirY,
         team: row.team as string | null,
         name: (row.name as string) || row.steamid,
         health: row.health as number | null,
