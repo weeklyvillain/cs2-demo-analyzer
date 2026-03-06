@@ -197,7 +197,7 @@ function MatchesScreen() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [toast, setToast] = useState<{ message: string; type?: 'success' | 'error' | 'info' } | null>(null)
-  const [activeTab, setActiveTab] = useState<'overview' | 'players' | 'chat' | '2d-viewer'>('overview')
+  const [activeTab, setActiveTab] = useState<'overview' | 'rounds' | 'players' | 'chat' | '2d-viewer'>('overview')
   const [allEvents, setAllEvents] = useState<any[]>([])
   const [allPlayers, setAllPlayers] = useState<Array<{ 
     steamId: string
@@ -475,13 +475,17 @@ function MatchesScreen() {
             return sum + duration
           }, 0)
 
+        // For the rounds tab, we don't want to show normal KILL events, only
+        // grief-related ones (TEAM_KILL, TEAM_DAMAGE, TEAM_FLASH, AFK, etc.)
+        const visibleEventsForRound = roundEvents.filter((e: any) => e.type !== 'KILL')
+
         statsByRound.set(round.roundIndex, {
           roundIndex: round.roundIndex,
           teamKills,
           teamDamage,
           teamFlashSeconds: teamFlash,
           afkSeconds: afk,
-          events: roundEvents.map((e: any) => ({
+          events: visibleEventsForRound.map((e: any) => ({
             type: e.type,
             actorSteamId: e.actorSteamId,
             victimSteamId: e.victimSteamId,
@@ -1965,6 +1969,16 @@ function MatchesScreen() {
                     {t('matches.tabs.overview')}
                   </button>
                   <button
+                    onClick={() => setActiveTab('rounds')}
+                    className={`px-4 py-2 font-medium transition-colors ${
+                      activeTab === 'rounds'
+                        ? 'text-accent border-b-2 border-accent'
+                        : 'text-gray-400 hover:text-white'
+                    }`}
+                  >
+                    {t('matches.tabs.rounds')}
+                  </button>
+                  <button
                     onClick={() => setActiveTab('players')}
                     className={`px-4 py-2 font-medium transition-colors ${
                       activeTab === 'players'
@@ -2957,6 +2971,167 @@ function MatchesScreen() {
                     </div>
                   )
                 })()
+              ) : activeTab === 'rounds' ? (
+                <div className="pt-4 max-h-[90%] overflow-y-auto">
+
+                  {rounds.length === 0 ? (
+                    <div className="text-center text-gray-500 text-sm py-6">
+                      {t('matches.noRoundsAvailable') ?? 'No rounds available'}
+                    </div>
+                  ) : (
+                    <div className="space-y-3 overflow-y-auto pr-1">
+                      {rounds.map((r) => {
+                        const stats = roundStats.get(r.roundIndex)
+                        const eventsForRound = stats?.events || []
+                        const durationTicks = r.endTick - r.startTick
+                        const durationSec = tickRate > 0 ? durationTicks / tickRate : 0
+                        const eventCount = eventsForRound.length
+
+                        const formatRelTime = (startTick: number) => {
+                          if (tickRate <= 0) return '0:00'
+                          const relSeconds = Math.max(0, (startTick - r.startTick) / tickRate)
+                          const m = Math.floor(relSeconds / 60)
+                          const s = Math.floor(relSeconds % 60)
+                          return `${m}:${s.toString().padStart(2, '0')}`
+                        }
+
+                        return (
+                          <div
+                            key={r.roundIndex}
+                            className="bg-surface/60 border border-border rounded-lg overflow-hidden"
+                          >
+                            <div className="px-4 py-3 flex items-center justify-between gap-3">
+                              <div className="flex items-center gap-4">
+                                <div className="text-white font-semibold text-sm">
+                                  Round {r.roundIndex + 1}
+                                </div>
+                                <div className="flex items-center gap-3 text-xs text-gray-400">
+                                  <div>
+                                    <span className="text-gray-500 mr-1">{t('matches.roundsTab.winner')}:</span>
+                                    {r.winner === 'T' ? (
+                                      <span className="text-[#ff6b35] font-medium">T</span>
+                                    ) : r.winner === 'CT' ? (
+                                      <span className="text-[#4a9eff] font-medium">CT</span>
+                                    ) : (
+                                      <span className="text-gray-500">—</span>
+                                    )}
+                                  </div>
+                                  <div>
+                                    <span className="text-gray-500 mr-1">{t('matches.roundsTab.score')}:</span>
+                                    <span className="text-gray-300">
+                                      {r.tWins} – {r.ctWins}
+                                    </span>
+                                  </div>
+                                  <div>
+                                    <span className="text-gray-500 mr-1">{t('matches.roundsTab.duration')}:</span>
+                                    <span className="text-gray-300">
+                                      {durationSec >= 60
+                                        ? `${Math.floor(durationSec / 60)}:${Math.floor(durationSec % 60)
+                                            .toString()
+                                            .padStart(2, '0')}`
+                                        : `${durationSec.toFixed(1)}s`}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-3">
+                                <span className="text-xs text-gray-400">
+                                  {eventCount} event{eventCount === 1 ? '' : 's'}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => setViewer2D({ roundIndex: r.roundIndex, tick: r.startTick })}
+                                  className="px-2 py-1 text-xs bg-accent/80 hover:bg-accent text-white rounded transition-colors"
+                                >
+                                  {t('matches.roundsTab.view2d')}
+                                </button>
+                              </div>
+                            </div>
+
+                            <div className="border-t border-border/60 bg-surface/40">
+                              {eventsForRound.length === 0 ? (
+                                <div className="px-4 py-3 text-xs text-gray-500">
+                                  {t('matches.noEventsInRound') ?? 'No events in this round'}
+                                </div>
+                              ) : (
+                                <ul className="divide-y divide-border/40">
+                                  {eventsForRound.map((e, idx) => {
+                                    const label = eventTypeLabels[e.type] || e.type
+                                    const actorName = e.actorSteamId ? getPlayerName(e.actorSteamId) : t('matches.unknown')
+                                    const victimName =
+                                      e.victimSteamId ? getPlayerName(e.victimSteamId) : null
+                                    const timeLabel = formatRelTime(e.startTick)
+
+                                    // Reuse the same 5s preview offset as overview cards
+                                    const previewSeconds = 5
+                                    const previewTicks = previewSeconds * tickRate
+                                    const previewTick = Math.max(r.startTick, e.startTick - previewTicks)
+
+                                    return (
+                                      <li
+                                        key={`${e.type}-${e.startTick}-${idx}`}
+                                        className="px-4 py-2.5 flex items-start gap-3"
+                                      >
+                                        <span className="text-[11px] text-gray-500 mt-0.5 w-12 flex-shrink-0">
+                                          {timeLabel}
+                                        </span>
+                                        <div className="flex-1 min-w-0">
+                                          <div className="flex items-center justify-between gap-3">
+                                            <div className="text-xs font-semibold text-white truncate">
+                                              {label}
+                                            </div>
+                                            {demoPath && (
+                                              <div className="flex items-center gap-1 flex-shrink-0">
+                                                <button
+                                                  type="button"
+                                                  onClick={() => setViewer2D({ roundIndex: r.roundIndex, tick: previewTick })}
+                                                  className="p-1 hover:bg-accent/20 rounded transition-colors"
+                                                  title="View in 2D"
+                                                >
+                                                  <MapIcon size={12} className="text-gray-400 hover:text-accent" />
+                                                </button>
+                                                <button
+                                                  type="button"
+                                                  onClick={() => handleCopyCommand(e)}
+                                                  className="p-1 hover:bg-accent/20 rounded transition-colors"
+                                                  title="Watch this event in CS2"
+                                                >
+                                                  <Play size={12} className="text-gray-400 hover:text-accent" />
+                                                </button>
+                                              </div>
+                                            )}
+                                          </div>
+                                          <div className="text-xs text-gray-300 mt-0.5 truncate">
+                                            <span className="font-medium">{actorName}</span>
+                                            {victimName && (
+                                              <>
+                                                <span className="mx-1 text-gray-500">→</span>
+                                                <span className="font-medium">{victimName}</span>
+                                              </>
+                                            )}
+                                            {e.type === 'TEAM_DAMAGE' && (() => {
+                                              const dmg =
+                                                (e.meta && (e.meta.total_damage ?? e.meta.damage)) || 0
+                                              return dmg > 0 ? (
+                                                <span className="ml-2 text-gray-400">
+                                                  · {Math.round(dmg)} dmg
+                                                </span>
+                                              ) : null
+                                            })()}
+                                          </div>
+                                        </div>
+                                      </li>
+                                    )
+                                  })}
+                                </ul>
+                              )}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
               ) : activeTab === 'players' ? (
                 allPlayersWithScores.length === 0 ? (
                   <div className="text-center text-gray-400 py-8">{t('matches.noPlayersAvailable')}</div>

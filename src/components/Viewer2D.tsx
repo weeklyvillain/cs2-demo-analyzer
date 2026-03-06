@@ -1950,7 +1950,10 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
         )}
 
         {/* Canvas with Team Panels */}
-        <div className="flex-1 relative bg-primary overflow-hidden flex min-h-0" style={{ maxHeight: isModal ? 'calc(90vh - 300px)' : 'calc(100% - 220px)' }}>
+        <div
+          className="flex-1 relative bg-primary overflow-hidden flex min-h-0"
+          style={isModal ? { maxHeight: 'calc(90vh - 300px)' } : undefined}
+        >
           {/* Left Team Panel (T/Team A) */}
           <div className="w-56 bg-surface border-r border-border overflow-y-auto flex flex-col max-h-full">
             <div className="p-3 border-b border-[#ff6b35]/50 bg-[#ff6b35]/10">

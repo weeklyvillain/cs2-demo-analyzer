@@ -676,70 +676,72 @@ function SettingsScreen() {
             </div>
           </div>
 
-          {/* Window Settings */}
-          <div className="bg-secondary rounded-lg border border-border p-4">
-            <h3 className="text-lg font-semibold mb-4">{t('settings.windowSettings')}</h3>
-            
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">
-                    {t('settings.windowWidth')}
-                  </label>
-                  <input
-                    type="number"
-                    value={settings.cs2_window_width}
-                    onChange={(e) => setSettings((prev) => ({ ...prev, cs2_window_width: e.target.value }))}
-                    className="w-full px-3 py-2 bg-surface border border-border rounded text-white text-sm"
-                    min="640"
-                    max="7680"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">
-                    {t('settings.windowHeight')}
-                  </label>
-                  <input
-                    type="number"
-                    value={settings.cs2_window_height}
-                    onChange={(e) => setSettings((prev) => ({ ...prev, cs2_window_height: e.target.value }))}
-                    className="w-full px-3 py-2 bg-surface border border-border rounded text-white text-sm"
-                    min="480"
-                    max="4320"
-                  />
-                </div>
-              </div>
+          {/* Window Settings (temporarily hidden – feature not active) */}
+          {false && (
+            <div className="bg-secondary rounded-lg border border-border p-4">
+              <h3 className="text-lg font-semibold mb-4">{t('settings.windowSettings')}</h3>
               
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  {t('settings.windowMode')}
-                </label>
-                <select
-                  value={settings.cs2_window_mode}
-                  onChange={(e) => {
-                    const el = e.currentTarget
-                    setSettings((prev) => ({ ...prev, cs2_window_mode: e.target.value }))
-                    el?.blur()
-                  }}
-                  className="w-full px-3 py-2 bg-surface border border-border rounded text-white text-sm"
-                >
-                  <option value="windowed">{t('settings.windowed')}</option>
-                  <option value="fullscreen">{t('settings.fullscreen')}</option>
-                </select>
-              </div>
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-300 mb-2">
+                      {t('settings.windowWidth')}
+                    </label>
+                    <input
+                      type="number"
+                      value={settings.cs2_window_width}
+                      onChange={(e) => setSettings((prev) => ({ ...prev, cs2_window_width: e.target.value }))}
+                      className="w-full px-3 py-2 bg-surface border border-border rounded text-white text-sm"
+                      min="640"
+                      max="7680"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-300 mb-2">
+                      {t('settings.windowHeight')}
+                    </label>
+                    <input
+                      type="number"
+                      value={settings.cs2_window_height}
+                      onChange={(e) => setSettings((prev) => ({ ...prev, cs2_window_height: e.target.value }))}
+                      className="w-full px-3 py-2 bg-surface border border-border rounded text-white text-sm"
+                      min="480"
+                      max="4320"
+                    />
+                  </div>
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    {t('settings.windowMode')}
+                  </label>
+                  <select
+                    value={settings.cs2_window_mode}
+                    onChange={(e) => {
+                      const el = e.currentTarget
+                      setSettings((prev) => ({ ...prev, cs2_window_mode: e.target.value }))
+                      el?.blur()
+                    }}
+                    className="w-full px-3 py-2 bg-surface border border-border rounded text-white text-sm"
+                  >
+                    <option value="windowed">{t('settings.windowed')}</option>
+                    <option value="fullscreen">{t('settings.fullscreen')}</option>
+                  </select>
+                </div>
 
-              {/* Save Button for Window Settings */}
-              <div className="flex justify-end pt-2">
-                <button
-                  onClick={handleSaveWindowSettings}
-                  disabled={saving}
-                  className="px-6 py-2 bg-accent text-white rounded hover:bg-accent/80 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm"
-                >
-                  {saving ? t('settings.saving') : t('settings.saveWindowSettings')}
-                </button>
+                {/* Save Button for Window Settings */}
+                <div className="flex justify-end pt-2">
+                  <button
+                    onClick={handleSaveWindowSettings}
+                    disabled={saving}
+                    className="px-6 py-2 bg-accent text-white rounded hover:bg-accent/80 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm"
+                  >
+                    {saving ? t('settings.saving') : t('settings.saveWindowSettings')}
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
+          )}
 
           {/* Parsing Settings */}
           <div className="bg-secondary rounded-lg border border-border p-4">
