@@ -18,7 +18,8 @@ export interface ElectronAPI {
   getUnparsedDemos: () => Promise<Array<{ fileName: string; filePath: string; fileSize: number; createdAt: string }>>
   getMatchSummary: (matchId: string) => Promise<{ matchId: string; players: any[] }>
   getMatchPlayers: (matchId: string) => Promise<{ matchId: string; players: Array<{ steamId: string; name: string }> }>
-  getMatchEvents: (matchId: string, filters?: { type?: string; steamid?: string; round?: number }) => Promise<any>
+  getMatchEvents: (matchId: string, filters?: { type?: string; steamid?: string; victimSteamId?: string; round?: number }) => Promise<any>
+  getMatchPlayerDeathTicks: (matchId: string, steamId: string) => Promise<{ matchId: string; deathTicks: Array<{ roundIndex: number; tick: number }> }>
   getMatchParserLogs: (matchId: string) => Promise<{ matchId: string; logs: string }>
   getMatchRounds: (matchId: string) => Promise<any>
   getMatchChat: (matchId: string, steamid?: string) => Promise<{ matchId: string; messages: Array<{ matchId: string; roundIndex: number; tick: number; steamid: string; name: string; team: string | null; message: string; isTeamChat: boolean }> }>
@@ -37,6 +38,15 @@ export interface ElectronAPI {
   getTableInfo: (matchId: string, tableName: string) => Promise<{ name: string; rowCount: number; schema: string }>
   runQuery: (matchId: string, sql: string) => Promise<{ columns: string[]; rows: any[][] }>
   launchCS2: (demoPath: string, startTick?: number, playerName?: string, confirmLoadDemo?: boolean) => Promise<{ success: boolean; tick: number; commands: string; alreadyRunning?: boolean; needsDemoLoad?: boolean; currentDemo?: string | null; newDemo?: string; error?: string }>
+  launchCS2POV: (
+    demoPath: string,
+    playerName: string,
+    playerSteamId: string,
+    rounds: Array<{ startTick: number; endTick: number }>,
+    deathTicks: Array<{ roundIndex: number; tick: number }>,
+    tickRate?: number,
+    confirmLoadDemo?: boolean
+  ) => Promise<{ success: boolean; tick: number; commands: string; alreadyRunning?: boolean; needsDemoLoad?: boolean; currentDemo?: string | null; newDemo?: string; error?: string }>
   copyCS2Commands: (demoPath: string, startTick?: number, playerName?: string) => Promise<{ success: boolean; commands: string; error?: string }>
   launchHlaeCs2: (opts?: { width?: number; height?: number; launchArgs?: string; movieConfigDir?: string }) => Promise<{ success: boolean; pid?: number | null; startedAt?: string; hookVerified?: boolean; logPath?: string; error?: string }>
   getSetting: (key: string, defaultValue?: string) => Promise<string>

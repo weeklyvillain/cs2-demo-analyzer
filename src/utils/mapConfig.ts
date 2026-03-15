@@ -67,6 +67,22 @@ export const mapConfigs: MapConfig[] = [
     radarHeight: 1024,
   },
   {
+    name: 'de_cache_b',
+    posX: -2000,
+    posY: 3250,
+    scale: 5.5,
+    radarWidth: 1024,
+    radarHeight: 1024,
+  },
+  {
+    name: 'de_cbble_d',
+    posX: -3800,
+    posY: 3050,
+    scale: 6.2,
+    radarWidth: 1024,
+    radarHeight: 1024,
+  },
+  {
     name: 'de_nuke',
     posX: -3453,
     posY: 2887,

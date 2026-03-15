@@ -617,37 +617,48 @@ app.whenReady().then(async () => {
   // Register hotkey with error handling
   try {
     const registered = globalShortcut.register(savedHotkey, () => {
-    // Create overlay window if it doesn't exist
-    if (!overlayWindow || overlayWindow.isDestroyed()) {
-      createOverlayWindow()
-      overlayExplicitlyShown = true
-      setTimeout(() => {
-        if (overlayWindow && !overlayWindow.isDestroyed()) {
-          if (!overlayWindow.isVisible()) {
+      // Only allow overlay toggle when CS2 is running
+      ;(async () => {
+        const cs2Running = await isCS2Running()
+        if (!cs2Running) {
+          console.log('[Hotkey] Ignoring overlay hotkey because CS2 is not running')
+          return
+        }
+
+        // Create overlay window if it doesn't exist
+        if (!overlayWindow || overlayWindow.isDestroyed()) {
+          createOverlayWindow()
+          overlayExplicitlyShown = true
+          setTimeout(() => {
+            if (overlayWindow && !overlayWindow.isDestroyed()) {
+              if (!overlayWindow.isVisible()) {
+                overlayWindow.showInactive()
+              }
+              if (process.platform === 'win32') {
+                cs2OverlayTracker.setOverlayExplicitlyShown(true)
+              }
+            }
+          }, 500)
+        } else {
+          // Toggle show/hide instead of interactive state
+          overlayExplicitlyShown = !overlayExplicitlyShown
+          if (overlayExplicitlyShown) {
             overlayWindow.showInactive()
+            // Notify tracker that overlay is explicitly shown
+            if (process.platform === 'win32') {
+              cs2OverlayTracker.setOverlayExplicitlyShown(true)
+            }
+          } else {
+            overlayWindow.hide()
+            // Notify tracker that overlay is explicitly hidden
+            if (process.platform === 'win32') {
+              cs2OverlayTracker.setOverlayExplicitlyShown(false)
+            }
           }
-          if (process.platform === 'win32') {
-            cs2OverlayTracker.setOverlayExplicitlyShown(true)
-          }
         }
-      }, 500)
-    } else {
-      // Toggle show/hide instead of interactive state
-      overlayExplicitlyShown = !overlayExplicitlyShown
-      if (overlayExplicitlyShown) {
-        overlayWindow.showInactive()
-        // Notify tracker that overlay is explicitly shown
-        if (process.platform === 'win32') {
-          cs2OverlayTracker.setOverlayExplicitlyShown(true)
-        }
-      } else {
-        overlayWindow.hide()
-        // Notify tracker that overlay is explicitly hidden
-        if (process.platform === 'win32') {
-          cs2OverlayTracker.setOverlayExplicitlyShown(false)
-        }
-      }
-    }
+      })().catch(err => {
+        console.error('[Hotkey] Error handling overlay hotkey:', err)
+      })
     })
     
     if (!registered) {
@@ -663,33 +674,44 @@ app.whenReady().then(async () => {
     setSetting('overlay_hotkey', defaultHotkey)
     try {
       globalShortcut.register(defaultHotkey, () => {
-        if (!overlayWindow || overlayWindow.isDestroyed()) {
-          createOverlayWindow()
-          overlayExplicitlyShown = true
-          setTimeout(() => {
-            if (overlayWindow && !overlayWindow.isDestroyed()) {
-              if (!overlayWindow.isVisible()) {
-                overlayWindow.showInactive()
+        // Only allow overlay toggle when CS2 is running
+        ;(async () => {
+          const cs2Running = await isCS2Running()
+          if (!cs2Running) {
+            console.log('[Hotkey] Ignoring overlay hotkey because CS2 is not running')
+            return
+          }
+
+          if (!overlayWindow || overlayWindow.isDestroyed()) {
+            createOverlayWindow()
+            overlayExplicitlyShown = true
+            setTimeout(() => {
+              if (overlayWindow && !overlayWindow.isDestroyed()) {
+                if (!overlayWindow.isVisible()) {
+                  overlayWindow.showInactive()
+                }
+                if (process.platform === 'win32') {
+                  cs2OverlayTracker.setOverlayExplicitlyShown(true)
+                }
               }
+            }, 500)
+          } else {
+            overlayExplicitlyShown = !overlayExplicitlyShown
+            if (overlayExplicitlyShown) {
+              overlayWindow.showInactive()
               if (process.platform === 'win32') {
                 cs2OverlayTracker.setOverlayExplicitlyShown(true)
               }
-            }
-          }, 500)
-        } else {
-          overlayExplicitlyShown = !overlayExplicitlyShown
-          if (overlayExplicitlyShown) {
-            overlayWindow.showInactive()
-            if (process.platform === 'win32') {
-              cs2OverlayTracker.setOverlayExplicitlyShown(true)
-            }
-          } else {
-            overlayWindow.hide()
-            if (process.platform === 'win32') {
-              cs2OverlayTracker.setOverlayExplicitlyShown(false)
+            } else {
+              overlayWindow.hide()
+              if (process.platform === 'win32') {
+                cs2OverlayTracker.setOverlayExplicitlyShown(false)
+              }
             }
           }
-        }
+        })().catch(err => {
+          console.error('[Hotkey] Error handling default overlay hotkey:', err)
+        })
       })
       console.log(`[Hotkey] Registered default hotkey after error: ${defaultHotkey}`)
     } catch (defaultError) {
@@ -1650,7 +1672,7 @@ ipcMain.handle('matches:summary', async (_, matchId: string) => {
   }
 })
 
-ipcMain.handle('matches:events', async (_, matchId: string, filters?: { type?: string; steamid?: string; round?: number }) => {
+ipcMain.handle('matches:events', async (_, matchId: string, filters?: { type?: string; steamid?: string; victimSteamId?: string; round?: number }) => {
   const appDataPath = app.getPath('userData')
   const matchesDir = path.join(appDataPath, 'matches')
   const dbPath = path.join(matchesDir, `${matchId}.sqlite`)
@@ -1675,6 +1697,10 @@ ipcMain.handle('matches:events', async (_, matchId: string, filters?: { type?: s
     if (filters?.steamid) {
       query += ' AND actor_steamid = ?'
       params.push(filters.steamid)
+    }
+    if (filters?.victimSteamId) {
+      query += ' AND victim_steamid = ?'
+      params.push(filters.victimSteamId)
     }
     if (filters?.round !== undefined) {
       query += ' AND round_index = ?'
@@ -1711,6 +1737,45 @@ ipcMain.handle('matches:events', async (_, matchId: string, filters?: { type?: s
     }
   } catch (err) {
     throw new Error(`Failed to get match events: ${err}`)
+  }
+})
+
+ipcMain.handle('matches:playerDeathTicks', async (_, matchId: string, steamId: string): Promise<{ matchId: string; deathTicks: Array<{ roundIndex: number; tick: number }> }> => {
+  const appDataPath = app.getPath('userData')
+  const matchesDir = path.join(appDataPath, 'matches')
+  const dbPath = path.join(matchesDir, `${matchId}.sqlite`)
+
+  if (!fs.existsSync(dbPath)) {
+    throw new Error(`Match ${matchId} not found`)
+  }
+
+  try {
+    const initSqlJs = require('sql.js')
+    const SQL = await initSqlJs()
+    const buffer = fs.readFileSync(dbPath)
+    const db = new SQL.Database(buffer)
+
+    const stmt = db.prepare(
+      `SELECT round_index, start_tick FROM events
+       WHERE match_id = ? AND victim_steamid = ? AND type IN ('KILL', 'TEAM_KILL')
+       ORDER BY round_index, start_tick`
+    )
+    stmt.bind([matchId, steamId])
+
+    const deathTicks: Array<{ roundIndex: number; tick: number }> = []
+    while (stmt.step()) {
+      const row = stmt.getAsObject()
+      deathTicks.push({
+        roundIndex: row.round_index as number,
+        tick: row.start_tick as number,
+      })
+    }
+    stmt.free()
+    db.close()
+
+    return { matchId, deathTicks }
+  } catch (err) {
+    throw new Error(`Failed to get player death ticks: ${err}`)
   }
 })
 
@@ -4558,6 +4623,224 @@ ipcMain.handle('cs2:launch', async (_, demoPath: string, startTick?: number, pla
     throw new Error(`Failed to launch CS2: ${err instanceof Error ? err.message : String(err)}`)
   }
 })
+
+// Parse current demo tick from demo_goto console output.
+// Output line: "[Demo]   Currently playing 5574 of 160517 ticks. Minutes:41.80 File:..."
+// Match "Currently playing 5574 of" with flexible whitespace so we don't depend on [Demo] prefix.
+function parseCurrentTickFromDemoGoto(response: string): number | null {
+  if (!response || !response.trim()) return null
+  const m = response.match(/Currently\s+playing\s+(\d+)\s+of/i)
+  if (m && m[1]) {
+    const tick = parseInt(m[1], 10)
+    if (!isNaN(tick) && tick >= 0) return tick
+  }
+  return null
+}
+
+let povPollIntervalId: ReturnType<typeof setInterval> | null = null
+
+// CS2 Launch POV: start demo at round 0, spectate player, 2x speed, jump to next round when player dies (or round end).
+ipcMain.handle('cs2:launchPOV', async (
+  _,
+  demoPath: string,
+  playerName: string,
+  _playerSteamId: string,
+  rounds: Array<{ startTick: number; endTick: number }>,
+  deathTicks: Array<{ roundIndex: number; tick: number }>,
+  tickRate: number = 64,
+  confirmLoadDemo?: boolean
+): Promise<{ success: boolean; tick: number; commands: string; alreadyRunning?: boolean; needsDemoLoad?: boolean; currentDemo?: string | null; newDemo?: string; error?: string }> => {
+  const akrosRunning = await isAkrosRunning()
+  if (akrosRunning) return { success: false, tick: 0, commands: '', error: 'Akros anti-cheat is running, close it before you can continue' }
+  const faceitRunning = await isFaceitRunning()
+  if (faceitRunning) return { success: false, tick: 0, commands: '', error: 'FACEIT anti-cheat is running, close it before you can continue' }
+  if (!fs.existsSync(demoPath)) throw new Error(`Demo file not found: ${demoPath}`)
+
+  let cs2Exe = getSetting('cs2_path', '')
+  if (!cs2Exe || !fs.existsSync(cs2Exe)) {
+    const cs2Paths = [
+      'C:\\Program Files (x86)\\Steam\\steamapps\\common\\Counter-Strike Global Offensive\\game\\bin\\win64\\cs2.exe',
+      'C:\\Program Files\\Steam\\steamapps\\common\\Counter-Strike Global Offensive\\game\\bin\\win64\\cs2.exe',
+      process.env.CS2_PATH || '',
+    ]
+    for (const p of cs2Paths) {
+      if (p && fs.existsSync(p)) { cs2Exe = p; setSetting('cs2_path', p); break }
+    }
+  }
+  if (!cs2Exe || !fs.existsSync(cs2Exe)) throw new Error('CS2 executable not found. Please set the CS2 path in Settings.')
+
+  const cs2Running = await isCS2Running()
+  const netconPort = parseInt(getSetting('cs2_netconport', '2121'), 10)
+  const startTick = rounds.length > 0 ? rounds[0].startTick : 0
+
+  // Build jump tick per round: death tick if player died, else round end
+  const deathByRound = new Map<number, number>()
+  for (const d of deathTicks) deathByRound.set(d.roundIndex, d.tick)
+  const jumpTickByRound: number[] = rounds.map((r, i) => deathByRound.get(i) ?? r.endTick)
+
+  const consoleCommands: string[] = []
+  consoleCommands.push(`playdemo "${demoPath}"`)
+  if (!cs2Running) {
+    const windowWidth = getSetting('cs2_window_width', '1920')
+    const windowHeight = getSetting('cs2_window_height', '1080')
+    const windowMode = getSetting('cs2_window_mode', 'windowed')
+    const fullscreen = windowMode === 'fullscreen' ? '1' : '0'
+    consoleCommands.push(`mat_setvideomode ${windowWidth} ${windowHeight} ${fullscreen}`)
+  }
+  consoleCommands.push('demo_pause')
+  consoleCommands.push(`demo_gototick ${startTick}`)
+  const playerNameQuoted = playerName.includes(' ') ? `"${playerName}"` : playerName
+  consoleCommands.push(`spec_player ${playerNameQuoted}`)
+  consoleCommands.push('demo_timescale 2')
+  consoleCommands.push('demo_resume')
+
+  const commandsToCopy = consoleCommands.join('; ')
+  clipboard.writeText(commandsToCopy)
+
+  const runPOVSequenceAndPoll = async (navCommands: string[]) => {
+    await sendCS2CommandsSequentially(netconPort, navCommands)
+    setTimeout(async () => {
+      await sendCS2CommandsSequentially(netconPort, ['demo_resume'])
+    }, 500)
+    // Start poll loop: when current tick >= jump tick for current round, go to next round.
+    // Track which round we last jumped from so we don't resend the same goto until we've actually moved.
+    if (povPollIntervalId) clearInterval(povPollIntervalId)
+    const roundStartTime = Date.now()
+    let lastKnownTick = startTick
+    let lastJumpedFromRound: number | null = null
+    povPollIntervalId = setInterval(async () => {
+      try {
+        const raw = await sendCS2CommandAndGetResponse(netconPort, 'demo_goto', 1200)
+        const parsedTick = parseCurrentTickFromDemoGoto(raw)
+        if (parsedTick != null) {
+          lastKnownTick = parsedTick
+        }
+        // Use parsed tick when available; otherwise lastKnownTick (so user seeks are respected); else time-based estimate
+        const currentTick = parsedTick ?? lastKnownTick ?? Math.floor(startTick + (Date.now() - roundStartTime) / 1000 * tickRate * 2)
+        let currentRound = -1
+        for (let i = 0; i < rounds.length; i++) {
+          if (currentTick >= rounds[i].startTick && currentTick <= rounds[i].endTick) {
+            currentRound = i
+            break
+          }
+        }
+        if (currentRound < 0) return
+        // We've moved into a new round; allow jumping again from this round when ready
+        if (lastJumpedFromRound !== null && currentRound !== lastJumpedFromRound) {
+          lastJumpedFromRound = null
+        }
+        const jumpTick = jumpTickByRound[currentRound]
+        if (currentTick >= jumpTick && currentRound + 1 < rounds.length) {
+          if (lastJumpedFromRound === currentRound) return // already sent jump from this round, wait for seek to complete
+          const nextStart = rounds[currentRound + 1].startTick
+          await sendCS2CommandsSequentially(netconPort, [`demo_gototick ${nextStart}`, `spec_player ${playerNameQuoted}`])
+          lastJumpedFromRound = currentRound
+        } else if (currentRound === rounds.length - 1 && currentTick >= jumpTick) {
+          if (povPollIntervalId) clearInterval(povPollIntervalId)
+          povPollIntervalId = null
+        }
+      } catch {
+        // CS2 closed or netcon error: stop polling
+        if (povPollIntervalId) {
+          clearInterval(povPollIntervalId)
+          povPollIntervalId = null
+        }
+      }
+    }, 1500)
+  }
+
+  if (cs2Running) {
+    const normalizedDemo = path.resolve(demoPath).replace(/\\/g, '/')
+    const normalizedCurrent = currentDemoPath ? path.resolve(currentDemoPath).replace(/\\/g, '/') : null
+    if (normalizedCurrent === normalizedDemo) {
+      const navCommands = consoleCommands.filter(c => !c.startsWith('playdemo'))
+      setTimeout(() => runPOVSequenceAndPoll(navCommands), 1000)
+      return { success: true, tick: startTick, commands: commandsToCopy, alreadyRunning: true, needsDemoLoad: false }
+    }
+    if (!confirmLoadDemo) {
+      return { success: false, tick: startTick, commands: commandsToCopy, alreadyRunning: true, needsDemoLoad: true, currentDemo: currentDemoPath ?? null, newDemo: demoPath }
+    }
+    setTimeout(async () => {
+      await sendCS2CommandsSequentially(netconPort, [`playdemo "${demoPath}"`])
+      await new Promise(r => setTimeout(r, 5000))
+      const remaining = consoleCommands.filter(c => !c.startsWith('playdemo'))
+      await runPOVSequenceAndPoll(remaining)
+      currentDemoPath = demoPath
+    }, 1000)
+    return { success: true, tick: startTick, commands: commandsToCopy, alreadyRunning: true, needsDemoLoad: false }
+  }
+
+  const args = ['-insecure', '-novid', '-netconport', getSetting('cs2_netconport', '2121')]
+  try {
+    const cs2Process = spawn(cs2Exe, args, { detached: true, stdio: 'ignore', cwd: path.dirname(cs2Exe), env: process.env })
+    cs2Process.unref()
+    setTimeout(async () => {
+      await sendCS2CommandsSequentially(netconPort, [`playdemo "${demoPath}"`])
+      await new Promise(r => setTimeout(r, 5000))
+      const remaining = consoleCommands.filter(c => !c.startsWith('playdemo'))
+      await runPOVSequenceAndPoll(remaining)
+      currentDemoPath = demoPath
+    }, 5000)
+    return { success: true, tick: startTick, commands: commandsToCopy, alreadyRunning: false }
+  } catch (err) {
+    throw new Error(`Failed to launch CS2: ${err instanceof Error ? err.message : String(err)}`)
+  }
+})
+
+// Send a single command to CS2 netcon and return the response text (for e.g. demo_goto polling).
+async function sendCS2CommandAndGetResponse(port: number, command: string, responseTimeoutMs: number = 800): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const socket = net.createConnection({ host: '127.0.0.1', port })
+    const chunks: Buffer[] = []
+    let connected = false
+    let responseTimer: ReturnType<typeof setTimeout> | null = null
+
+    const connectionTimeout = setTimeout(() => {
+      if (!connected) {
+        socket.destroy()
+        reject(new Error('Connection timeout'))
+      }
+    }, 10000)
+
+    const finish = (err?: Error) => {
+      if (responseTimer) clearTimeout(responseTimer)
+      clearTimeout(connectionTimeout)
+      socket.destroy()
+      if (err) reject(err)
+      else resolve(Buffer.concat(chunks).toString('utf8'))
+    }
+
+    socket.on('connect', () => {
+      connected = true
+      clearTimeout(connectionTimeout)
+      socket.write(command.trimEnd() + '\n', (err) => {
+        if (err) {
+          finish(err)
+          return
+        }
+        responseTimer = setTimeout(() => finish(), responseTimeoutMs)
+      })
+    })
+
+    socket.on('data', (buf: Buffer) => {
+      chunks.push(buf)
+    })
+
+    socket.on('error', (err) => {
+      if (connected && chunks.length > 0) {
+        finish()
+      } else {
+        finish(err)
+      }
+    })
+
+    socket.on('close', () => {
+      if (connected && responseTimer !== null) {
+        finish()
+      }
+    })
+  })
+}
 
 // Function to connect to CS2 netconport and send commands sequentially
 async function sendCS2CommandsSequentially(port: number, commands: string[]): Promise<void> {

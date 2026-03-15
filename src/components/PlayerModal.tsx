@@ -48,6 +48,7 @@ interface PlayerModalProps {
   onClose: () => void
   onCopyCommand: (event: PlayerEvent) => void
   onView2D: (roundIndex: number, tick: number) => void
+  show2DViewer?: boolean
   demoPath: string | null
   tickRate: number
   getPlayerName: (steamId: string | null | undefined) => string
@@ -74,6 +75,7 @@ export default function PlayerModal({
   onClose,
   onCopyCommand,
   onView2D,
+  show2DViewer = true,
   demoPath,
   tickRate,
   getPlayerName,
@@ -333,13 +335,15 @@ export default function PlayerModal({
                                         <span className="text-xs text-gray-400">Round {event.roundIndex + 1}</span>
                                         {demoPath && (
                                           <div className="flex items-center gap-1">
-                                            <button
-                                              onClick={() => onView2D(event.roundIndex, view2DTick)}
-                                              className="p-1 hover:bg-accent/20 rounded transition-colors"
-                                              title="View in 2D"
-                                            >
-                                              <MapIcon size={14} className="text-gray-400 hover:text-accent" />
-                                            </button>
+                                            {show2DViewer && (
+                                              <button
+                                                onClick={() => onView2D(event.roundIndex, view2DTick)}
+                                                className="p-1 hover:bg-accent/20 rounded transition-colors"
+                                                title="View in 2D"
+                                              >
+                                                <MapIcon size={14} className="text-gray-400 hover:text-accent" />
+                                              </button>
+                                            )}
                                             <button
                                               onClick={() => onCopyCommand(event)}
                                               className="p-1 hover:bg-accent/20 rounded transition-colors"
@@ -393,13 +397,15 @@ export default function PlayerModal({
                                 <div className="flex items-center gap-2">
                                   {demoPath && (
                                     <div className="flex items-center gap-1">
-                                      <button
-                                        onClick={() => onView2D(event.roundIndex, event.startTick)}
-                                        className="p-1 hover:bg-accent/20 rounded transition-colors"
-                                        title="View in 2D"
-                                      >
-                                        <span className="text-xs">🗺️</span>
-                                      </button>
+                                      {show2DViewer && (
+                                        <button
+                                          onClick={() => onView2D(event.roundIndex, event.startTick)}
+                                          className="p-1 hover:bg-accent/20 rounded transition-colors"
+                                          title="View in 2D"
+                                        >
+                                          <span className="text-xs">🗺️</span>
+                                        </button>
+                                      )}
                                       <button
                                         onClick={() => onCopyCommand(event)}
                                         className="p-1 hover:bg-accent/20 rounded transition-colors"

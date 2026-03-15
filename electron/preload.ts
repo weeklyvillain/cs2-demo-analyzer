@@ -16,8 +16,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getUnparsedDemos: () => ipcRenderer.invoke('demos:getUnparsed'),
   getMatchSummary: (matchId: string) => ipcRenderer.invoke('matches:summary', matchId),
   getMatchPlayers: (matchId: string) => ipcRenderer.invoke('matches:players', matchId),
-  getMatchEvents: (matchId: string, filters?: { type?: string; steamid?: string; round?: number }) =>
+  getMatchEvents: (matchId: string, filters?: { type?: string; steamid?: string; victimSteamId?: string; round?: number }) =>
     ipcRenderer.invoke('matches:events', matchId, filters),
+  getMatchPlayerDeathTicks: (matchId: string, steamId: string) =>
+    ipcRenderer.invoke('matches:playerDeathTicks', matchId, steamId),
   getMatchParserLogs: (matchId: string) => ipcRenderer.invoke('matches:parserLogs', matchId),
   getMatchRounds: (matchId: string) => ipcRenderer.invoke('matches:rounds', matchId),
   getMatchChat: (matchId: string, steamid?: string) => ipcRenderer.invoke('matches:chat', matchId, steamid),
@@ -37,6 +39,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // CS2 Launch
   launchCS2: (demoPath: string, startTick?: number, playerName?: string, confirmLoadDemo?: boolean) => ipcRenderer.invoke('cs2:launch', demoPath, startTick, playerName, confirmLoadDemo),
+  launchCS2POV: (
+    demoPath: string,
+    playerName: string,
+    playerSteamId: string,
+    rounds: Array<{ startTick: number; endTick: number }>,
+    deathTicks: Array<{ roundIndex: number; tick: number }>,
+    tickRate?: number,
+    confirmLoadDemo?: boolean
+  ) => ipcRenderer.invoke('cs2:launchPOV', demoPath, playerName, playerSteamId, rounds, deathTicks, tickRate, confirmLoadDemo),
   // CS2 Copy Commands (without launching)
   copyCS2Commands: (demoPath: string, startTick?: number, playerName?: string) => ipcRenderer.invoke('cs2:copyCommands', demoPath, startTick, playerName),
 

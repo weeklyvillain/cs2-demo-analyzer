@@ -48,11 +48,14 @@ interface TrackingState {
   overlayPid: number | null // Track Electron process PID (for checking if overlay is foreground)
   handoffUntil: number | null // Timestamp until which overlay should stay visible during handoff (ms)
   explicitlyShown: boolean // Track if user explicitly toggled overlay to be shown
+  lastSetBoundsTime: number // Last time we actually called setBounds (to avoid overlay lag during playback)
 }
 
 const UPDATE_THROTTLE_MS = 8 // ~120fps max update rate for smoother tracking
 const UPDATE_THROTTLE_MS_ACTIVE = 16 // 60fps update rate when CS2 is actively rendering - balanced for responsiveness
-const LOCATION_CHANGE_THROTTLE_MS = 33 // Throttle locationchange events more (30fps) since they fire very frequently
+// During playback, locationchange fires very frequently; throttle heavily to prevent overlay lag (window doesn't move)
+const LOCATION_CHANGE_THROTTLE_MS = 100 // ~10fps max during active playback (was 33ms → ~30fps)
+const MIN_SETBOUNDS_INTERVAL_MS = 50 // Never call setBounds more than ~20/sec; each call triggers overlay repaint
 const HEALTH_CHECK_INTERVAL_MS = 1000 // Check every second if CS2 window still exists
 
 class CS2OverlayTracker {
@@ -73,6 +76,7 @@ class CS2OverlayTracker {
     overlayPid: null, // Electron process PID
     handoffUntil: null, // Grace period for overlay-to-CS2 handoff
     explicitlyShown: false, // Track if user explicitly toggled overlay to be shown
+    lastSetBoundsTime: 0,
   }
 
   private overlayWindow: BrowserWindow | null = null
@@ -609,16 +613,32 @@ class CS2OverlayTracker {
       }
 
       // Check if bounds actually changed (with tolerance to avoid unnecessary updates)
-      // Use larger tolerance during active playback to reduce update frequency
-      const TOLERANCE = this.state.isCs2Foreground && !this.state.cs2Minimized ? 2 : 1
-      if (
+      // Use larger tolerance during active playback to reduce update frequency and overlay lag
+      const TOLERANCE = this.state.isCs2Foreground && !this.state.cs2Minimized ? 8 : 1
+      const boundsUnchanged =
         this.state.lastBounds &&
         Math.abs(this.state.lastBounds.x - bounds.x) < TOLERANCE &&
         Math.abs(this.state.lastBounds.y - bounds.y) < TOLERANCE &&
         Math.abs(this.state.lastBounds.width - bounds.width) < TOLERANCE &&
         Math.abs(this.state.lastBounds.height - bounds.height) < TOLERANCE
-      ) {
+      if (boundsUnchanged) {
         return // No significant change
+      }
+
+      // During playback, setBounds triggers overlay repaint; rate-limit to prevent lag
+      const now = Date.now()
+      const timeSinceLastSetBounds = now - this.state.lastSetBoundsTime
+      const bigChange =
+        !this.state.lastBounds ||
+        Math.abs(this.state.lastBounds.x - bounds.x) >= 16 ||
+        Math.abs(this.state.lastBounds.y - bounds.y) >= 16 ||
+        Math.abs(this.state.lastBounds.width - bounds.width) >= 16 ||
+        Math.abs(this.state.lastBounds.height - bounds.height) >= 16
+      if (
+        !bigChange &&
+        timeSinceLastSetBounds < MIN_SETBOUNDS_INTERVAL_MS
+      ) {
+        return // Skip to avoid overlay lag; next throttle cycle will apply
       }
 
       // Convert to DIP (Electron uses DIP internally)
@@ -631,7 +651,8 @@ class CS2OverlayTracker {
 
       this.overlayWindow.setBounds(dipBounds, false)
       this.state.lastBounds = bounds
-      this.state.lastUpdateTime = Date.now()
+      this.state.lastUpdateTime = now
+      this.state.lastSetBoundsTime = now
 
       // Only log bounds sync occasionally to reduce overhead (reuse shouldLog from above)
       if (shouldLog) {

@@ -232,6 +232,7 @@ function MatchesScreen() {
   const [chatFilterSteamId, setChatFilterSteamId] = useState<string | null>(null)
   const [chatViewMode, setChatViewMode] = useState<'all-chat'>('all-chat')
   const [viewer2D, setViewer2D] = useState<{ roundIndex: number; tick: number } | null>(null)
+  const [hasRadarForCurrentMap, setHasRadarForCurrentMap] = useState(false)
   const [showMatchOverview, setShowMatchOverview] = useState(false)
   const [matchStats, setMatchStats] = useState<Map<string, MatchStats>>(new Map())
   const [sortField, setSortField] = useState<'id' | 'length' | 'map' | 'date'>('date')
@@ -242,7 +243,16 @@ function MatchesScreen() {
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [showDemoLoadModal, setShowDemoLoadModal] = useState(false)
-  const [pendingDemoAction, setPendingDemoAction] = useState<{ demoPath: string; startTick: number; playerName: string } | null>(null)
+  const [pendingDemoAction, setPendingDemoAction] = useState<{
+    demoPath: string
+    startTick: number
+    playerName: string
+    isPov?: boolean
+    playerSteamId?: string
+    rounds?: Array<{ startTick: number; endTick: number }>
+    deathTicks?: Array<{ roundIndex: number; tick: number }>
+    tickRate?: number
+  } | null>(null)
   const [showParsingModal, setShowParsingModal] = useState(false)
   const [demoToParse, setDemoToParse] = useState<string | null>(null)
   const [demosToParse, setDemosToParse] = useState<string[]>([])
@@ -285,6 +295,32 @@ function MatchesScreen() {
     const interval = setInterval(loadDbViewerSetting, 1000)
     return () => clearInterval(interval)
   }, [])
+
+  // Check if we have a radar image for the selected match's map (hide 2D viewer if not)
+  useEffect(() => {
+    if (!selectedMatch || !window.electronAPI) {
+      setHasRadarForCurrentMap(false)
+      return
+    }
+    const match = matches.find((m) => m.id === selectedMatch)
+    const mapName = match?.map
+    if (!mapName) {
+      setHasRadarForCurrentMap(false)
+      return
+    }
+    let normalizedMapName = mapName.toLowerCase()
+    if (normalizedMapName === 'de_cache_b') normalizedMapName = 'de_cache'
+    window.electronAPI.getRadarImage(normalizedMapName).then((result) => {
+      setHasRadarForCurrentMap(result.success)
+    }).catch(() => setHasRadarForCurrentMap(false))
+  }, [selectedMatch, matches])
+
+  // If 2D viewer tab is active but we don't have radar, switch back to overview
+  useEffect(() => {
+    if (activeTab === '2d-viewer' && !hasRadarForCurrentMap) {
+      setActiveTab('overview')
+    }
+  }, [activeTab, hasRadarForCurrentMap])
 
   const fetchMatches = async () => {
     if (!window.electronAPI) {
@@ -1189,29 +1225,40 @@ function MatchesScreen() {
     }
 
     try {
-      const result = await window.electronAPI.launchCS2(
-        pendingDemoAction.demoPath,
-        pendingDemoAction.startTick,
-        pendingDemoAction.playerName,
-        true // confirmLoadDemo = true
-      )
-      
-      // Check for errors (e.g., Akros running)
-      if (result.error) {
-        setError(result.error)
-        setToast({ message: result.error, type: 'error' })
-        setShowDemoLoadModal(false)
-        setPendingDemoAction(null)
-        return
-      }
-      
-      if (result.success) {
-        setError(null)
-        // Show different message based on whether we're jumping to an event or loading from start
-        const message = pendingDemoAction.startTick > 0 
-          ? 'Loading new demo and jumping to event...'
-          : 'Loading new demo from start...'
-        setToast({ message, type: 'success' })
+      if (pendingDemoAction.isPov && pendingDemoAction.playerSteamId != null && pendingDemoAction.rounds != null && pendingDemoAction.deathTicks != null) {
+        const result = await window.electronAPI.launchCS2POV(
+          pendingDemoAction.demoPath,
+          pendingDemoAction.playerName,
+          pendingDemoAction.playerSteamId,
+          pendingDemoAction.rounds,
+          pendingDemoAction.deathTicks,
+          pendingDemoAction.tickRate ?? 64,
+          true
+        )
+        if (result.error) {
+          setError(result.error)
+          setToast({ message: result.error, type: 'error' })
+        } else if (result.success) {
+          setError(null)
+          setToast({ message: 'Loading demo and starting POV playback...', type: 'success' })
+        }
+      } else {
+        const result = await window.electronAPI.launchCS2(
+          pendingDemoAction.demoPath,
+          pendingDemoAction.startTick,
+          pendingDemoAction.playerName,
+          true
+        )
+        if (result.error) {
+          setError(result.error)
+          setToast({ message: result.error, type: 'error' })
+        } else if (result.success) {
+          setError(null)
+          const message = pendingDemoAction.startTick > 0
+            ? 'Loading new demo and jumping to event...'
+            : 'Loading new demo from start...'
+          setToast({ message, type: 'success' })
+        }
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : t('matches.failedToLoadDemo')
@@ -1220,6 +1267,63 @@ function MatchesScreen() {
     } finally {
       setShowDemoLoadModal(false)
       setPendingDemoAction(null)
+    }
+  }
+
+  const handleWatchPOV = async (score: PlayerScore & { team?: string | null }) => {
+    if (!window.electronAPI) {
+      setToast({ message: t('matches.electronApiNotAvailable'), type: 'error' })
+      return
+    }
+    if (!demoPath) {
+      const path = await window.electronAPI.openFileDialog(false, 'demo')
+      if (!path) {
+        setToast({ message: 'Demo file path is required to watch POV', type: 'error' })
+        return
+      }
+      setDemoPath(path)
+      setTimeout(() => handleWatchPOV(score), 0)
+      return
+    }
+    if (!selectedMatch) {
+      setToast({ message: 'No match selected', type: 'error' })
+      return
+    }
+    try {
+      const { deathTicks: deathTicksList } = await window.electronAPI.getMatchPlayerDeathTicks(selectedMatch, score.steamId)
+      const roundsForPov = rounds.map((r) => ({ startTick: r.startTick, endTick: r.endTick }))
+      const result = await window.electronAPI.launchCS2POV(
+        demoPath,
+        score.name || score.steamId,
+        score.steamId,
+        roundsForPov,
+        deathTicksList,
+        tickRate,
+        false
+      )
+      if (result.error) {
+        setToast({ message: result.error, type: 'error' })
+        return
+      }
+      if (result.needsDemoLoad) {
+        setPendingDemoAction({
+          demoPath,
+          startTick: rounds[0]?.startTick ?? 0,
+          playerName: score.name || score.steamId,
+          isPov: true,
+          playerSteamId: score.steamId,
+          rounds: roundsForPov,
+          deathTicks: deathTicksList,
+          tickRate,
+        })
+        setShowDemoLoadModal(true)
+        return
+      }
+      if (result.success) {
+        setToast({ message: 'Starting POV playback (2x, jump on death)...', type: 'success' })
+      }
+    } catch (err) {
+      setToast({ message: err instanceof Error ? err.message : 'Failed to start POV', type: 'error' })
     }
   }
 
@@ -2003,23 +2107,25 @@ function MatchesScreen() {
                   >
                     {t('matches.tabs.chat')}
                   </button>
-                  <button
-                    onClick={() => {
-                      setActiveTab('2d-viewer')
-                    }}
-                    className={`px-4 py-2 font-medium transition-colors ${
-                      activeTab === '2d-viewer'
-                        ? 'text-accent border-b-2 border-accent'
-                        : 'text-gray-400 hover:text-white'
-                    }`}
-                  >
-                    <span className="flex items-center gap-2">
-                      {t('matches.tabs.viewer2d')}
-                      <span className="px-1.5 py-0.5 text-xs bg-yellow-900/30 text-yellow-400 rounded border border-yellow-500/30">
-                        WIP
+                  {hasRadarForCurrentMap && (
+                    <button
+                      onClick={() => {
+                        setActiveTab('2d-viewer')
+                      }}
+                      className={`px-4 py-2 font-medium transition-colors ${
+                        activeTab === '2d-viewer'
+                          ? 'text-accent border-b-2 border-accent'
+                          : 'text-gray-400 hover:text-white'
+                      }`}
+                    >
+                      <span className="flex items-center gap-2">
+                        {t('matches.tabs.viewer2d')}
+                        <span className="px-1.5 py-0.5 text-xs bg-yellow-900/30 text-yellow-400 rounded border border-yellow-500/30">
+                          WIP
+                        </span>
                       </span>
-                    </span>
-                  </button>
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -2268,21 +2374,23 @@ function MatchesScreen() {
                                               <span className="text-xs text-gray-400">{t('matches.round')} {afk.roundIndex + 1}</span>
                                               {demoPath && (
                                                 <div className="flex items-center gap-1">
-                                                  <button
-                                                    onClick={() => {
-                                                      const round = rounds.find(r => r.roundIndex === afk.roundIndex)
-                                                      if (round) {
-                                                        const previewSeconds = 5
-                                                        const previewTicks = previewSeconds * tickRate
-                                                        const targetTick = Math.max(round.startTick || 0, afk.startTick - previewTicks)
-                                                        setViewer2D({ roundIndex: afk.roundIndex, tick: targetTick })
-                                                      }
-                                                    }}
-                                                    className="p-1 hover:bg-accent/20 rounded transition-colors"
-                                                    title={t('matches.viewIn2D')}
-                                                  >
-                                                    <MapIcon size={14} className="text-gray-400 hover:text-accent" />
-                                                  </button>
+                                                  {hasRadarForCurrentMap && (
+                                                    <button
+                                                      onClick={() => {
+                                                        const round = rounds.find(r => r.roundIndex === afk.roundIndex)
+                                                        if (round) {
+                                                          const previewSeconds = 5
+                                                          const previewTicks = previewSeconds * tickRate
+                                                          const targetTick = Math.max(round.startTick || 0, afk.startTick - previewTicks)
+                                                          setViewer2D({ roundIndex: afk.roundIndex, tick: targetTick })
+                                                        }
+                                                      }}
+                                                      className="p-1 hover:bg-accent/20 rounded transition-colors"
+                                                      title={t('matches.viewIn2D')}
+                                                    >
+                                                      <MapIcon size={14} className="text-gray-400 hover:text-accent" />
+                                                    </button>
+                                                  )}
                                                   <button
                                                     onClick={() => handleCopyCommand(afk)}
                                                     className="p-1 hover:bg-accent/20 rounded transition-colors"
@@ -2361,21 +2469,23 @@ function MatchesScreen() {
                                         <span className="text-xs text-gray-400">Round {dc.roundIndex + 1}/{rounds.length}</span>
                                         {demoPath && (
                                           <div className="flex items-center gap-1">
-                                            <button
-                                              onClick={() => {
-                                                const round = rounds.find(r => r.roundIndex === dc.roundIndex)
-                                                if (round) {
-                                                  const previewSeconds = 5
-                                                  const previewTicks = previewSeconds * tickRate
-                                                  const targetTick = Math.max(round.startTick || 0, dc.startTick - previewTicks)
-                                                  setViewer2D({ roundIndex: dc.roundIndex, tick: targetTick })
-                                                }
-                                              }}
-                                              className="p-1 hover:bg-accent/20 rounded transition-colors"
-                                              title="View in 2D"
-                                            >
-                                              <MapIcon size={14} className="text-gray-400 hover:text-accent" />
-                                            </button>
+                                            {hasRadarForCurrentMap && (
+                                              <button
+                                                onClick={() => {
+                                                  const round = rounds.find(r => r.roundIndex === dc.roundIndex)
+                                                  if (round) {
+                                                    const previewSeconds = 5
+                                                    const previewTicks = previewSeconds * tickRate
+                                                    const targetTick = Math.max(round.startTick || 0, dc.startTick - previewTicks)
+                                                    setViewer2D({ roundIndex: dc.roundIndex, tick: targetTick })
+                                                  }
+                                                }}
+                                                className="p-1 hover:bg-accent/20 rounded transition-colors"
+                                                title="View in 2D"
+                                              >
+                                                <MapIcon size={14} className="text-gray-400 hover:text-accent" />
+                                              </button>
+                                            )}
                                             <button
                                               onClick={() => handleCopyCommand(dc)}
                                               className="p-1 hover:bg-accent/20 rounded transition-colors"
@@ -2454,21 +2564,23 @@ function MatchesScreen() {
                                       <span className="text-xs text-gray-400">Round {kill.roundIndex + 1}</span>
                                       {demoPath && (
                                         <div className="flex items-center gap-1">
-                                          <button
-                                            onClick={() => {
-                                              const round = rounds.find(r => r.roundIndex === kill.roundIndex)
-                                              if (round) {
-                                                const previewSeconds = 5
-                                                const previewTicks = previewSeconds * tickRate
-                                                const targetTick = Math.max(round.startTick || 0, kill.startTick - previewTicks)
-                                                setViewer2D({ roundIndex: kill.roundIndex, tick: targetTick })
-                                              }
-                                            }}
-                                            className="p-1 hover:bg-accent/20 rounded transition-colors"
-                                            title="View in 2D"
-                                          >
-                                            <MapIcon size={14} className="text-gray-400 hover:text-accent" />
-                                          </button>
+                                          {hasRadarForCurrentMap && (
+                                            <button
+                                              onClick={() => {
+                                                const round = rounds.find(r => r.roundIndex === kill.roundIndex)
+                                                if (round) {
+                                                  const previewSeconds = 5
+                                                  const previewTicks = previewSeconds * tickRate
+                                                  const targetTick = Math.max(round.startTick || 0, kill.startTick - previewTicks)
+                                                  setViewer2D({ roundIndex: kill.roundIndex, tick: targetTick })
+                                                }
+                                              }}
+                                              className="p-1 hover:bg-accent/20 rounded transition-colors"
+                                              title="View in 2D"
+                                            >
+                                              <MapIcon size={14} className="text-gray-400 hover:text-accent" />
+                                            </button>
+                                          )}
                                           <button
                                             onClick={() => handleCopyCommand(kill)}
                                             className="p-1 hover:bg-accent/20 rounded transition-colors"
@@ -2530,21 +2642,23 @@ function MatchesScreen() {
                                           <span className="text-xs text-gray-400">{t('matches.round')} {damage.roundIndex + 1}</span>
                                           {demoPath && (
                                             <div className="flex items-center gap-1">
-                                              <button
-                                                onClick={() => {
-                                                  const round = rounds.find(r => r.roundIndex === damage.roundIndex)
-                                                  if (round) {
-                                                    const previewSeconds = 5
-                                                    const previewTicks = previewSeconds * tickRate
-                                                    const targetTick = Math.max(round.startTick || 0, damage.startTick - previewTicks)
-                                                    setViewer2D({ roundIndex: damage.roundIndex, tick: targetTick })
-                                                  }
-                                                }}
-                                                className="p-1 hover:bg-accent/20 rounded transition-colors"
-                                                title="View in 2D"
-                                              >
-                                                <MapIcon size={14} className="text-gray-400 hover:text-accent" />
-                                              </button>
+                                              {hasRadarForCurrentMap && (
+                                                <button
+                                                  onClick={() => {
+                                                    const round = rounds.find(r => r.roundIndex === damage.roundIndex)
+                                                    if (round) {
+                                                      const previewSeconds = 5
+                                                      const previewTicks = previewSeconds * tickRate
+                                                      const targetTick = Math.max(round.startTick || 0, damage.startTick - previewTicks)
+                                                      setViewer2D({ roundIndex: damage.roundIndex, tick: targetTick })
+                                                    }
+                                                  }}
+                                                  className="p-1 hover:bg-accent/20 rounded transition-colors"
+                                                  title="View in 2D"
+                                                >
+                                                  <MapIcon size={14} className="text-gray-400 hover:text-accent" />
+                                                </button>
+                                              )}
                                               <button
                                                 onClick={() => handleCopyCommand(damage)}
                                                 className="p-1 hover:bg-accent/20 rounded transition-colors"
@@ -2617,21 +2731,23 @@ function MatchesScreen() {
                                             <span className="text-xs text-gray-400">Round {flash.roundIndex + 1}</span>
                                             {demoPath && (
                                               <div className="flex items-center gap-1">
-                                                <button
-                                                  onClick={() => {
-                                                    const round = rounds.find(r => r.roundIndex === flash.roundIndex)
-                                                    if (round) {
-                                                      const previewSeconds = 5
-                                                      const previewTicks = previewSeconds * tickRate
-                                                      const targetTick = Math.max(round.startTick || 0, flash.startTick - previewTicks)
-                                                      setViewer2D({ roundIndex: flash.roundIndex, tick: targetTick })
-                                                    }
-                                                  }}
-                                                  className="p-1 hover:bg-accent/20 rounded transition-colors"
-                                                  title="View in 2D"
-                                                >
-                                                  <MapIcon size={14} className="text-gray-400 hover:text-accent" />
-                                                </button>
+                                                {hasRadarForCurrentMap && (
+                                                  <button
+                                                    onClick={() => {
+                                                      const round = rounds.find(r => r.roundIndex === flash.roundIndex)
+                                                      if (round) {
+                                                        const previewSeconds = 5
+                                                        const previewTicks = previewSeconds * tickRate
+                                                        const targetTick = Math.max(round.startTick || 0, flash.startTick - previewTicks)
+                                                        setViewer2D({ roundIndex: flash.roundIndex, tick: targetTick })
+                                                      }
+                                                    }}
+                                                    className="p-1 hover:bg-accent/20 rounded transition-colors"
+                                                    title="View in 2D"
+                                                  >
+                                                    <MapIcon size={14} className="text-gray-400 hover:text-accent" />
+                                                  </button>
+                                                )}
                                                 <button
                                                   onClick={() => handleCopyCommand(flash)}
                                                   className="p-1 hover:bg-accent/20 rounded transition-colors"
@@ -2709,19 +2825,21 @@ function MatchesScreen() {
                                           <span className="text-xs text-gray-400">Round {econ.roundIndex + 1}</span>
                                           {demoPath && (
                                             <div className="flex items-center gap-1">
-                                              <button
-                                                onClick={() => {
-                                                  const round = rounds.find(r => r.roundIndex === econ.roundIndex)
-                                                  if (round) {
-                                                    const targetTick = round.freezeEndTick || round.startTick
-                                                    setViewer2D({ roundIndex: econ.roundIndex, tick: targetTick })
-                                                  }
-                                                }}
-                                                className="p-1 hover:bg-accent/20 rounded transition-colors"
-                                                title="View in 2D"
-                                              >
-                                                <MapIcon size={14} className="text-gray-400 hover:text-accent" />
-                                              </button>
+                                              {hasRadarForCurrentMap && (
+                                                <button
+                                                  onClick={() => {
+                                                    const round = rounds.find(r => r.roundIndex === econ.roundIndex)
+                                                    if (round) {
+                                                      const targetTick = round.freezeEndTick || round.startTick
+                                                      setViewer2D({ roundIndex: econ.roundIndex, tick: targetTick })
+                                                    }
+                                                  }}
+                                                  className="p-1 hover:bg-accent/20 rounded transition-colors"
+                                                  title="View in 2D"
+                                                >
+                                                  <MapIcon size={14} className="text-gray-400 hover:text-accent" />
+                                                </button>
+                                              )}
                                               <button
                                                 onClick={() => handleCopyCommand(econ)}
                                                 className="p-1 hover:bg-accent/20 rounded transition-colors"
@@ -2928,21 +3046,23 @@ function MatchesScreen() {
                                           <span className="text-xs text-gray-400">Round {block.roundIndex + 1}</span>
                                           {demoPath && (
                                             <div className="flex items-center gap-1">
-                                              <button
-                                                onClick={() => {
-                                                  const round = rounds.find(r => r.roundIndex === block.roundIndex)
-                                                  if (round && block.startTick) {
-                                                    const previewSeconds = 3
-                                                    const previewTicks = previewSeconds * tickRate
-                                                    const targetTick = Math.max(round.startTick || 0, block.startTick - previewTicks)
-                                                    setViewer2D({ roundIndex: block.roundIndex, tick: targetTick })
-                                                  }
-                                                }}
-                                                className="p-1 hover:bg-accent/20 rounded transition-colors"
-                                                title="View in 2D"
-                                              >
-                                                <MapIcon size={14} className="text-gray-400 hover:text-accent" />
-                                              </button>
+                                              {hasRadarForCurrentMap && (
+                                                <button
+                                                  onClick={() => {
+                                                    const round = rounds.find(r => r.roundIndex === block.roundIndex)
+                                                    if (round && block.startTick) {
+                                                      const previewSeconds = 3
+                                                      const previewTicks = previewSeconds * tickRate
+                                                      const targetTick = Math.max(round.startTick || 0, block.startTick - previewTicks)
+                                                      setViewer2D({ roundIndex: block.roundIndex, tick: targetTick })
+                                                    }
+                                                  }}
+                                                  className="p-1 hover:bg-accent/20 rounded transition-colors"
+                                                  title="View in 2D"
+                                                >
+                                                  <MapIcon size={14} className="text-gray-400 hover:text-accent" />
+                                                </button>
+                                              )}
                                               <button
                                                 onClick={() => handleCopyCommand(block)}
                                                 className="p-1 hover:bg-accent/20 rounded transition-colors"
@@ -3038,13 +3158,15 @@ function MatchesScreen() {
                                 <span className="text-xs text-gray-400">
                                   {eventCount} event{eventCount === 1 ? '' : 's'}
                                 </span>
-                                <button
-                                  type="button"
-                                  onClick={() => setViewer2D({ roundIndex: r.roundIndex, tick: r.startTick })}
-                                  className="px-2 py-1 text-xs bg-accent/80 hover:bg-accent text-white rounded transition-colors"
-                                >
-                                  {t('matches.roundsTab.view2d')}
-                                </button>
+                                {hasRadarForCurrentMap && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setViewer2D({ roundIndex: r.roundIndex, tick: r.startTick })}
+                                    className="px-2 py-1 text-xs bg-accent/80 hover:bg-accent text-white rounded transition-colors"
+                                  >
+                                    {t('matches.roundsTab.view2d')}
+                                  </button>
+                                )}
                               </div>
                             </div>
 
@@ -3082,14 +3204,16 @@ function MatchesScreen() {
                                             </div>
                                             {demoPath && (
                                               <div className="flex items-center gap-1 flex-shrink-0">
-                                                <button
-                                                  type="button"
-                                                  onClick={() => setViewer2D({ roundIndex: r.roundIndex, tick: previewTick })}
-                                                  className="p-1 hover:bg-accent/20 rounded transition-colors"
-                                                  title="View in 2D"
-                                                >
-                                                  <MapIcon size={12} className="text-gray-400 hover:text-accent" />
-                                                </button>
+                                                {hasRadarForCurrentMap && (
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => setViewer2D({ roundIndex: r.roundIndex, tick: previewTick })}
+                                                    className="p-1 hover:bg-accent/20 rounded transition-colors"
+                                                    title="View in 2D"
+                                                  >
+                                                    <MapIcon size={12} className="text-gray-400 hover:text-accent" />
+                                                  </button>
+                                                )}
                                                 <button
                                                   type="button"
                                                   onClick={() => handleCopyCommand(e)}
@@ -3203,18 +3327,32 @@ function MatchesScreen() {
                                       </button>
                                     )}
                                   </div>
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation()
-                                      handleExtractVoice(score, e)
-                                    }}
-                                    disabled={!demoPath}
-                                    className="px-3 py-1.5 bg-accent hover:bg-accent/90 disabled:bg-gray-600 disabled:cursor-not-allowed text-white text-sm rounded transition-colors flex items-center gap-1.5 ml-2 flex-shrink-0 whitespace-nowrap"
-                                    title={!demoPath ? t('matches.demoFileRequired') : t('matches.extractVoiceFor').replace('{name}', score.name)}
-                                  >
-                                    <Mic size={14} />
-                                    <span>{t('matches.extractVoice')}</span>
-                                  </button>
+                                  <div className="flex items-center gap-1.5 ml-2 flex-shrink-0">
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        handleWatchPOV(score)
+                                      }}
+                                      disabled={!demoPath}
+                                      className="px-2.5 py-1.5 bg-secondary hover:bg-secondary/90 disabled:bg-gray-600 disabled:cursor-not-allowed text-white text-sm rounded transition-colors flex items-center gap-1.5 whitespace-nowrap border border-border"
+                                      title={!demoPath ? t('matches.demoFileRequired') : 'Watch game from this player\'s POV (2x, jump on death)'}
+                                    >
+                                      <Play size={14} />
+                                      <span>Watch POV</span>
+                                    </button>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        handleExtractVoice(score, e)
+                                      }}
+                                      disabled={!demoPath}
+                                      className="px-2.5 py-1.5 bg-accent hover:bg-accent/90 disabled:bg-gray-600 disabled:cursor-not-allowed text-white text-sm rounded transition-colors flex items-center gap-1.5 whitespace-nowrap"
+                                      title={!demoPath ? t('matches.demoFileRequired') : t('matches.extractVoiceFor').replace('{name}', score.name)}
+                                    >
+                                      <Mic size={14} />
+                                      <span>{t('matches.extractVoice')}</span>
+                                    </button>
+                                  </div>
                                 </div>
                                 <div className="grid grid-cols-2 gap-2 text-xs text-gray-300">
                                   <div>
@@ -3301,18 +3439,32 @@ function MatchesScreen() {
                                       </button>
                                     )}
                                   </div>
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation()
-                                      handleExtractVoice(score, e)
-                                    }}
-                                    disabled={!demoPath}
-                                    className="px-3 py-1.5 bg-accent hover:bg-accent/90 disabled:bg-gray-600 disabled:cursor-not-allowed text-white text-sm rounded transition-colors flex items-center gap-1.5 ml-2 flex-shrink-0 whitespace-nowrap"
-                                    title={!demoPath ? t('matches.demoFileRequired') : t('matches.extractVoiceFor').replace('{name}', score.name)}
-                                  >
-                                    <Mic size={14} />
-                                    <span>{t('matches.extractVoice')}</span>
-                                  </button>
+                                  <div className="flex items-center gap-1.5 ml-2 flex-shrink-0">
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        handleWatchPOV(score)
+                                      }}
+                                      disabled={!demoPath}
+                                      className="px-2.5 py-1.5 bg-secondary hover:bg-secondary/90 disabled:bg-gray-600 disabled:cursor-not-allowed text-white text-sm rounded transition-colors flex items-center gap-1.5 whitespace-nowrap border border-border"
+                                      title={!demoPath ? t('matches.demoFileRequired') : 'Watch game from this player\'s POV (2x, jump on death)'}
+                                    >
+                                      <Play size={14} />
+                                      <span>Watch POV</span>
+                                    </button>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        handleExtractVoice(score, e)
+                                      }}
+                                      disabled={!demoPath}
+                                      className="px-2.5 py-1.5 bg-accent hover:bg-accent/90 disabled:bg-gray-600 disabled:cursor-not-allowed text-white text-sm rounded transition-colors flex items-center gap-1.5 whitespace-nowrap"
+                                      title={!demoPath ? t('matches.demoFileRequired') : t('matches.extractVoiceFor').replace('{name}', score.name)}
+                                    >
+                                      <Mic size={14} />
+                                      <span>{t('matches.extractVoice')}</span>
+                                    </button>
+                                  </div>
                                 </div>
                                 <div className="grid grid-cols-2 gap-2 text-xs text-gray-300">
                                   <div>
@@ -3383,18 +3535,32 @@ function MatchesScreen() {
                                     </button>
                                   )}
                                 </div>
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    handleExtractVoice(score, e)
-                                  }}
-                                  disabled={!demoPath}
-                                  className="px-3 py-1.5 bg-accent hover:bg-accent/90 disabled:bg-gray-600 disabled:cursor-not-allowed text-white text-sm rounded transition-colors flex items-center gap-1.5 ml-2"
-                                  title={!demoPath ? t('matches.demoFileRequired') : t('matches.extractVoiceFor').replace('{name}', score.name)}
-                                >
-                                  <Mic size={14} />
-                                  <span>{t('matches.extractVoice')}</span>
-                                </button>
+                                <div className="flex items-center gap-1.5 ml-2 flex-shrink-0">
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      handleWatchPOV(score)
+                                    }}
+                                    disabled={!demoPath}
+                                    className="px-2.5 py-1.5 bg-secondary hover:bg-secondary/90 disabled:bg-gray-600 disabled:cursor-not-allowed text-white text-sm rounded transition-colors flex items-center gap-1.5 whitespace-nowrap border border-border"
+                                    title={!demoPath ? t('matches.demoFileRequired') : 'Watch game from this player\'s POV (2x, jump on death)'}
+                                  >
+                                    <Play size={14} />
+                                    <span>Watch POV</span>
+                                  </button>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      handleExtractVoice(score, e)
+                                    }}
+                                    disabled={!demoPath}
+                                    className="px-2.5 py-1.5 bg-accent hover:bg-accent/90 disabled:bg-gray-600 disabled:cursor-not-allowed text-white text-sm rounded transition-colors flex items-center gap-1.5 whitespace-nowrap"
+                                    title={!demoPath ? t('matches.demoFileRequired') : t('matches.extractVoiceFor').replace('{name}', score.name)}
+                                  >
+                                    <Mic size={14} />
+                                    <span>{t('matches.extractVoice')}</span>
+                                  </button>
+                                </div>
                               </div>
                               <div className="grid grid-cols-2 gap-2 text-xs text-gray-300">
                                 <div>
@@ -3556,7 +3722,7 @@ function MatchesScreen() {
                     </div>
                   )}
                 </div>
-              ) : activeTab === '2d-viewer' ? (
+              ) : activeTab === '2d-viewer' && hasRadarForCurrentMap ? (
                 selectedMatch ? (
                   <div className="flex-1 min-h-0">
                     <Viewer2D
@@ -3644,6 +3810,7 @@ function MatchesScreen() {
                 setViewer2D({ roundIndex, tick })
               }
             }}
+            show2DViewer={hasRadarForCurrentMap}
             demoPath={demoPath}
             tickRate={tickRate}
             getPlayerName={getPlayerName}
@@ -3664,8 +3831,8 @@ function MatchesScreen() {
           />
         )}
 
-        {/* 2D Viewer Modal */}
-        {viewer2D && selectedMatch && (
+        {/* 2D Viewer Modal (only when radar available for map) */}
+        {viewer2D && selectedMatch && hasRadarForCurrentMap && (
           <Viewer2D
             matchId={selectedMatch}
             roundIndex={viewer2D.roundIndex}

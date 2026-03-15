@@ -103,7 +103,7 @@ function OverlayScreen() {
         await loadKeyboardIcons(loadedHotkey)
       }).catch(() => {
         // Fallback to default if failed
-        const defaultHotkey = 'CommandOrControl+Shift+O'
+        const defaultHotkey = 'Ctrl+Shift+O'
         setHotkey(defaultHotkey)
         loadKeyboardIcons(defaultHotkey)
       })
@@ -115,6 +115,18 @@ function OverlayScreen() {
         clearTimeout(hoverDebounceTimer.current)
       }
     }
+  }, [])
+
+  // When overlay has focus, Escape hides the overlay (so Escape is not used as global hotkey and game can use it to pause)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && window.electronAPI?.overlay?.hide) {
+        e.preventDefault()
+        window.electronAPI.overlay.hide()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
   }, [])
 
   // Load keyboard icons for a hotkey accelerator
@@ -253,10 +265,10 @@ function OverlayScreen() {
 
   return (
     <div className="w-full h-full bg-transparent pointer-events-none">
-      {/* Events list or Incident panel - only visible when there's an incident, top-left */}
+      {/* Events list or Incident panel - only visible when there's an incident; offset from top to avoid game menu */}
       {incident && (
         <div 
-          className={`absolute top-4 left-4 pointer-events-auto z-50 ${isHovered ? 'outline outline-2 outline-blue-500 outline-offset-2 rounded-lg' : ''}`}
+          className={`absolute top-24 left-4 pointer-events-auto z-50 ${isHovered ? 'outline outline-2 outline-blue-500 outline-offset-2 rounded-lg' : ''}`}
           onMouseEnter={handleInteractiveRegionEnter}
           onMouseLeave={handleInteractiveRegionLeave}
         >
