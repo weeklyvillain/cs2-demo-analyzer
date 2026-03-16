@@ -10,7 +10,7 @@
     "build": "npm run build:addon && npm run build:electron && npm run build:vite",
     "build:vite": "vite build",
     "build:electron": "tsc -p electron/tsconfig.json",
-    "build:addon": "node-gyp rebuild --directory electron/native-addon",
+    "build:addon": "node electron/native-addon/build-addon.js",
     "package": "npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder",
     "package:win": "npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win",
     "package:mac": "npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac",
