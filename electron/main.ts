@@ -975,30 +975,36 @@ function getParserPath(): string {
       return devPath
     }
     
-    // Use bin/parser in dev mode
-    const defaultPath = path.join(projectRoot, 'bin', 'parser')
-    if (process.platform === 'win32') {
-      return defaultPath + '.exe'
+    // Use bin/<platform>/parser in dev mode
+    const platform = process.platform
+    let parserPath: string
+    if (platform === 'win32') {
+      parserPath = path.join(projectRoot, 'bin', 'win', 'parser.exe')
+    } else if (platform === 'darwin') {
+      parserPath = path.join(projectRoot, 'bin', 'mac', 'parser')
+    } else {
+      parserPath = path.join(projectRoot, 'bin', 'linux', 'parser')
     }
-    return defaultPath
+    return parserPath
   } else {
     // Prod: use resources/bin path (files are in resources/bin/)
     // process.resourcesPath already points to the resources directory in production
     // For example: C:\Users\Filip\AppData\Local\Programs\CS2 Demo Analyzer\resources
     const resourcesPath = process.resourcesPath || path.join(app.getAppPath(), '..', 'resources')
     const platform = process.platform
-    let binaryName = 'parser'
-    
+    let parserPath: string
+
     if (platform === 'win32') {
-      binaryName = 'parser.exe'
+      parserPath = path.join(resourcesPath, 'bin', 'win', 'parser.exe')
     } else if (platform === 'darwin') {
-      binaryName = 'parser-mac'
-    } else if (platform === 'linux') {
-      binaryName = 'parser-linux'
+      // macOS: ship a single parser binary under bin/mac/parser
+      parserPath = path.join(resourcesPath, 'bin', 'mac', 'parser')
+    } else {
+      // linux: bin/linux/parser
+      parserPath = path.join(resourcesPath, 'bin', 'linux', 'parser')
     }
-    
-    // Files are now in resources/bin/ directory
-    return path.join(resourcesPath, 'bin', binaryName)
+
+    return parserPath
   }
 }
 
@@ -1018,12 +1024,18 @@ function getAudiowaveformPath(): string {
     // Prod: use resources/bin path (files are in resources/bin/)
     const resourcesPath = process.resourcesPath || path.join(app.getAppPath(), '..', 'resources')
     const platform = process.platform
+    const arch = process.arch
     let binaryName = 'audiowaveform'
     
     if (platform === 'win32') {
       binaryName = 'audiowaveform.exe'
     } else if (platform === 'darwin') {
-      binaryName = 'audiowaveform-mac'
+      // Allow shipping separate audiowaveform binaries per-architecture
+      if (arch === 'arm64') {
+        binaryName = 'audiowaveform-mac-arm64'
+      } else {
+        binaryName = 'audiowaveform-mac-amd64'
+      }
     } else if (platform === 'linux') {
       binaryName = 'audiowaveform-linux'
     }
@@ -1048,10 +1060,20 @@ function getVoiceExtractorPath(): string {
     // Prod: use resources/bin path (files are in resources/bin/)
     const resourcesPath = process.resourcesPath || path.join(app.getAppPath(), '..', 'resources')
     const platform = process.platform
+    const arch = process.arch
     let binaryName = 'csgove'
     
     if (platform === 'win32') {
       binaryName = 'csgove.exe'
+    } else if (platform === 'darwin') {
+      // Allow shipping separate voice extractor binaries per-architecture
+      if (arch === 'arm64') {
+        binaryName = 'csgove-mac-arm64'
+      } else {
+        binaryName = 'csgove-mac-amd64'
+      }
+    } else if (platform === 'linux') {
+      binaryName = 'csgove-linux'
     }
     
     return path.join(resourcesPath, 'bin', binaryName)

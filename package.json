@@ -85,7 +85,13 @@
     "mac": {
       "target": "dmg",
       "icon": "resources/logo.png",
-      "category": "public.app-category.utilities"
+      "category": "public.app-category.utilities",
+      "extraResources": [
+        {
+          "from": "bin",
+          "to": "bin"
+        }
+      ]
     },
     "linux": {
       "target": "AppImage",

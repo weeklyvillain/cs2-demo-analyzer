@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
+  release-windows:
     runs-on: windows-latest
     permissions:
       contents: write
@@ -119,17 +119,93 @@ jobs:
             git push origin "$tagName"
           }
 
-      - name: Build Go parser
+      - name: Build Go parser (Windows)
         run: |
+          mkdir -p bin/win
           cd cmd/parser
-          go build -o ../../bin/parser.exe .
+          go build -o ../../bin/win/parser.exe .
           cd ../..
-
+      
       - name: Package Windows installer and publish
         run: |
           $env:CSC_IDENTITY_AUTO_DISCOVERY = "false"
           npm run build
           npx electron-builder --win --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release-mac:
+    runs-on: macos-latest
+    needs: release-windows
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # EXPECTATION:
+      # A separate tools repo publishes a macOS archive containing:
+      #   resources/bin/csgove-mac-amd64, csgove-mac-arm64,
+      #   resources/bin/audiowaveform-mac-amd64, audiowaveform-mac-arm64,
+      #   and any other required binaries.
+      # This step should download and extract that archive into ./bin or ./resources/bin.
+      - name: Download macOS voice and waveform tools
+        run: |
+          echo "TODO: replace this placeholder with a curl/actions/download-artifact step that fetches macOS binaries into the bin/ directory."
+
+      - name: Build Go parser (macOS)
+        run: |
+          mkdir -p bin/mac
+          cd cmd/parser
+          go build -o ../../bin/mac/parser .
+          cd ../..
+
+      - name: Get version from package.json
+        id: version
+        run: |
+          VERSION=$(cat package.json | node -p "require('./package.json').version")
+          TAG_NAME="v$VERSION"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+
+      - name: Ensure tag exists for publishing
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          TAG_NAME="v$VERSION"
+          echo "Checking for tag: $TAG_NAME"
+          git fetch origin --tags
+          if git rev-parse "$TAG_NAME" >/dev/null 2>&1; then
+            echo "Tag $TAG_NAME exists"
+          else
+            echo "Tag $TAG_NAME does not exist, creating it"
+            git tag "$TAG_NAME"
+            git push origin "$TAG_NAME"
+          fi
+
+      - name: Package macOS build and publish
+        run: |
+          export CSC_IDENTITY_AUTO_DISCOVERY=false
+          npm run build
+          npx electron-builder --mac --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
