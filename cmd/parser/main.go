@@ -15,7 +15,6 @@ import (
 	"strings"
 	"syscall"
 	"time"
-	"unsafe"
 
 	"cs-griefer-electron/internal/db"
 	"cs-griefer-electron/internal/ipc"
@@ -24,28 +23,10 @@ import (
 	"cs-griefer-electron/internal/scoring"
 )
 
-var (
-	kernel32            = syscall.NewLazyDLL("kernel32.dll")
-	setConsoleTitleProc = kernel32.NewProc("SetConsoleTitleW")
-)
-
 const (
 	exitSuccess = 0
 	exitFailure = 1
 )
-
-// setProcessTitle sets the console window title on Windows
-func setProcessTitle(title string) {
-	if runtime.GOOS == "windows" {
-		// Convert Go string to UTF-16 pointer
-		utf16Title, err := syscall.UTF16PtrFromString(title)
-		if err != nil {
-			return
-		}
-		// Call SetConsoleTitleW
-		setConsoleTitleProc.Call(uintptr(unsafe.Pointer(utf16Title)))
-	}
-}
 
 func main() {
 	var (
