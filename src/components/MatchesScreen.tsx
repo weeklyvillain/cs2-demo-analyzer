@@ -10,6 +10,7 @@ import Toast from './Toast'
 import { ClipExportPanel } from './ClipExportPanel'
 import type { ClipRange } from './ClipExportPanel'
 import { formatDisconnectReason } from '../utils/disconnectReason'
+import { formatDuration, formatTime, formatEventDuration } from '../utils/formatters'
 import type { Match, MatchStats, PlayerScore, Round, RoundStats, PlayerEvent, ActiveTab, Player } from '../types/matches'
 import { t } from '../utils/translations'
 import { Clock, Skull, Zap, WifiOff, ChevronDown, ChevronUp, Copy, Play, Check, ArrowUp, ArrowDown, Trash2, X, Plus, Loader2, Mic, FolderOpen, Database, RefreshCw, Upload, Map as MapIcon, UserPlus, UserMinus, FileText, Download, Info } from 'lucide-react'
@@ -820,20 +821,6 @@ function MatchesScreen() {
     }
   }
 
-  const formatDuration = (seconds: number): string => {
-    if (seconds < 60) {
-      return `${Math.round(seconds)}s`
-    }
-    const minutes = Math.floor(seconds / 60)
-    const remainingSeconds = Math.round(seconds % 60)
-    if (minutes < 60) {
-      return `${minutes}m ${remainingSeconds}s`
-    }
-    const hours = Math.floor(minutes / 60)
-    const remainingMinutes = minutes % 60
-    return `${hours}h ${remainingMinutes}m`
-  }
-
   const handleMatchClick = (matchId: string) => {
     fetchMatchData(matchId)
     setShowMatchOverview(true)
@@ -1244,19 +1231,6 @@ function MatchesScreen() {
     } catch (err) {
       setToast({ message: err instanceof Error ? err.message : 'Failed to start POV', type: 'error' })
     }
-  }
-
-  const formatTime = (tick: number, tickRate: number = 64) => {
-    const seconds = tick / tickRate
-    const minutes = Math.floor(seconds / 60)
-    const secs = Math.floor(seconds % 60)
-    return `${minutes}:${secs.toString().padStart(2, '0')}`
-  }
-
-  const formatEventDuration = (startTick: number, endTick: number | null, tickRate: number = 64) => {
-    if (!endTick) return 'N/A'
-    const duration = (endTick - startTick) / tickRate
-    return `${duration.toFixed(1)}s`
   }
 
   // Handle voice extraction for a player - just open modal
@@ -2077,12 +2051,6 @@ function MatchesScreen() {
                     // Fallback to scores (might have different name)
                     const scorePlayer = scores.find(s => s.steamId === steamId)
                     return scorePlayer?.name || steamId
-                  }
-
-                  const formatTime = (seconds: number) => {
-                    const mins = Math.floor(seconds / 60)
-                    const secs = Math.floor(seconds % 60)
-                    return `${mins}:${secs.toString().padStart(2, '0')}`
                   }
 
                   const toggleSection = (section: keyof typeof expandedSections) => {
