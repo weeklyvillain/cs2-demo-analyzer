@@ -1,17 +1,9 @@
 import { Clock, Skull, ChevronDown, ChevronUp, Play, Map as MapIcon } from 'lucide-react'
 import { t } from '../../utils/translations'
-import type { Player } from '../../types/matches'
-
-interface AfkEvent {
-  actorSteamId: string
-  startTick: number
-  endTick: number | null
-  roundIndex: number
-  meta: any
-}
+import type { Player, PlayerEvent } from '../../types/matches'
 
 interface Props {
-  events: AfkEvent[]
+  events: PlayerEvent[]
   allPlayers: Player[]
   expanded: boolean
   minSeconds: number
@@ -50,22 +42,22 @@ export default function AfkSection({
   let effectiveAfkThreshold = minSeconds
   if (events.length > 0) {
     const filtered = events.filter((e) => {
-      const duration = e.meta?.seconds || e.meta?.afkDuration || (e.endTick && e.startTick ? (e.endTick - e.startTick) / 64 : 0)
+      const duration = e.meta?.seconds || e.meta?.afkDuration || (e.endTick && e.startTick ? (e.endTick - e.startTick) / tickRate : 0)
       return duration >= effectiveAfkThreshold
     })
     if (filtered.length === 0) {
       const durations = events
-        .map(e => e.meta?.seconds || e.meta?.afkDuration || (e.endTick && e.startTick ? (e.endTick - e.startTick) / 64 : 0))
+        .map(e => e.meta?.seconds || e.meta?.afkDuration || (e.endTick && e.startTick ? (e.endTick - e.startTick) / tickRate : 0))
         .filter(d => d > 0)
         .sort((a, b) => a - b)
       if (durations.length > 0) {
-        effectiveAfkThreshold = Math.floor(durations[0])
+        effectiveAfkThreshold = durations[0]
       }
     }
   }
 
   const filteredEvents = events.filter((e) => {
-    const duration = e.meta?.seconds || e.meta?.afkDuration || (e.endTick && e.startTick ? (e.endTick - e.startTick) / 64 : 0)
+    const duration = e.meta?.seconds || e.meta?.afkDuration || (e.endTick && e.startTick ? (e.endTick - e.startTick) / tickRate : 0)
     return duration >= effectiveAfkThreshold
   })
 
@@ -154,7 +146,7 @@ export default function AfkSection({
                 </div>
                 <div className="flex flex-wrap gap-3">
                   {afks.map((afk, idx) => {
-                    const duration = afk.meta?.seconds || afk.meta?.afkDuration || (afk.endTick && afk.startTick ? (afk.endTick - afk.startTick) / 64 : 0)
+                    const duration = afk.meta?.seconds || afk.meta?.afkDuration || (afk.endTick && afk.startTick ? (afk.endTick - afk.startTick) / tickRate : 0)
                     const diedWhileAFK = afk.meta?.diedWhileAFK === true
                     const timeToFirstMovement = afk.meta?.timeToFirstMovement
                     const borderColor = diedWhileAFK ? 'border-red-500' : timeToFirstMovement !== undefined ? 'border-yellow-400' : 'border-gray-500'
@@ -205,6 +197,7 @@ export default function AfkSection({
                             </div>
                           ) : (
                             <div className="flex items-center gap-2 text-gray-500">
+                              {/* TODO: add translation key matches.endedWhenRoundEnded */}
                               <span>Ended when round ended</span>
                             </div>
                           )}
