@@ -515,7 +515,7 @@
     "globalconfig": "C:\\nvm4w\\nodejs\\etc\\npmrc",
     "global_prefix": "C:\\nvm4w\\nodejs",
     "init_module": "C:\\Users\\Filip\\.npm-init.js",
-    "local_prefix": "C:\\Users\\Filip\\Downloads\\cs-griefer-electron",
+    "local_prefix": "C:\\Users\\Filip\\Downloads\\cs-griefer-electron\\.worktrees\\matchesscreen-split",
     "node_gyp": "C:\\Users\\Filip\\AppData\\Local\\nvm\\v24.12.0\\node_modules\\npm\\node_modules\\node-gyp\\bin\\node-gyp.js",
     "npm_version": "11.6.2",
     "prefix": "C:\\nvm4w\\nodejs",

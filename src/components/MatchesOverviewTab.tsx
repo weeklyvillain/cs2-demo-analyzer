@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { Round, PlayerScore, Player } from '../types/matches'
+import type { Player } from '../types/matches'
 import StatSummaryCards from './overview/StatSummaryCards'
 import AfkSection from './overview/AfkSection'
 import DisconnectsSection from './overview/DisconnectsSection'
@@ -12,8 +12,6 @@ import BodyBlockSection from './overview/BodyBlockSection'
 interface Props {
   allEvents: any[]
   allPlayers: Player[]
-  scores: PlayerScore[]
-  rounds: Round[]
   demoPath: string | null
   tickRate: number
   hasRadarForCurrentMap: boolean
@@ -25,8 +23,6 @@ interface Props {
 export default function MatchesOverviewTab({
   allEvents,
   allPlayers,
-  scores,
-  rounds,
   demoPath,
   tickRate,
   hasRadarForCurrentMap,
@@ -83,7 +79,7 @@ export default function MatchesOverviewTab({
         onMinSecondsChange={setAfkMinSeconds}
         onSortByChange={setAfkSortBy}
         onWatchAtTick={onWatchAtTick}
-        onSetViewer2D={(v) => onSetViewer2D(v)}
+        onSetViewer2D={onSetViewer2D}
       />
       <DisconnectsSection
         events={disconnects}
@@ -94,7 +90,7 @@ export default function MatchesOverviewTab({
         hasRadar={hasRadarForCurrentMap}
         onToggle={() => toggleSection('disconnects')}
         onWatchAtTick={onWatchAtTick}
-        onSetViewer2D={(v) => onSetViewer2D(v)}
+        onSetViewer2D={onSetViewer2D}
       />
       <TeamKillsSection
         events={teamKills}
@@ -105,7 +101,7 @@ export default function MatchesOverviewTab({
         hasRadar={hasRadarForCurrentMap}
         onToggle={() => toggleSection('teamKills')}
         onWatchAtTick={onWatchAtTick}
-        onSetViewer2D={(v) => onSetViewer2D(v)}
+        onSetViewer2D={onSetViewer2D}
       />
       <TeamDamageSection
         events={teamDamage}
@@ -116,7 +112,7 @@ export default function MatchesOverviewTab({
         hasRadar={hasRadarForCurrentMap}
         onToggle={() => toggleSection('teamDamage')}
         onWatchAtTick={onWatchAtTick}
-        onSetViewer2D={(v) => onSetViewer2D(v)}
+        onSetViewer2D={onSetViewer2D}
       />
       <TeamFlashesSection
         events={teamFlashes}
@@ -129,7 +125,7 @@ export default function MatchesOverviewTab({
         onToggle={() => toggleSection('teamFlashes')}
         onMinSecondsChange={setFlashMinSeconds}
         onWatchAtTick={onWatchAtTick}
-        onSetViewer2D={(v) => onSetViewer2D(v)}
+        onSetViewer2D={onSetViewer2D}
       />
       <EconomyGriefSection
         events={economyGriefs}
@@ -140,7 +136,7 @@ export default function MatchesOverviewTab({
         hasRadar={hasRadarForCurrentMap}
         onToggle={() => toggleSection('economy')}
         onWatchAtTick={onWatchAtTick}
-        onSetViewer2D={(v) => onSetViewer2D(v)}
+        onSetViewer2D={onSetViewer2D}
       />
       <BodyBlockSection
         events={bodyBlocks}
@@ -151,7 +147,7 @@ export default function MatchesOverviewTab({
         hasRadar={hasRadarForCurrentMap}
         onToggle={() => toggleSection('bodyBlock')}
         onWatchAtTick={onWatchAtTick}
-        onSetViewer2D={(v) => onSetViewer2D(v)}
+        onSetViewer2D={onSetViewer2D}
       />
     </div>
   )
