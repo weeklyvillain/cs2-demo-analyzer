@@ -12,6 +12,9 @@ dist
 dist-electron
 release
 
+# Git worktrees
+.worktrees
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
