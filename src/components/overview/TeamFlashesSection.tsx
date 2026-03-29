@@ -1,4 +1,4 @@
-import { Zap, ChevronDown, ChevronUp, Play } from 'lucide-react'
+import { Zap, ChevronDown, ChevronUp, Play, Map as MapIcon } from 'lucide-react'
 import { t } from '../../utils/translations'
 import type { Player, PlayerEvent } from '../../types/matches'
 
@@ -9,9 +9,11 @@ interface Props {
   minSeconds: number
   demoPath: string | null
   tickRate: number
+  hasRadar: boolean
   onToggle: () => void
   onMinSecondsChange: (v: number) => void
   onWatchAtTick: (tick: number, playerName: string, roundIndex: number) => void
+  onSetViewer2D: (v: { roundIndex: number; tick: number }) => void
 }
 
 export default function TeamFlashesSection({
@@ -20,10 +22,12 @@ export default function TeamFlashesSection({
   expanded,
   minSeconds,
   demoPath,
-  tickRate: _tickRate,
+  tickRate,
+  hasRadar,
   onToggle,
   onMinSecondsChange,
   onWatchAtTick,
+  onSetViewer2D,
 }: Props) {
   const getPlayerName = (steamId: string | null | undefined) =>
     allPlayers.find(p => p.steamId === steamId)?.name || steamId || t('matches.unknown')
@@ -88,6 +92,20 @@ export default function TeamFlashesSection({
                         <span className="text-xs text-gray-400">Round {flash.roundIndex + 1}</span>
                         {demoPath && (
                           <div className="flex items-center gap-1">
+                            {hasRadar && (
+                              <button
+                                onClick={() => {
+                                  const previewSeconds = 3
+                                  const previewTicks = previewSeconds * tickRate
+                                  const targetTick = Math.max(0, flash.startTick - previewTicks)
+                                  onSetViewer2D({ roundIndex: flash.roundIndex, tick: targetTick })
+                                }}
+                                className="p-1 hover:bg-accent/20 rounded transition-colors"
+                                title={t('matches.viewIn2D')}
+                              >
+                                <MapIcon size={14} className="text-gray-400 hover:text-accent" />
+                              </button>
+                            )}
                             <button
                               onClick={() => onWatchAtTick(flash.startTick, getPlayerName(flash.actorSteamId) as string, flash.roundIndex)}
                               className="p-1 hover:bg-accent/20 rounded transition-colors"

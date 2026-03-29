@@ -1,7 +1,7 @@
 import { useState } from 'react'
-import { ChevronDown, ChevronUp, Play, Info, X } from 'lucide-react'
+import { ChevronDown, ChevronUp, Play, Info, X, Map as MapIcon } from 'lucide-react'
 import { t } from '../../utils/translations'
-import type { Player, PlayerEvent, PlayerScore } from '../../types/matches'
+import type { Player, PlayerEvent } from '../../types/matches'
 
 // Custom dollar sign icon for economy griefing
 const DollarIcon = () => (
@@ -15,23 +15,25 @@ const DollarIcon = () => (
 interface Props {
   events: PlayerEvent[]
   allPlayers: Player[]
-  scores: PlayerScore[]
   expanded: boolean
   demoPath: string | null
   tickRate: number
+  hasRadar: boolean
   onToggle: () => void
   onWatchAtTick: (tick: number, playerName: string, roundIndex: number) => void
+  onSetViewer2D: (v: { roundIndex: number; tick: number }) => void
 }
 
 export default function EconomyGriefSection({
   events,
   allPlayers,
-  scores: _scores,
   expanded,
   demoPath,
-  tickRate: _tickRate,
+  tickRate,
+  hasRadar,
   onToggle,
   onWatchAtTick,
+  onSetViewer2D,
 }: Props) {
   const [selectedEvent, setSelectedEvent] = useState<any | null>(null)
 
@@ -88,6 +90,20 @@ export default function EconomyGriefSection({
                         <span className="text-xs text-gray-400">Round {econ.roundIndex + 1}</span>
                         {demoPath && (
                           <div className="flex items-center gap-1">
+                            {hasRadar && (
+                              <button
+                                onClick={() => {
+                                  const previewSeconds = 5
+                                  const previewTicks = previewSeconds * tickRate
+                                  const targetTick = Math.max(0, econ.startTick - previewTicks)
+                                  onSetViewer2D({ roundIndex: econ.roundIndex, tick: targetTick })
+                                }}
+                                className="p-1 hover:bg-accent/20 rounded transition-colors"
+                                title={t('matches.viewIn2D')}
+                              >
+                                <MapIcon size={14} className="text-gray-400 hover:text-accent" />
+                              </button>
+                            )}
                             <button
                               onClick={() => onWatchAtTick(econ.startTick, getPlayerName(econ.actorSteamId) as string, econ.roundIndex)}
                               className="p-1 hover:bg-accent/20 rounded transition-colors"

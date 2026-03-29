@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronUp, Play } from 'lucide-react'
+import { ChevronDown, ChevronUp, Play, Map as MapIcon } from 'lucide-react'
 import { t } from '../../utils/translations'
 import type { Player, PlayerEvent } from '../../types/matches'
 
@@ -20,16 +20,24 @@ interface Props {
   events: PlayerEvent[]
   allPlayers: Player[]
   expanded: boolean
+  demoPath: string | null
   tickRate: number
+  hasRadar: boolean
   onToggle: () => void
+  onWatchAtTick: (tick: number, playerName: string, roundIndex: number) => void
+  onSetViewer2D: (v: { roundIndex: number; tick: number }) => void
 }
 
 export default function BodyBlockSection({
   events,
   allPlayers,
   expanded,
-  tickRate: _tickRate,
+  demoPath,
+  tickRate,
+  hasRadar,
   onToggle,
+  onWatchAtTick,
+  onSetViewer2D,
 }: Props) {
   const getPlayerName = (steamId: string | null | undefined) =>
     allPlayers.find(p => p.steamId === steamId)?.name || steamId || t('matches.unknown')
@@ -65,6 +73,31 @@ export default function BodyBlockSection({
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-gray-400">Round {block.roundIndex + 1}</span>
+                      {demoPath && (
+                        <div className="flex items-center gap-1">
+                          {hasRadar && (
+                            <button
+                              onClick={() => {
+                                const previewSeconds = 5
+                                const previewTicks = previewSeconds * tickRate
+                                const targetTick = Math.max(0, block.startTick - previewTicks)
+                                onSetViewer2D({ roundIndex: block.roundIndex, tick: targetTick })
+                              }}
+                              className="p-1 hover:bg-accent/20 rounded transition-colors"
+                              title={t('matches.viewIn2D')}
+                            >
+                              <MapIcon size={14} className="text-gray-400 hover:text-accent" />
+                            </button>
+                          )}
+                          <button
+                            onClick={() => onWatchAtTick(block.startTick, getPlayerName(block.actorSteamId) as string, block.roundIndex)}
+                            className="p-1 hover:bg-accent/20 rounded transition-colors"
+                            title="Watch this event in CS2"
+                          >
+                            <Play size={14} className="text-gray-400 hover:text-accent" />
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
                   <div className="text-xs text-purple-400 font-medium mb-2">

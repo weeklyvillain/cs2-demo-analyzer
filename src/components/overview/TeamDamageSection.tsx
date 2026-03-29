@@ -1,4 +1,4 @@
-import { Zap, ChevronDown, ChevronUp, Play } from 'lucide-react'
+import { Zap, ChevronDown, ChevronUp, Play, Map as MapIcon } from 'lucide-react'
 import { t } from '../../utils/translations'
 import type { Player, PlayerEvent } from '../../types/matches'
 
@@ -8,8 +8,10 @@ interface Props {
   expanded: boolean
   demoPath: string | null
   tickRate: number
+  hasRadar: boolean
   onToggle: () => void
   onWatchAtTick: (tick: number, playerName: string, roundIndex: number) => void
+  onSetViewer2D: (v: { roundIndex: number; tick: number }) => void
 }
 
 export default function TeamDamageSection({
@@ -17,9 +19,11 @@ export default function TeamDamageSection({
   allPlayers,
   expanded,
   demoPath,
-  tickRate: _tickRate,
+  tickRate,
+  hasRadar,
   onToggle,
   onWatchAtTick,
+  onSetViewer2D,
 }: Props) {
   const getPlayerName = (steamId: string | null | undefined) =>
     allPlayers.find(p => p.steamId === steamId)?.name || steamId || t('matches.unknown')
@@ -60,6 +64,20 @@ export default function TeamDamageSection({
                       <span className="text-xs text-gray-400">{t('matches.round')} {damage.roundIndex + 1}</span>
                       {demoPath && (
                         <div className="flex items-center gap-1">
+                          {hasRadar && (
+                            <button
+                              onClick={() => {
+                                const previewSeconds = 5
+                                const previewTicks = previewSeconds * tickRate
+                                const targetTick = Math.max(0, damage.startTick - previewTicks)
+                                onSetViewer2D({ roundIndex: damage.roundIndex, tick: targetTick })
+                              }}
+                              className="p-1 hover:bg-accent/20 rounded transition-colors"
+                              title={t('matches.viewIn2D')}
+                            >
+                              <MapIcon size={14} className="text-gray-400 hover:text-accent" />
+                            </button>
+                          )}
                           <button
                             onClick={() => onWatchAtTick(damage.startTick, getPlayerName(damage.actorSteamId) as string, damage.roundIndex)}
                             className="p-1 hover:bg-accent/20 rounded transition-colors"
