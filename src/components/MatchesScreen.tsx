@@ -10,7 +10,7 @@ import Toast from './Toast'
 import { ClipExportPanel } from './ClipExportPanel'
 import type { ClipRange } from './ClipExportPanel'
 import { formatDisconnectReason } from '../utils/disconnectReason'
-import { formatDuration, formatTime, formatEventDuration } from '../utils/formatters'
+import { formatDuration, formatTime, formatEventDuration, formatSeconds } from '../utils/formatters'
 import type { Match, MatchStats, PlayerScore, Round, RoundStats, PlayerEvent, ActiveTab, Player } from '../types/matches'
 import { t } from '../utils/translations'
 import { Clock, Skull, Zap, WifiOff, ChevronDown, ChevronUp, Copy, Play, Check, ArrowUp, ArrowDown, Trash2, X, Plus, Loader2, Mic, FolderOpen, Database, RefreshCw, Upload, Map as MapIcon, UserPlus, UserMinus, FileText, Download, Info } from 'lucide-react'
@@ -2342,9 +2342,9 @@ function MatchesScreen() {
                               {disconnects
                                 .sort((a, b) => a.roundIndex - b.roundIndex)
                                 .map((dc, idx) => {
-                                const disconnectTime = dc.meta?.disconnect_time ? formatTime(dc.meta.disconnect_time) : 'N/A'
+                                const disconnectTime = dc.meta?.disconnect_time ? formatSeconds(dc.meta.disconnect_time) : 'N/A'
                                 const reconnected = dc.meta?.reconnected === true
-                                const reconnectTime = dc.meta?.reconnect_time ? formatTime(dc.meta.reconnect_time) : null
+                                const reconnectTime = dc.meta?.reconnect_time ? formatSeconds(dc.meta.reconnect_time) : null
                                 const duration = dc.meta?.disconnect_duration ? `${dc.meta.disconnect_duration.toFixed(1)}s` : null
                                 const reason = formatDisconnectReason(dc.meta?.reason)
                                 

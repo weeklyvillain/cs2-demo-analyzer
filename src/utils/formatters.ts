@@ -21,6 +21,13 @@ export function formatTime(tick: number, tickRate = 64): string {
   return `${minutes}:${secs.toString().padStart(2, '0')}`
 }
 
+/** Converts a duration already in seconds to a MM:SS string */
+export function formatSeconds(seconds: number): string {
+  const mins = Math.floor(seconds / 60)
+  const secs = Math.floor(seconds % 60)
+  return `${mins}:${secs.toString().padStart(2, '0')}`
+}
+
 /** Returns the duration between two ticks as e.g. "3.2s", or "N/A" if endTick is null */
 export function formatEventDuration(startTick: number, endTick: number | null, tickRate = 64): string {
   if (!endTick) return 'N/A'
