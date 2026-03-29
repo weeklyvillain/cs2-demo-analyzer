@@ -1,0 +1,78 @@
+import { Skull, ChevronDown, ChevronUp, Play } from 'lucide-react'
+import { t } from '../../utils/translations'
+import type { Player, PlayerEvent } from '../../types/matches'
+
+interface Props {
+  events: PlayerEvent[]
+  allPlayers: Player[]
+  expanded: boolean
+  demoPath: string | null
+  tickRate: number
+  onToggle: () => void
+  onWatchAtTick: (tick: number, playerName: string, roundIndex: number) => void
+}
+
+export default function TeamKillsSection({
+  events,
+  allPlayers,
+  expanded,
+  demoPath,
+  tickRate: _tickRate,
+  onToggle,
+  onWatchAtTick,
+}: Props) {
+  const getPlayerName = (steamId: string | null | undefined) =>
+    allPlayers.find(p => p.steamId === steamId)?.name || steamId || t('matches.unknown')
+
+  if (events.length === 0) return null
+
+  return (
+    <div className="bg-surface border border-border rounded-lg p-4">
+      <div className="flex items-center justify-between mb-3">
+        <button
+          onClick={onToggle}
+          className="flex items-center gap-2 text-lg font-semibold text-white hover:text-red-400 transition-colors"
+        >
+          <Skull size={18} />
+          Team Kills
+          {expanded ? <ChevronDown size={18} className="text-gray-500" /> : <ChevronUp size={18} className="text-gray-500" />}
+        </button>
+      </div>
+      {expanded && (
+        <div className="flex flex-wrap gap-4">
+          {events
+            .sort((a, b) => a.roundIndex - b.roundIndex)
+            .map((kill, idx) => (
+              <div key={idx} className="bg-secondary border border-border rounded p-3 min-w-[300px]">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="font-medium text-white">{getPlayerName(kill.actorSteamId)}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-400">Round {kill.roundIndex + 1}</span>
+                    {demoPath && (
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => onWatchAtTick(kill.startTick, getPlayerName(kill.actorSteamId) as string, kill.roundIndex)}
+                          className="p-1 hover:bg-accent/20 rounded transition-colors"
+                          title="Watch this event in CS2"
+                        >
+                          <Play size={14} className="text-gray-400 hover:text-accent" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="text-sm text-gray-300">
+                  → {getPlayerName(kill.victimSteamId || '')}
+                </div>
+                {kill.meta?.weapon && (
+                  <div className="text-xs text-gray-400 mt-1">
+                    {kill.meta.weapon}
+                  </div>
+                )}
+              </div>
+            ))}
+        </div>
+      )}
+    </div>
+  )
+}
