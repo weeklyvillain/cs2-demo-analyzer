@@ -44,20 +44,22 @@ export interface Round {
   winner: string | null
 }
 
+export interface RoundEvent {
+  type: string
+  actorSteamId: string
+  victimSteamId: string | null
+  startTick: number
+  endTick: number | null
+  meta: any // Shape varies by event type
+}
+
 export interface RoundStats {
   roundIndex: number
   teamKills: number
   teamDamage: number
   teamFlashSeconds: number
   afkSeconds: number
-  events: Array<{
-    type: string
-    actorSteamId: string
-    victimSteamId: string | null
-    startTick: number
-    endTick: number | null
-    meta: any
-  }>
+  events: RoundEvent[]
 }
 
 export interface PlayerEvent {
@@ -69,7 +71,7 @@ export interface PlayerEvent {
   victimSteamId: string | null
   severity: number | null
   confidence: number | null
-  meta: any
+  meta: any // Shape varies by event type
 }
 
 export type ActiveTab = 'overview' | 'rounds' | 'players' | 'chat' | '2d-viewer'
