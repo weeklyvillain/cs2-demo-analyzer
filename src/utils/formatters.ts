@@ -21,7 +21,11 @@ export function formatTime(tick: number, tickRate = 64): string {
   return `${minutes}:${secs.toString().padStart(2, '0')}`
 }
 
-/** Converts a duration already in seconds to a MM:SS string */
+/**
+ * Converts a value already expressed in seconds (as pre-converted by the Go parser)
+ * to a MM:SS string. Use this — NOT formatTime — when the Go parser has already
+ * divided by tickRate (e.g. disconnect_time, reconnect_time in event meta).
+ */
 export function formatSeconds(seconds: number): string {
   const mins = Math.floor(seconds / 60)
   const secs = Math.floor(seconds % 60)
