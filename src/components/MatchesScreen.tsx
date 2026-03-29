@@ -10,6 +10,7 @@ import Toast from './Toast'
 import { ClipExportPanel } from './ClipExportPanel'
 import type { ClipRange } from './ClipExportPanel'
 import { formatDisconnectReason } from '../utils/disconnectReason'
+import type { Match, MatchStats, PlayerScore, Round, RoundStats, PlayerEvent, ActiveTab, Player } from '../types/matches'
 import { t } from '../utils/translations'
 import { Clock, Skull, Zap, WifiOff, ChevronDown, ChevronUp, Copy, Play, Check, ArrowUp, ArrowDown, Trash2, X, Plus, Loader2, Mic, FolderOpen, Database, RefreshCw, Upload, Map as MapIcon, UserPlus, UserMinus, FileText, Download, Info } from 'lucide-react'
 
@@ -114,80 +115,6 @@ function LazyMapThumbnail({
   )
 }
 
-interface Match {
-  id: string
-  map: string
-  startedAt: string | null
-  playerCount: number
-  demoPath?: string | null
-  isMissingDemo?: boolean
-  createdAtIso?: string | null
-  source?: string | null
-}
-
-interface MatchStats {
-  roundCount: number
-  duration: number // Duration in seconds
-  teamKills: number
-  teamDamage: number
-  afkSeconds: number
-  teamFlashSeconds: number
-  disconnects: number
-  tWins: number
-  ctWins: number
-}
-
-interface PlayerScore {
-  matchId: string
-  steamId: string
-  name: string
-  teamKills: number
-  teamDamage: number
-  teamFlashSeconds: number
-  afkSeconds: number
-  bodyBlockSeconds: number
-  economyGriefCount: number
-  griefScore: number
-}
-
-interface Round {
-  roundIndex: number
-  startTick: number
-  endTick: number
-  freezeEndTick: number | null
-  tWins: number
-  ctWins: number
-  winner: string | null
-}
-
-interface RoundStats {
-  roundIndex: number
-  teamKills: number
-  teamDamage: number
-  teamFlashSeconds: number
-  afkSeconds: number
-  events: Array<{
-    type: string
-    actorSteamId: string
-    victimSteamId: string | null
-    startTick: number
-    endTick: number | null
-    meta: any
-  }>
-}
-
-interface PlayerEvent {
-  type: string
-  roundIndex: number
-  startTick: number
-  endTick: number | null
-  actorSteamId: string
-  victimSteamId: string | null
-  severity: number | null
-  confidence: number | null
-  meta: any
-}
-
 function MatchesScreen() {
   const [matches, setMatches] = useState<Match[]>([])
   const [selectedMatch, setSelectedMatch] = useState<string | null>(null)
@@ -197,17 +124,9 @@ function MatchesScreen() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [toast, setToast] = useState<{ message: string; type?: 'success' | 'error' | 'info' } | null>(null)
-  const [activeTab, setActiveTab] = useState<'overview' | 'rounds' | 'players' | 'chat' | '2d-viewer'>('overview')
+  const [activeTab, setActiveTab] = useState<ActiveTab>('overview')
   const [allEvents, setAllEvents] = useState<any[]>([])
-  const [allPlayers, setAllPlayers] = useState<Array<{ 
-    steamId: string
-    name: string
-    team: string | null
-    connectedMidgame?: boolean
-    permanentDisconnect?: boolean
-    firstConnectRound?: number | null
-    disconnectRound?: number | null
-  }>>([])
+  const [allPlayers, setAllPlayers] = useState<Player[]>([])
   const [selectedPlayer, setSelectedPlayer] = useState<PlayerScore | null>(null)
   const [playerEvents, setPlayerEvents] = useState<PlayerEvent[]>([])
   const [loadingEvents, setLoadingEvents] = useState(false)
