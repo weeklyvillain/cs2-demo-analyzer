@@ -27,9 +27,9 @@ const BodyBlockIcon = () => (
 interface Props {
   afkCount: number
   teamKillCount: number
-  teamDamageTotal: number
+  teamDamageCount: number
   disconnectCount: number
-  flashSeconds: number
+  teamFlashCount: number
   economyGriefCount: number
   bodyBlockCount: number
 }
@@ -37,9 +37,9 @@ interface Props {
 export default function StatSummaryCards({
   afkCount,
   teamKillCount,
-  teamDamageTotal,
+  teamDamageCount,
   disconnectCount,
-  flashSeconds,
+  teamFlashCount,
   economyGriefCount,
   bodyBlockCount,
 }: Props) {
@@ -66,7 +66,7 @@ export default function StatSummaryCards({
           <Zap size={16} />
           <span className="text-sm font-medium">{t('matches.sections.teamDamage')}</span>
         </div>
-        <div className="text-3xl font-bold mb-1 text-accent">{teamDamageTotal}</div>
+        <div className="text-3xl font-bold mb-1 text-accent">{teamDamageCount}</div>
         <div className="text-xs text-gray-500">{t('matches.friendlyFireDamage')}</div>
       </div>
       <div className="bg-surface border border-border rounded-lg p-4">
@@ -82,7 +82,7 @@ export default function StatSummaryCards({
           <Zap size={16} />
           <span className="text-sm font-medium">{t('matches.sections.teamFlashes')}</span>
         </div>
-        <div className="text-3xl font-bold mb-1 text-accent">{flashSeconds}</div>
+        <div className="text-3xl font-bold mb-1 text-accent">{teamFlashCount}</div>
         <div className="text-xs text-gray-500">{t('matches.friendlyFlashbangs')}</div>
       </div>
       <div className="bg-surface border border-border rounded-lg p-4">
