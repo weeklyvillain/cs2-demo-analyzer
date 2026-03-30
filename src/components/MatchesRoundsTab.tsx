@@ -1,13 +1,22 @@
 import { useState } from 'react'
 import { ChevronDown, ChevronUp, Play, Map as MapIcon } from 'lucide-react'
 import { t } from '../utils/translations'
-import type { Round, RoundStats, PlayerScore, Player, RoundEvent } from '../types/matches'
+import { formatTime, formatDuration } from '../utils/formatters'
+import type { Round, RoundStats, Player, RoundEvent } from '../types/matches'
+
+const EVENT_TYPE_LABELS: Record<string, string> = {
+  TEAM_KILL: t('matches.sections.teamKills'),
+  TEAM_DAMAGE: t('matches.sections.teamDamage'),
+  TEAM_FLASH: t('matches.sections.teamFlashes'),
+  AFK_STILLNESS: t('matches.sections.afk'),
+  DISCONNECT: t('matches.sections.disconnects'),
+  ECONOMY_GRIEF: 'Economy Griefing',
+}
 
 interface Props {
   rounds: Round[]
   roundStats: Map<number, RoundStats>
   allPlayers: Player[]
-  scores: PlayerScore[]
   demoPath: string | null
   tickRate: number
   hasRadarForCurrentMap: boolean
@@ -15,22 +24,10 @@ interface Props {
   onSetViewer2D: (v: { roundIndex: number; tick: number } | null) => void
 }
 
-function getEventTypeLabels(): Record<string, string> {
-  return {
-    TEAM_KILL: t('matches.sections.teamKills'),
-    TEAM_DAMAGE: t('matches.sections.teamDamage'),
-    TEAM_FLASH: t('matches.sections.teamFlashes'),
-    AFK_STILLNESS: t('matches.sections.afk'),
-    DISCONNECT: t('matches.sections.disconnects'),
-    ECONOMY_GRIEF: 'Economy Griefing',
-  }
-}
-
-export function MatchesRoundsTab({
+export default function MatchesRoundsTab({
   rounds,
   roundStats,
   allPlayers,
-  scores,
   demoPath,
   tickRate,
   hasRadarForCurrentMap,
@@ -66,15 +63,6 @@ export function MatchesRoundsTab({
             const durationSec = tickRate > 0 ? durationTicks / tickRate : 0
             const eventCount = eventsForRound.length
             const isExpanded = expandedRounds.has(r.roundIndex)
-            const eventTypeLabels = getEventTypeLabels()
-
-            const formatRelTime = (startTick: number) => {
-              if (tickRate <= 0) return '0:00'
-              const relSeconds = Math.max(0, (startTick - r.startTick) / tickRate)
-              const m = Math.floor(relSeconds / 60)
-              const s = Math.floor(relSeconds % 60)
-              return `${m}:${s.toString().padStart(2, '0')}`
-            }
 
             return (
               <div
@@ -109,11 +97,7 @@ export function MatchesRoundsTab({
                       <div>
                         <span className="text-gray-500 mr-1">{t('matches.roundsTab.duration')}:</span>
                         <span className="text-gray-300">
-                          {durationSec >= 60
-                            ? `${Math.floor(durationSec / 60)}:${Math.floor(durationSec % 60)
-                                .toString()
-                                .padStart(2, '0')}`
-                            : `${durationSec.toFixed(1)}s`}
+                          {formatDuration(durationSec)}
                         </span>
                       </div>
                     </div>
@@ -151,10 +135,10 @@ export function MatchesRoundsTab({
                     ) : (
                       <ul className="divide-y divide-border/40">
                         {eventsForRound.map((e: RoundEvent, idx: number) => {
-                          const label = eventTypeLabels[e.type] || e.type
+                          const label = EVENT_TYPE_LABELS[e.type] || e.type
                           const actorName = e.actorSteamId ? getPlayerName(e.actorSteamId) : t('matches.unknown')
                           const victimName = e.victimSteamId ? getPlayerName(e.victimSteamId) : null
-                          const timeLabel = formatRelTime(e.startTick)
+                          const timeLabel = tickRate > 0 ? formatTime(e.startTick - r.startTick, tickRate) : '0:00'
 
                           const previewSeconds = 5
                           const previewTicks = previewSeconds * tickRate
