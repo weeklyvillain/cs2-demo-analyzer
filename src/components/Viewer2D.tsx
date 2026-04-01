@@ -1348,17 +1348,21 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
         // Draw trajectory for in-flight grenades ONLY
         // Make absolutely sure grenade hasn't exploded by checking again
         const hasExplodedCheck = grenadeEvents.some(ge => {
-          if (ge.projectileId !== projectileId || ge.tick > currentTick) return false
+          if (ge.tick > currentTick) return false
           const eventTypeLower = (ge.eventType || '').toLowerCase()
           const grenadeNameLower = (grenadeName || '').toLowerCase()
-          
+
+          // Incendiary: match by thrower since inferno entity ID ≠ projectile ID
+          if (grenadeNameLower === 'incendiary' && eventTypeLower === 'inferno_start') {
+            return ge.throwerSteamId === position.throwerSteamId
+          }
+
+          // All other types: match by projectile ID
+          if (ge.projectileId !== projectileId) return false
           if (grenadeNameLower === 'smokegrenade' && (eventTypeLower === 'smoke_start' || eventTypeLower === 'smoke_end')) return true
           if (grenadeNameLower === 'hegrenade' && eventTypeLower === 'he_explode') return true
           if (grenadeNameLower === 'decoy' && eventTypeLower === 'decoy_start') return true
           if (grenadeNameLower === 'flashbang' && eventTypeLower === 'flash_explode') return true
-          if (grenadeNameLower === 'incendiary' && eventTypeLower === 'inferno_start') {
-            return ge.throwerSteamId === position.throwerSteamId
-          }
           return false
         })
         
