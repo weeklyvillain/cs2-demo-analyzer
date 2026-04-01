@@ -55,16 +55,6 @@ interface PlayerModalProps {
   formatTime: (tick: number, tickRate?: number) => string
   formatEventDuration: (startTick: number, endTick: number | null, tickRate?: number) => string
   eventTypeLabels: Record<string, string>
-  collapsedSections: Set<string>
-  toggleSection: (eventType: string) => void
-  afkMinSeconds: number
-  flashMinSeconds: number
-  setAfkMinSeconds: (value: number) => void
-  setFlashMinSeconds: (value: number) => void
-  afkSortBy: 'round' | 'duration'
-  setAfkSortBy: (value: 'round' | 'duration') => void
-  filteredEvents: PlayerEvent[]
-  eventsByType: Record<string, PlayerEvent[]>
   rounds?: Array<{ roundIndex: number; freezeEndTick?: number | null; startTick: number }>
 }
 
@@ -82,19 +72,45 @@ export default function PlayerModal({
   formatTime,
   formatEventDuration,
   eventTypeLabels,
-  collapsedSections,
-  toggleSection,
-  afkMinSeconds,
-  flashMinSeconds,
-  setAfkMinSeconds,
-  setFlashMinSeconds,
-  afkSortBy,
-  setAfkSortBy,
-  filteredEvents,
-  eventsByType,
   rounds = [],
 }: PlayerModalProps) {
   const [selectedEconomyEvent, setSelectedEconomyEvent] = useState<PlayerEvent | null>(null)
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set())
+  const [afkMinSeconds, setAfkMinSeconds] = useState(10)
+  const [flashMinSeconds, setFlashMinSeconds] = useState(1.5)
+  const [afkSortBy, setAfkSortBy] = useState<'round' | 'duration'>('round')
+
+  const toggleSection = (eventType: string) => {
+    setCollapsedSections((prev) => {
+      const next = new Set(prev)
+      if (next.has(eventType)) next.delete(eventType)
+      else next.add(eventType)
+      return next
+    })
+  }
+
+  const filteredEvents = events.filter((event) => {
+    if (event.type === 'KILL' || event.type === 'KILLS') return false
+    if (event.type === 'AFK_STILLNESS') {
+      const duration = event.meta?.seconds || (event.endTick && event.startTick ? (event.endTick - event.startTick) / 64 : 0)
+      return duration >= afkMinSeconds
+    }
+    return true
+  })
+
+  const eventsByType = filteredEvents.reduce((acc, event) => {
+    if (!acc[event.type]) acc[event.type] = []
+    acc[event.type].push(event)
+    return acc
+  }, {} as Record<string, PlayerEvent[]>)
+
+  Object.keys(eventsByType).forEach((eventType) => {
+    if (eventType === 'TEAM_DAMAGE') {
+      eventsByType[eventType].sort((a, b) => (b.meta?.total_damage || 0) - (a.meta?.total_damage || 0))
+    } else {
+      eventsByType[eventType].sort((a, b) => a.roundIndex !== b.roundIndex ? a.roundIndex - b.roundIndex : a.startTick - b.startTick)
+    }
+  })
 
   return (
     <div
