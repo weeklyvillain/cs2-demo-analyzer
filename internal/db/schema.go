@@ -191,6 +191,19 @@ CREATE TABLE IF NOT EXISTS parser_logs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_parser_logs_match ON parser_logs(match_id);
+
+CREATE TABLE IF NOT EXISTS inferno_positions (
+	tick INTEGER NOT NULL,
+	entity_id INTEGER NOT NULL,
+	polygon TEXT NOT NULL,
+	thrower_steam_id TEXT,
+	thrower_name TEXT,
+	thrower_team TEXT,
+	PRIMARY KEY(tick, entity_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_inferno_positions_tick ON inferno_positions(tick);
+CREATE INDEX IF NOT EXISTS idx_inferno_positions_entity ON inferno_positions(entity_id);
 `
 
 // runMigrations runs database migrations to add new columns to existing tables.

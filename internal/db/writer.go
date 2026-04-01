@@ -414,6 +414,16 @@ type GrenadeEvent struct {
 	ThrowerTeam    *string
 }
 
+// InfernoPosition represents a sampled polygon of a molotov/incendiary fire at a specific tick.
+type InfernoPosition struct {
+	Tick           int
+	EntityID       int
+	Polygon        string  // JSON: [[x1,y1],[x2,y2],...]
+	ThrowerSteamID *string
+	ThrowerName    *string
+	ThrowerTeam    *string
+}
+
 // InsertGrenadePositions inserts multiple grenade positions in a transaction.
 func (w *Writer) InsertGrenadePositions(ctx context.Context, positions []GrenadePosition) error {
 	if len(positions) == 0 {
@@ -490,6 +500,46 @@ func (w *Writer) InsertGrenadeEvents(ctx context.Context, events []GrenadeEvent)
 		)
 		if err != nil {
 			return fmt.Errorf("failed to insert grenade event: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return nil
+}
+
+// InsertInfernoPositions inserts multiple inferno polygon samples in a transaction.
+func (w *Writer) InsertInfernoPositions(ctx context.Context, positions []InfernoPosition) error {
+	if len(positions) == 0 {
+		return nil
+	}
+
+	tx, err := w.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	query := `
+		INSERT OR REPLACE INTO inferno_positions (tick, entity_id, polygon, thrower_steam_id, thrower_name, thrower_team)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`
+
+	stmt, err := tx.PrepareContext(ctx, query)
+	if err != nil {
+		return fmt.Errorf("failed to prepare statement: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, p := range positions {
+		_, err := stmt.ExecContext(ctx,
+			p.Tick, p.EntityID, p.Polygon,
+			p.ThrowerSteamID, p.ThrowerName, p.ThrowerTeam,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to insert inferno position: %w", err)
 		}
 	}
 
