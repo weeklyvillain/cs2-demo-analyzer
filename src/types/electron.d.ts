@@ -27,6 +27,16 @@ export interface ElectronAPI {
   getMatchPositionsForRound: (matchId: string, roundIndex: number) => Promise<{ matchId: string; roundIndex: number; positions: Array<{ tick: number; steamid: string; x: number; y: number; z: number; yaw: number | null; viewDirX: number | null; viewDirY: number | null; team: string | null; name: string | null }> }>
   getGrenadePositionsForRound: (matchId: string, roundIndex: number) => Promise<{ matchId: string; roundIndex: number; positions: Array<{ tick: number; projectileId: number; grenadeName: string; x: number; y: number; z: number; throwerSteamId: string | null; throwerName: string | null; throwerTeam: string | null }> }>
   getGrenadeEventsForRound: (matchId: string, roundIndex: number) => Promise<{ matchId: string; roundIndex: number; events: Array<{ tick: number; eventType: string; projectileId: number; grenadeName: string; x: number; y: number; z: number; throwerSteamId: string | null; throwerName: string | null; throwerTeam: string | null }> }>
+  getInfernoPositionsForRound: (matchId: string, startTick: number, endTick: number) => Promise<{
+    positions: Array<{
+      tick: number
+      entityId: number
+      polygon: [number, number][]
+      throwerSteamId: string | null
+      throwerName: string | null
+      throwerTeam: string | null
+    }>
+  }>
   getRadarImage: (mapName: string) => Promise<{ success: boolean; data?: string; error?: string }>
   getPlayerImage: (team: 'T' | 'CT') => Promise<{ success: boolean; data?: string; error?: string }>
   getKeyboardIcon: (iconName: string) => Promise<{ success: boolean; data?: string; error?: string }>

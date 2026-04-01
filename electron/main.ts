@@ -2311,6 +2311,68 @@ ipcMain.handle('matches:grenadeEventsForRound', async (_, matchId: string, round
   }
 })
 
+ipcMain.handle('matches:infernoPositionsForRound', async (_, matchId: string, startTick: number, endTick: number) => {
+  const appDataPath = app.getPath('userData')
+  const matchesDir = path.join(appDataPath, 'matches')
+  const dbPath = path.join(matchesDir, `${matchId}.sqlite`)
+
+  if (!fs.existsSync(dbPath)) {
+    throw new Error(`Match ${matchId} not found`)
+  }
+
+  try {
+    const initSqlJs = require('sql.js')
+    const SQL = await initSqlJs()
+    const buffer = fs.readFileSync(dbPath)
+    const db = new SQL.Database(buffer)
+
+    const positions: Array<{
+      tick: number
+      entityId: number
+      polygon: [number, number][]
+      throwerSteamId: string | null
+      throwerName: string | null
+      throwerTeam: string | null
+    }> = []
+
+    try {
+      const stmt = db.prepare(`
+        SELECT tick, entity_id, polygon, thrower_steam_id, thrower_name, thrower_team
+        FROM inferno_positions
+        WHERE tick BETWEEN ? AND ?
+        ORDER BY tick, entity_id
+      `)
+      stmt.bind([startTick, endTick])
+      while (stmt.step()) {
+        const row = stmt.getAsObject()
+        let polygon: [number, number][] = []
+        try {
+          polygon = JSON.parse(row.polygon as string)
+        } catch {
+          // skip malformed polygon
+        }
+        positions.push({
+          tick: row.tick as number,
+          entityId: row.entity_id as number,
+          polygon,
+          throwerSteamId: (row.thrower_steam_id as string) || null,
+          throwerName: (row.thrower_name as string) || null,
+          throwerTeam: (row.thrower_team as string) || null,
+        })
+      }
+      stmt.free()
+    } catch (tableErr) {
+      // Table doesn't exist (old un-reparsed DB) — return empty, don't throw
+      console.warn('inferno_positions table not found, returning empty:', tableErr)
+    }
+
+    db.close()
+    return { positions }
+  } catch (err) {
+    throw new Error(`Failed to get inferno positions: ${err}`)
+  }
+})
+
 ipcMain.handle('matches:shotsForRound', async (_, matchId: string, roundIndex: number) => {
   const appDataPath = app.getPath('userData')
   const matchesDir = path.join(appDataPath, 'matches')

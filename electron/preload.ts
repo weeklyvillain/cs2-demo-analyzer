@@ -28,6 +28,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getGrenadePositionsForRound: (matchId: string, roundIndex: number) => ipcRenderer.invoke('matches:grenadePositionsForRound', matchId, roundIndex),
   getGrenadeEventsForRound: (matchId: string, roundIndex: number) => ipcRenderer.invoke('matches:grenadeEventsForRound', matchId, roundIndex),
   getShotsForRound: (matchId: string, roundIndex: number) => ipcRenderer.invoke('matches:shotsForRound', matchId, roundIndex),
+  getInfernoPositionsForRound: (matchId: string, startTick: number, endTick: number) =>
+    ipcRenderer.invoke('matches:infernoPositionsForRound', matchId, startTick, endTick),
   deleteMatches: (matchIds: string[]) => ipcRenderer.invoke('matches:delete', matchIds),
   deleteAllMatches: () => ipcRenderer.invoke('matches:deleteAll'),
   trimMatchesToCap: (cap: number) => ipcRenderer.invoke('matches:trimToCap', cap),
