@@ -1956,10 +1956,12 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 
 		// Sample inferno (molotov/incendiary) convex hull polygons each tick
 		if eventsFile == nil && currentRound != nil {
-			for entityID, inferno := range gs.Infernos() {
+			for _, inferno := range gs.Infernos() {
 				if inferno == nil {
 					continue
 				}
+
+				entityID := int(inferno.UniqueID())
 
 				hull := inferno.Fires().Active().ConvexHull2D()
 				if len(hull) == 0 {
@@ -2496,7 +2498,7 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 			if e.Inferno != nil {
 				// Use the entity ID from the sendtables entity — this uniquely identifies
 				// the inferno for correlation with per-tick polygon samples.
-				entityID = e.Inferno.Entity.ID()
+				entityID = int(e.Inferno.UniqueID())
 				if e.Inferno.Thrower() != nil {
 					thrower := e.Inferno.Thrower()
 					steamID := fmt.Sprintf("%d", thrower.SteamID64)
@@ -2571,7 +2573,7 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 			var throwerTeam *string
 			if e.Inferno != nil {
 				// Use the entity ID from the sendtables entity for correlation with polygon samples.
-				entityID = e.Inferno.Entity.ID()
+				entityID = int(e.Inferno.UniqueID())
 				if e.Inferno.Thrower() != nil {
 					thrower := e.Inferno.Thrower()
 					steamID := fmt.Sprintf("%d", thrower.SteamID64)
