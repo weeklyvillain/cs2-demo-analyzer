@@ -2283,7 +2283,7 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 					RoundIndex:     currentRound.RoundIndex,
 					Tick:           tick,
 					EventType:      "decoy_expire",
-					ProjectileID:   0, // DecoyExpired has no Projectile field
+					ProjectileID:   uint64(e.GrenadeEntityID),
 					GrenadeName:    "decoy",
 					X:              0,
 					Y:              0,
@@ -2308,7 +2308,7 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 					RoundIndex:     currentRound.RoundIndex,
 					Tick:           tick,
 					EventType:      "decoy_expire",
-					ProjectileID:   0, // DecoyExpired has no Projectile field
+					ProjectileID:   uint64(e.GrenadeEntityID),
 					GrenadeName:    "decoy",
 					X:              0,
 					Y:              0,
@@ -2352,7 +2352,7 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 					RoundIndex:     currentRound.RoundIndex,
 					Tick:           tick,
 					EventType:      "smoke_expire",
-					ProjectileID:   0, // SmokeExpired has no Projectile field
+					ProjectileID:   uint64(e.GrenadeEntityID),
 					GrenadeName:    "smokegrenade",
 					X:              0,
 					Y:              0,
@@ -2377,7 +2377,7 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 					RoundIndex:     currentRound.RoundIndex,
 					Tick:           tick,
 					EventType:      "smoke_expire",
-					ProjectileID:   0, // SmokeExpired has no Projectile field
+					ProjectileID:   uint64(e.GrenadeEntityID),
 					GrenadeName:    "smokegrenade",
 					X:              0,
 					Y:              0,
