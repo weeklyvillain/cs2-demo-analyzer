@@ -1378,6 +1378,28 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
       
       // When a grenade explodes we don't draw its explosion or trajectory (handled in loop above)
 
+      // Draw active smoke clouds
+      const smokeEvents = grenadeEvents.filter(ge => ge.eventType === 'smoke_start' && ge.tick <= currentTick)
+      for (const smokeStart of smokeEvents) {
+        const smokeExpireEvent = grenadeEvents.find(ge =>
+          ge.eventType === 'smoke_expire' &&
+          ge.projectileId === smokeStart.projectileId
+        )
+        const isExpired = smokeExpireEvent !== undefined && smokeExpireEvent.tick <= currentTick
+        if (isExpired) continue
+
+        const coords = transformCoords(smokeStart.x, smokeStart.y, smokeStart.z)
+        const radius = zoomedSize(144)
+        ctx.beginPath()
+        ctx.arc(coords.x, coords.y, radius, 0, 2 * Math.PI)
+        ctx.closePath()
+        ctx.fillStyle = 'rgba(180, 180, 180, 0.45)'
+        ctx.fill()
+        ctx.strokeStyle = 'rgba(200, 200, 200, 0.6)'
+        ctx.lineWidth = zoomedSize(1)
+        ctx.stroke()
+      }
+
       // Draw shots (animated lines extending from player position)
       // Use a ref to track animated shots that fade out over time
       if (!(ctx as any).animatedShots) {
