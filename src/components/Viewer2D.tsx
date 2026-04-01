@@ -1466,6 +1466,52 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
         ctx.stroke()
       }
 
+      // Draw HE and flashbang explosion rings (24-tick fade)
+      const explosionEvents = grenadeEvents.filter(ge =>
+        (ge.eventType === 'he_explode' || ge.eventType === 'flash_explode') &&
+        ge.tick <= currentTick &&
+        currentTick - ge.tick <= 24
+      )
+      for (const explosion of explosionEvents) {
+        const age = currentTick - explosion.tick        // 0..24
+        const progress = age / 24                       // 0..1
+        const opacity = 1 - progress
+        const maxRadius = explosion.eventType === 'he_explode' ? zoomedSize(128) : zoomedSize(80)
+        const radius = maxRadius * progress
+
+        const coords = transformCoords(explosion.x, explosion.y, explosion.z)
+        ctx.beginPath()
+        ctx.arc(coords.x, coords.y, radius, 0, 2 * Math.PI)
+        ctx.closePath()
+        if (explosion.eventType === 'he_explode') {
+          ctx.strokeStyle = `rgba(255, 200, 50, ${opacity})`
+        } else {
+          ctx.strokeStyle = `rgba(255, 255, 200, ${opacity})`
+        }
+        ctx.lineWidth = zoomedSize(2)
+        ctx.stroke()
+      }
+
+      // Draw active decoy dots (decoy_start → decoy_expire)
+      const decoyStarts = grenadeEvents.filter(ge =>
+        ge.eventType === 'decoy_start' && ge.tick <= currentTick
+      )
+      for (const decoyStart of decoyStarts) {
+        const decoyExpire = grenadeEvents.find(ge =>
+          ge.eventType === 'decoy_expire' &&
+          ge.throwerSteamId === decoyStart.throwerSteamId &&
+          ge.tick >= decoyStart.tick
+        )
+        if (decoyExpire !== undefined && decoyExpire.tick <= currentTick) continue
+
+        const coords = transformCoords(decoyStart.x, decoyStart.y, decoyStart.z)
+        ctx.beginPath()
+        ctx.arc(coords.x, coords.y, zoomedSize(5), 0, 2 * Math.PI)
+        ctx.closePath()
+        ctx.fillStyle = 'rgba(100, 220, 100, 0.9)'
+        ctx.fill()
+      }
+
       // Draw shots (animated lines extending from player position)
       // Use a ref to track animated shots that fade out over time
       if (!(ctx as any).animatedShots) {
