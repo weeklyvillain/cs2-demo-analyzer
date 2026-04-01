@@ -15,7 +15,6 @@ import (
 
 	_ "github.com/mattn/go-sqlite3" // SQLite driver
 
-	"github.com/golang/geo/r3"
 	dem "github.com/markus-wa/demoinfocs-golang/v5/pkg/demoinfocs"
 	common "github.com/markus-wa/demoinfocs-golang/v5/pkg/demoinfocs/common"
 	events "github.com/markus-wa/demoinfocs-golang/v5/pkg/demoinfocs/events"
@@ -46,6 +45,7 @@ type MatchData struct {
 	GrenadePositions []GrenadePositionData
 	GrenadeEvents    []GrenadeEventData
 	Shots            []ShotData
+	InfernoPositions []InfernoPositionData
 }
 
 // PlayerPositionData contains player position at a specific tick.
@@ -120,6 +120,16 @@ type GrenadeEventData struct {
 	X              float64
 	Y              float64
 	Z              float64
+	ThrowerSteamID *string
+	ThrowerName    *string
+	ThrowerTeam    *string
+}
+
+// InfernoPositionData contains a sampled inferno polygon at a specific tick.
+type InfernoPositionData struct {
+	Tick           int
+	EntityID       int
+	Polygon        string  // JSON: [[x1,y1],[x2,y2],...]
 	ThrowerSteamID *string
 	ThrowerName    *string
 	ThrowerTeam    *string
@@ -200,6 +210,7 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 	InsertGrenadePositions(context.Context, []db.GrenadePosition) error
 	InsertGrenadeEvents(context.Context, []db.GrenadeEvent) error
 	InsertShots(context.Context, []db.Shot) error
+	InsertInfernoPositions(context.Context, []db.InfernoPosition) error
 }, matchID string, eventsFile *os.File, steamIDSet map[string]bool) (*MatchData, error) {
 	// Collection modes:
 	// 1. JSON streaming mode: eventsFile != nil, writer = nil, matchID = ""
@@ -228,7 +239,8 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 		data.Positions = make([]PlayerPositionData, 0)
 		data.GrenadePositions = make([]GrenadePositionData, 0)
 		data.GrenadeEvents = make([]GrenadeEventData, 0)
-		data.Shots = make([]ShotData, 0) // Also allocate Shots in in-memory mode
+		data.Shots = make([]ShotData, 0)             // Also allocate Shots in in-memory mode
+		data.InfernoPositions = make([]InfernoPositionData, 0)
 	}
 	// JSON mode and DB streaming mode: slices remain nil - data is streamed, never accumulated
 
@@ -261,6 +273,9 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 
 	shotBuffer := make([]db.Shot, 0, 5000) // Buffer up to 5000 shots
 	const shotBatchSize = 5000             // Flush every 5000 shots (was 1000)
+
+	infernoPositionBuffer := make([]db.InfernoPosition, 0, 2000) // Buffer up to 2000 inferno positions
+	const infernoPositionBatchSize = 2000                        // Flush every 2000 inferno positions
 
 	// Helper function to flush all buffers
 	flushBuffers := func() error {
@@ -306,6 +321,14 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 				return fmt.Errorf("failed to flush shot buffer: %w", err)
 			}
 			shotBuffer = shotBuffer[:0]
+		}
+
+		// Flush inferno positions
+		if len(infernoPositionBuffer) > 0 {
+			if err := writer.InsertInfernoPositions(ctx, infernoPositionBuffer); err != nil {
+				return fmt.Errorf("failed to flush inferno position buffer: %w", err)
+			}
+			infernoPositionBuffer = infernoPositionBuffer[:0]
 		}
 
 		// Force garbage collection after flushing buffers to free memory
@@ -1930,6 +1953,75 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 				})
 			}
 		}
+
+		// Sample inferno (molotov/incendiary) convex hull polygons each tick
+		if eventsFile == nil && currentRound != nil {
+			for entityID, inferno := range gs.Infernos() {
+				if inferno == nil {
+					continue
+				}
+
+				hull := inferno.Fires().Active().ConvexHull2D()
+				if len(hull) == 0 {
+					continue
+				}
+
+				// Serialize polygon as JSON [[x,y],...]
+				points := make([][2]float64, 0, len(hull))
+				for _, pt := range hull {
+					points = append(points, [2]float64{pt.X, pt.Y})
+				}
+				polygonJSON, err := json.Marshal(points)
+				if err != nil {
+					continue
+				}
+
+				var throwerSteamID *string
+				var throwerName *string
+				var throwerTeam *string
+				if inferno.Thrower() != nil {
+					thrower := inferno.Thrower()
+					steamID := fmt.Sprintf("%d", thrower.SteamID64)
+					throwerSteamID = &steamID
+					name := thrower.Name
+					throwerName = &name
+					team := getTeamString(thrower.Team)
+					throwerTeam = &team
+				}
+
+				// Filter by Steam ID set if provided
+				if steamIDSet != nil && (throwerSteamID == nil || !steamIDSet[*throwerSteamID]) {
+					continue
+				}
+
+				if writer != nil && matchID != "" {
+					infernoPositionBuffer = append(infernoPositionBuffer, db.InfernoPosition{
+						Tick:           tick,
+						EntityID:       entityID,
+						Polygon:        string(polygonJSON),
+						ThrowerSteamID: throwerSteamID,
+						ThrowerName:    throwerName,
+						ThrowerTeam:    throwerTeam,
+					})
+					if len(infernoPositionBuffer) >= infernoPositionBatchSize {
+						if err := writer.InsertInfernoPositions(ctx, infernoPositionBuffer); err != nil {
+							fmt.Fprintf(os.Stderr, "WARN: Failed to insert inferno positions batch: %v\n", err)
+						} else {
+							infernoPositionBuffer = infernoPositionBuffer[:0]
+						}
+					}
+				} else if data.InfernoPositions != nil {
+					data.InfernoPositions = append(data.InfernoPositions, InfernoPositionData{
+						Tick:           tick,
+						EntityID:       entityID,
+						Polygon:        string(polygonJSON),
+						ThrowerSteamID: throwerSteamID,
+						ThrowerName:    throwerName,
+						ThrowerTeam:    throwerTeam,
+					})
+				}
+			}
+		}
 	})
 
 	// Track grenade events (skip in JSON mode - not needed for output)
@@ -2397,18 +2489,14 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 			updateTick()
 			tick := getCurrentTick()
 
-			// InfernoStart has Entity field
-			// Inferno doesn't have Position() method - we'll track position from grenade projectile instead
-			// For now, use zero position and rely on grenade positions for actual location
-			var pos r3.Vector
+			var entityID int
 			var throwerSteamID *string
 			var throwerName *string
 			var throwerTeam *string
 			if e.Inferno != nil {
-				// Inferno doesn't expose Position() directly
-				// We'll use (0,0,0) as placeholder - actual position tracked via grenade positions
-				pos = r3.Vector{X: 0, Y: 0, Z: 0}
-				// Thrower is a method that returns the player who threw it
+				// Use the entity ID from the sendtables entity — this uniquely identifies
+				// the inferno for correlation with per-tick polygon samples.
+				entityID = e.Inferno.Entity.ID()
 				if e.Inferno.Thrower() != nil {
 					thrower := e.Inferno.Thrower()
 					steamID := fmt.Sprintf("%d", thrower.SteamID64)
@@ -2432,11 +2520,11 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 					RoundIndex:     currentRound.RoundIndex,
 					Tick:           tick,
 					EventType:      "inferno_start",
-					ProjectileID:   0, // InfernoStart doesn't have ProjectileID
+					ProjectileID:   uint64(entityID),
 					GrenadeName:    "incendiary",
-					X:              float64(pos.X),
-					Y:              float64(pos.Y),
-					Z:              float64(pos.Z),
+					X:              0,
+					Y:              0,
+					Z:              0,
 					ThrowerSteamID: throwerSteamID,
 					ThrowerName:    throwerName,
 					ThrowerTeam:    throwerTeam,
@@ -2457,11 +2545,11 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 					RoundIndex:     currentRound.RoundIndex,
 					Tick:           tick,
 					EventType:      "inferno_start",
-					ProjectileID:   0, // InfernoStart doesn't have ProjectileID
+					ProjectileID:   uint64(entityID),
 					GrenadeName:    "incendiary",
-					X:              float64(pos.X),
-					Y:              float64(pos.Y),
-					Z:              float64(pos.Z),
+					X:              0,
+					Y:              0,
+					Z:              0,
 					ThrowerSteamID: throwerSteamID,
 					ThrowerName:    throwerName,
 					ThrowerTeam:    throwerTeam,
@@ -2477,17 +2565,13 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 			updateTick()
 			tick := getCurrentTick()
 
-			// InfernoExpired has Entity field
-			// Get position from the inferno entity - Inferno doesn't have Position() method
-			var pos r3.Vector
+			var entityID int
 			var throwerSteamID *string
 			var throwerName *string
 			var throwerTeam *string
 			if e.Inferno != nil {
-				// Inferno doesn't expose Position() directly
-				// For now, we'll set to zero and track via grenade positions instead
-				pos = r3.Vector{X: 0, Y: 0, Z: 0}
-				// Thrower is a method that returns the player who threw it
+				// Use the entity ID from the sendtables entity for correlation with polygon samples.
+				entityID = e.Inferno.Entity.ID()
 				if e.Inferno.Thrower() != nil {
 					thrower := e.Inferno.Thrower()
 					steamID := fmt.Sprintf("%d", thrower.SteamID64)
@@ -2511,11 +2595,11 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 					RoundIndex:     currentRound.RoundIndex,
 					Tick:           tick,
 					EventType:      "inferno_expire",
-					ProjectileID:   0, // InfernoExpire doesn't have ProjectileID
+					ProjectileID:   uint64(entityID),
 					GrenadeName:    "incendiary",
-					X:              float64(pos.X),
-					Y:              float64(pos.Y),
-					Z:              float64(pos.Z),
+					X:              0,
+					Y:              0,
+					Z:              0,
 					ThrowerSteamID: throwerSteamID,
 					ThrowerName:    throwerName,
 					ThrowerTeam:    throwerTeam,
@@ -2536,11 +2620,11 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 					RoundIndex:     currentRound.RoundIndex,
 					Tick:           tick,
 					EventType:      "inferno_expire",
-					ProjectileID:   0, // InfernoExpire doesn't have ProjectileID
+					ProjectileID:   uint64(entityID),
 					GrenadeName:    "incendiary",
-					X:              float64(pos.X),
-					Y:              float64(pos.Y),
-					Z:              float64(pos.Z),
+					X:              0,
+					Y:              0,
+					Z:              0,
 					ThrowerSteamID: throwerSteamID,
 					ThrowerName:    throwerName,
 					ThrowerTeam:    throwerTeam,
