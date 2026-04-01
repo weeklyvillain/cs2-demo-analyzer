@@ -2094,40 +2094,50 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 			}
 		})
 
-		// Flashbang explosion
-		p.parser.RegisterEventHandler(func(e events.FlashExplode) {
+		// Flashbang explosion — use GrenadeProjectileDestroy to get real projectile UniqueID
+		p.parser.RegisterEventHandler(func(e events.GrenadeProjectileDestroy) {
+			if e.Projectile == nil {
+				return
+			}
+			weaponInstance := e.Projectile.WeaponInstance
+			if weaponInstance == nil {
+				return
+			}
+			grenadeName := strings.ToLower(weaponInstance.Type.String())
+			if !strings.Contains(grenadeName, "flash") && !strings.Contains(grenadeName, "flashbang") {
+				return
+			}
 			if currentRound == nil {
 				return
 			}
 			updateTick()
 			tick := getCurrentTick()
 
-			pos := e.Position
+			pos := e.Projectile.Position()
 			var throwerSteamID *string
 			var throwerName *string
 			var throwerTeam *string
-			if e.Thrower != nil {
-				steamID := fmt.Sprintf("%d", e.Thrower.SteamID64)
+			if e.Projectile.Thrower != nil {
+				steamID := fmt.Sprintf("%d", e.Projectile.Thrower.SteamID64)
 				throwerSteamID = &steamID
-				name := e.Thrower.Name
+				name := e.Projectile.Thrower.Name
 				throwerName = &name
-				team := getTeamString(e.Thrower.Team)
+				team := getTeamString(e.Projectile.Thrower.Team)
 				throwerTeam = &team
 			}
 
-			// Filter by Steam ID set if provided - skip grenade events from players not in the set
+			// Filter by Steam ID set if provided
 			if steamIDSet != nil && (throwerSteamID == nil || !steamIDSet[*throwerSteamID]) {
 				return
 			}
 
-			// Stream grenade event to database if writer is available
 			if writer != nil && matchID != "" {
 				grenadeEventBuffer = append(grenadeEventBuffer, db.GrenadeEvent{
 					MatchID:        matchID,
 					RoundIndex:     currentRound.RoundIndex,
 					Tick:           tick,
 					EventType:      "flash_explode",
-					ProjectileID:   0, // FlashExplode doesn't have ProjectileID, use 0
+					ProjectileID:   uint64(e.Projectile.UniqueID()),
 					GrenadeName:    "flashbang",
 					X:              float64(pos.X),
 					Y:              float64(pos.Y),
@@ -2136,8 +2146,6 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 					ThrowerName:    throwerName,
 					ThrowerTeam:    throwerTeam,
 				})
-
-				// Flush if buffer is full
 				if len(grenadeEventBuffer) >= grenadeEventBatchSize {
 					if err := writer.InsertGrenadeEvents(ctx, grenadeEventBuffer); err != nil {
 						fmt.Fprintf(os.Stderr, "WARN: Failed to insert grenade events batch: %v\n", err)
@@ -2146,13 +2154,11 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 					}
 				}
 			} else if data.GrenadeEvents != nil {
-				// Fallback: store in memory ONLY if slice is allocated (in-memory mode)
-				// In JSON mode and DB streaming mode, data.GrenadeEvents is nil, so this never executes
 				data.GrenadeEvents = append(data.GrenadeEvents, GrenadeEventData{
 					RoundIndex:     currentRound.RoundIndex,
 					Tick:           tick,
 					EventType:      "flash_explode",
-					ProjectileID:   0, // FlashExplode doesn't have ProjectileID, use 0
+					ProjectileID:   uint64(e.Projectile.UniqueID()),
 					GrenadeName:    "flashbang",
 					X:              float64(pos.X),
 					Y:              float64(pos.Y),
@@ -2164,25 +2170,41 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 			}
 		})
 
-		// Decoy start
-		p.parser.RegisterEventHandler(func(e events.DecoyStart) {
+		// Decoy start — use GrenadeProjectileDestroy to get real projectile UniqueID
+		p.parser.RegisterEventHandler(func(e events.GrenadeProjectileDestroy) {
+			if e.Projectile == nil {
+				return
+			}
+			weaponInstance := e.Projectile.WeaponInstance
+			if weaponInstance == nil {
+				return
+			}
+			grenadeName := strings.ToLower(weaponInstance.Type.String())
+			if !strings.Contains(grenadeName, "decoy") {
+				return
+			}
 			if currentRound == nil {
 				return
 			}
 			updateTick()
 			tick := getCurrentTick()
 
-			pos := e.Position
+			pos := e.Projectile.Position()
 			var throwerSteamID *string
 			var throwerName *string
 			var throwerTeam *string
-			if e.Thrower != nil {
-				steamID := fmt.Sprintf("%d", e.Thrower.SteamID64)
+			if e.Projectile.Thrower != nil {
+				steamID := fmt.Sprintf("%d", e.Projectile.Thrower.SteamID64)
 				throwerSteamID = &steamID
-				name := e.Thrower.Name
+				name := e.Projectile.Thrower.Name
 				throwerName = &name
-				team := getTeamString(e.Thrower.Team)
+				team := getTeamString(e.Projectile.Thrower.Team)
 				throwerTeam = &team
+			}
+
+			// Filter by Steam ID set if provided
+			if steamIDSet != nil && (throwerSteamID == nil || !steamIDSet[*throwerSteamID]) {
+				return
 			}
 
 			// Stream grenade event to database if writer is available
@@ -2192,7 +2214,7 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 					RoundIndex:     currentRound.RoundIndex,
 					Tick:           tick,
 					EventType:      "decoy_start",
-					ProjectileID:   0, // DecoyStart doesn't have ProjectileID, use 0
+					ProjectileID:   uint64(e.Projectile.UniqueID()),
 					GrenadeName:    "decoy",
 					X:              float64(pos.X),
 					Y:              float64(pos.Y),
@@ -2217,11 +2239,149 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 					RoundIndex:     currentRound.RoundIndex,
 					Tick:           tick,
 					EventType:      "decoy_start",
-					ProjectileID:   0, // DecoyStart doesn't have ProjectileID, use 0
+					ProjectileID:   uint64(e.Projectile.UniqueID()),
 					GrenadeName:    "decoy",
 					X:              float64(pos.X),
 					Y:              float64(pos.Y),
 					Z:              float64(pos.Z),
+					ThrowerSteamID: throwerSteamID,
+					ThrowerName:    throwerName,
+					ThrowerTeam:    throwerTeam,
+				})
+			}
+		})
+
+		// Decoy expire
+		p.parser.RegisterEventHandler(func(e events.DecoyExpired) {
+			if currentRound == nil {
+				return
+			}
+			updateTick()
+			tick := getCurrentTick()
+
+			var throwerSteamID *string
+			var throwerName *string
+			var throwerTeam *string
+			if e.Thrower != nil {
+				steamID := fmt.Sprintf("%d", e.Thrower.SteamID64)
+				throwerSteamID = &steamID
+				name := e.Thrower.Name
+				throwerName = &name
+				team := getTeamString(e.Thrower.Team)
+				throwerTeam = &team
+			}
+
+			// Filter by Steam ID set if provided
+			if steamIDSet != nil && (throwerSteamID == nil || !steamIDSet[*throwerSteamID]) {
+				return
+			}
+
+			// Stream grenade event to database if writer is available
+			if writer != nil && matchID != "" {
+				grenadeEventBuffer = append(grenadeEventBuffer, db.GrenadeEvent{
+					MatchID:        matchID,
+					RoundIndex:     currentRound.RoundIndex,
+					Tick:           tick,
+					EventType:      "decoy_expire",
+					ProjectileID:   0, // DecoyExpired has no Projectile field
+					GrenadeName:    "decoy",
+					X:              0,
+					Y:              0,
+					Z:              0,
+					ThrowerSteamID: throwerSteamID,
+					ThrowerName:    throwerName,
+					ThrowerTeam:    throwerTeam,
+				})
+
+				// Flush if buffer is full
+				if len(grenadeEventBuffer) >= grenadeEventBatchSize {
+					if err := writer.InsertGrenadeEvents(ctx, grenadeEventBuffer); err != nil {
+						fmt.Fprintf(os.Stderr, "WARN: Failed to insert grenade events batch: %v\n", err)
+					} else {
+						grenadeEventBuffer = grenadeEventBuffer[:0]
+					}
+				}
+			} else if data.GrenadeEvents != nil {
+				// Fallback: store in memory ONLY if slice is allocated (in-memory mode)
+				// In JSON mode and DB streaming mode, data.GrenadeEvents is nil, so this never executes
+				data.GrenadeEvents = append(data.GrenadeEvents, GrenadeEventData{
+					RoundIndex:     currentRound.RoundIndex,
+					Tick:           tick,
+					EventType:      "decoy_expire",
+					ProjectileID:   0, // DecoyExpired has no Projectile field
+					GrenadeName:    "decoy",
+					X:              0,
+					Y:              0,
+					Z:              0,
+					ThrowerSteamID: throwerSteamID,
+					ThrowerName:    throwerName,
+					ThrowerTeam:    throwerTeam,
+				})
+			}
+		})
+
+		// Smoke expire
+		p.parser.RegisterEventHandler(func(e events.SmokeExpired) {
+			if currentRound == nil {
+				return
+			}
+			updateTick()
+			tick := getCurrentTick()
+
+			var throwerSteamID *string
+			var throwerName *string
+			var throwerTeam *string
+			if e.Thrower != nil {
+				steamID := fmt.Sprintf("%d", e.Thrower.SteamID64)
+				throwerSteamID = &steamID
+				name := e.Thrower.Name
+				throwerName = &name
+				team := getTeamString(e.Thrower.Team)
+				throwerTeam = &team
+			}
+
+			// Filter by Steam ID set if provided
+			if steamIDSet != nil && (throwerSteamID == nil || !steamIDSet[*throwerSteamID]) {
+				return
+			}
+
+			// Stream grenade event to database if writer is available
+			if writer != nil && matchID != "" {
+				grenadeEventBuffer = append(grenadeEventBuffer, db.GrenadeEvent{
+					MatchID:        matchID,
+					RoundIndex:     currentRound.RoundIndex,
+					Tick:           tick,
+					EventType:      "smoke_expire",
+					ProjectileID:   0, // SmokeExpired has no Projectile field
+					GrenadeName:    "smokegrenade",
+					X:              0,
+					Y:              0,
+					Z:              0,
+					ThrowerSteamID: throwerSteamID,
+					ThrowerName:    throwerName,
+					ThrowerTeam:    throwerTeam,
+				})
+
+				// Flush if buffer is full
+				if len(grenadeEventBuffer) >= grenadeEventBatchSize {
+					if err := writer.InsertGrenadeEvents(ctx, grenadeEventBuffer); err != nil {
+						fmt.Fprintf(os.Stderr, "WARN: Failed to insert grenade events batch: %v\n", err)
+					} else {
+						grenadeEventBuffer = grenadeEventBuffer[:0]
+					}
+				}
+			} else if data.GrenadeEvents != nil {
+				// Fallback: store in memory ONLY if slice is allocated (in-memory mode)
+				// In JSON mode and DB streaming mode, data.GrenadeEvents is nil, so this never executes
+				data.GrenadeEvents = append(data.GrenadeEvents, GrenadeEventData{
+					RoundIndex:     currentRound.RoundIndex,
+					Tick:           tick,
+					EventType:      "smoke_expire",
+					ProjectileID:   0, // SmokeExpired has no Projectile field
+					GrenadeName:    "smokegrenade",
+					X:              0,
+					Y:              0,
+					Z:              0,
 					ThrowerSteamID: throwerSteamID,
 					ThrowerName:    throwerName,
 					ThrowerTeam:    throwerTeam,
