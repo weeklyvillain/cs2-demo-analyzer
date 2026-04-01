@@ -1383,7 +1383,8 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
       for (const smokeStart of smokeEvents) {
         const smokeExpireEvent = grenadeEvents.find(ge =>
           ge.eventType === 'smoke_expire' &&
-          ge.projectileId === smokeStart.projectileId
+          ge.throwerSteamId === smokeStart.throwerSteamId &&
+          ge.tick >= smokeStart.tick
         )
         const isExpired = smokeExpireEvent !== undefined && smokeExpireEvent.tick <= currentTick
         if (isExpired) continue
