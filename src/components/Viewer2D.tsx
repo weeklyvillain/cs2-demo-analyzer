@@ -232,8 +232,8 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
     try {
       // Find the round by roundIndex to get start/end ticks
       const round = allRounds.find(r => r.roundIndex === roundIdx)
-      const roundStartTick = round?.startTick ?? 0
-      const roundEndTick = round?.endTick ?? Number.MAX_SAFE_INTEGER
+      const startTick = round?.startTick ?? roundStartTick
+      const endTick = round?.endTick ?? roundEndTick
 
       const [positionsData, eventsData, grenadePosData, grenadeEventsData, shotsData, infernoData] = await Promise.all([
         window.electronAPI.getMatchPositionsForRound(matchId, roundIdx),
@@ -241,7 +241,7 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
         window.electronAPI.getGrenadePositionsForRound(matchId, roundIdx),
         window.electronAPI.getGrenadeEventsForRound(matchId, roundIdx),
         window.electronAPI.getShotsForRound(matchId, roundIdx),
-        window.electronAPI.getInfernoPositionsForRound(matchId, roundStartTick, roundEndTick),
+        window.electronAPI.getInfernoPositionsForRound(matchId, startTick, endTick),
       ])
       
       // Merge into existing position map
