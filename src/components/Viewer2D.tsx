@@ -211,6 +211,15 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
     throwerTeam: string | null
   }>>([])
 
+  const [infernoPositions, setInfernoPositions] = useState<Array<{
+    tick: number
+    entityId: number
+    polygon: [number, number][]
+    throwerSteamId: string | null
+    throwerName: string | null
+    throwerTeam: string | null
+  }>>([])
+
   // Lazy load positions for a specific round
   const loadRoundData = useCallback(async (roundIdx: number) => {
     if (!window.electronAPI || loadedRoundsRef.current.has(roundIdx) || loadingRoundsRef.current.has(roundIdx)) {
@@ -219,14 +228,20 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
 
     loadingRoundsRef.current.add(roundIdx)
     setLoadingRounds(prev => new Set(prev).add(roundIdx))
-    
+
     try {
-      const [positionsData, eventsData, grenadePosData, grenadeEventsData, shotsData] = await Promise.all([
+      // Find the round by roundIndex to get start/end ticks
+      const round = allRounds.find(r => r.roundIndex === roundIdx)
+      const roundStartTick = round?.startTick ?? 0
+      const roundEndTick = round?.endTick ?? Number.MAX_SAFE_INTEGER
+
+      const [positionsData, eventsData, grenadePosData, grenadeEventsData, shotsData, infernoData] = await Promise.all([
         window.electronAPI.getMatchPositionsForRound(matchId, roundIdx),
         window.electronAPI.getMatchEvents(matchId, { round: roundIdx }),
         window.electronAPI.getGrenadePositionsForRound(matchId, roundIdx),
         window.electronAPI.getGrenadeEventsForRound(matchId, roundIdx),
         window.electronAPI.getShotsForRound(matchId, roundIdx),
+        window.electronAPI.getInfernoPositionsForRound(matchId, roundStartTick, roundEndTick),
       ])
       
       // Merge into existing position map
@@ -247,6 +262,7 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
       setGrenadePositions(prev => [...prev, ...(grenadePosData.positions || [])])
       setGrenadeEvents(prev => [...prev, ...(grenadeEventsData.events || [])])
       setShots(prev => [...prev, ...(shotsData.shots || [])])
+      setInfernoPositions(prev => [...prev, ...(infernoData.positions || [])])
       
       loadedRoundsRef.current.add(roundIdx)
       setLoadedRounds(prev => new Set(prev).add(roundIdx))
@@ -260,7 +276,7 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
         return newSet
       })
     }
-  }, [matchId])
+  }, [matchId, allRounds])
 
   // Load initial rounds (current, previous, next) and handle lazy loading
   useEffect(() => {
@@ -365,7 +381,7 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
         const keepRounds = new Set(Array.from(loadedRoundsRef.current).filter(r => !roundsToUnload.includes(r)))
         for (const [tick, players] of prev.entries()) {
           // Check if this tick belongs to a round we want to keep
-          const belongsToRound = allRounds.some(r => 
+          const belongsToRound = allRounds.some(r =>
             keepRounds.has(r.roundIndex) && tick >= r.startTick && tick <= r.endTick
           )
           if (belongsToRound) {
@@ -374,6 +390,42 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
         }
         return newMap
       })
+
+      // Filter grenade and shot data for unloaded rounds
+      const keepRounds = new Set(Array.from(loadedRoundsRef.current).filter(r => !roundsToUnload.includes(r)))
+      setGrenadePositions(prev =>
+        prev.filter(gp => {
+          const belongsToRound = allRounds.some(r =>
+            keepRounds.has(r.roundIndex) && gp.tick >= r.startTick && gp.tick <= r.endTick
+          )
+          return belongsToRound
+        })
+      )
+      setGrenadeEvents(prev =>
+        prev.filter(ge => {
+          const belongsToRound = allRounds.some(r =>
+            keepRounds.has(r.roundIndex) && ge.tick >= r.startTick && ge.tick <= r.endTick
+          )
+          return belongsToRound
+        })
+      )
+      setShots(prev =>
+        prev.filter(shot => {
+          const belongsToRound = allRounds.some(r =>
+            keepRounds.has(r.roundIndex) && shot.tick >= r.startTick && shot.tick <= r.endTick
+          )
+          return belongsToRound
+        })
+      )
+      setInfernoPositions(prev =>
+        prev.filter(ip => {
+          const belongsToRound = allRounds.some(r =>
+            keepRounds.has(r.roundIndex) && ip.tick >= r.startTick && ip.tick <= r.endTick
+          )
+          return belongsToRound
+        })
+      )
+
       // Update refs first
       roundsToUnload.forEach(r => {
         loadedRoundsRef.current.delete(r)
