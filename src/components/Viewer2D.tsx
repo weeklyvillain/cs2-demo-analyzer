@@ -1282,6 +1282,20 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
             }
             break
           }
+          case 'incendiary': {
+            // inferno_start uses inferno.UniqueID() (different from projectile UniqueID),
+            // so match by thrower SteamID instead
+            const throwerSteamId = position.throwerSteamId
+            const infernoStart = grenadeEvents.find(ge =>
+              ge.eventType === 'inferno_start' &&
+              ge.throwerSteamId === throwerSteamId &&
+              ge.tick <= currentTick
+            )
+            if (infernoStart !== undefined) {
+              continue
+            }
+            break
+          }
         }
         
         // Draw trajectory for in-flight grenades ONLY if grenade hasn't exploded
@@ -1317,8 +1331,15 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
             ge.tick <= currentTick
           )
           hasExploded = flashbangExplode !== undefined
+        } else if (grenadeName === 'incendiary') {
+          const throwerSteamId = position.throwerSteamId
+          hasExploded = grenadeEvents.some(ge =>
+            ge.eventType === 'inferno_start' &&
+            ge.throwerSteamId === throwerSteamId &&
+            ge.tick <= currentTick
+          )
         }
-        
+
         if (hasExploded) {
           // Grenade has exploded but we didn't catch it in switch - skip trajectory
           continue
@@ -1335,6 +1356,9 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
           if (grenadeNameLower === 'hegrenade' && eventTypeLower === 'he_explode') return true
           if (grenadeNameLower === 'decoy' && eventTypeLower === 'decoy_start') return true
           if (grenadeNameLower === 'flashbang' && eventTypeLower === 'flash_explode') return true
+          if (grenadeNameLower === 'incendiary' && eventTypeLower === 'inferno_start') {
+            return ge.throwerSteamId === position.throwerSteamId
+          }
           return false
         })
         
@@ -1397,6 +1421,43 @@ function Viewer2D({ matchId, roundIndex, initialTick, roundStartTick, roundEndTi
         ctx.fillStyle = 'rgba(180, 180, 180, 0.45)'
         ctx.fill()
         ctx.strokeStyle = 'rgba(200, 200, 200, 0.6)'
+        ctx.lineWidth = zoomedSize(1)
+        ctx.stroke()
+      }
+
+      // Draw active inferno (molotov/incendiary) polygons
+      const infernoStartEvents = grenadeEvents.filter(ge =>
+        ge.eventType === 'inferno_start' && ge.tick <= currentTick
+      )
+      for (const infernoStart of infernoStartEvents) {
+        const entityId = infernoStart.projectileId  // inferno UniqueID stored as projectileId
+
+        const infernoExpire = grenadeEvents.find(ge =>
+          ge.eventType === 'inferno_expire' && ge.projectileId === entityId
+        )
+        if (infernoExpire !== undefined && infernoExpire.tick <= currentTick) continue
+
+        // Find the latest polygon sample for this entity at or before currentTick
+        const sample = infernoPositions
+          .filter(ip => ip.entityId === entityId && ip.tick <= currentTick)
+          .reduce<typeof infernoPositions[0] | null>((best, ip) => {
+            if (best === null || ip.tick > best.tick) return ip
+            return best
+          }, null)
+
+        if (sample === null || sample.polygon.length < 3) continue
+
+        ctx.beginPath()
+        const first = transformCoords(sample.polygon[0][0], sample.polygon[0][1], 0)
+        ctx.moveTo(first.x, first.y)
+        for (let i = 1; i < sample.polygon.length; i++) {
+          const pt = transformCoords(sample.polygon[i][0], sample.polygon[i][1], 0)
+          ctx.lineTo(pt.x, pt.y)
+        }
+        ctx.closePath()
+        ctx.fillStyle = 'rgba(255, 100, 0, 0.45)'
+        ctx.fill()
+        ctx.strokeStyle = 'rgba(255, 140, 0, 0.8)'
         ctx.lineWidth = zoomedSize(1)
         ctx.stroke()
       }
