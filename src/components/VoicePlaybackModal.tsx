@@ -31,6 +31,7 @@ export default function VoicePlaybackModal({
   const [outputPath, setOutputPath] = useState<string | null>(initialOutputPath || null)
   const [extractionLogs, setExtractionLogs] = useState<string[]>([])
   const [extractionError, setExtractionError] = useState<string | null>(null)
+  const [playbackError, setPlaybackError] = useState<string | null>(null)
   
   const [selectedFileIndex, setSelectedFileIndex] = useState(0)
   const [isPlaying, setIsPlaying] = useState(false)
@@ -78,6 +79,7 @@ export default function VoicePlaybackModal({
   useEffect(() => {
     if (!isOpen) {
       extractionStartedRef.current = false
+      setPlaybackError(null)
       return
     }
 
@@ -141,16 +143,21 @@ export default function VoicePlaybackModal({
         }
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : 'Failed to extract voice'
-        // Treat "no voice data" as info, not error (e.g. extractor exit code when nothing found)
+        console.error('[VoicePlaybackModal] Extraction error:', errorMessage)
+        // Only treat as "no voice data" when the extractor explicitly reports it
         const isNoData =
-          /no voice|no data|not found|0 file|no file|nothing to extract|exit code 1/i.test(errorMessage) ||
-          /no voice data|no audio/i.test(errorMessage)
+          /no voice|no data|no voice data|no audio|nothing to extract|0 file|no file/i.test(errorMessage)
         if (isNoData) {
           setModalState('playback')
           setAudioFiles([])
           setOutputPath(null)
         } else {
-          setExtractionError(errorMessage)
+          // Real extraction error — go to playback so the modal can be closed,
+          // but show an error banner instead of the "no voice" message
+          setModalState('playback')
+          setAudioFiles([])
+          setOutputPath(null)
+          setPlaybackError('Voice extraction failed. Check the application logs for details.')
         }
       }
     }
@@ -611,7 +618,12 @@ export default function VoicePlaybackModal({
         {/* Playback Screen */}
         {modalState === 'playback' && (
           <div className="space-y-4">
-            {audioFiles.length === 0 ? (
+            {playbackError ? (
+              <div className="bg-orange-900/20 border border-orange-500/50 rounded p-4">
+                <p className="text-orange-400 font-semibold mb-1">Extraction failed</p>
+                <p className="text-orange-300 text-sm">{playbackError}</p>
+              </div>
+            ) : audioFiles.length === 0 ? (
               <div className="bg-blue-900/20 border border-blue-500/50 rounded p-4">
                 <p className="text-blue-400 font-semibold mb-1">No voice data found</p>
                 <p className="text-blue-300 text-sm">

@@ -1033,26 +1033,33 @@ function getAudiowaveformPath(): string {
     const existing = candidates.find(candidate => fs.existsSync(candidate))
     return existing || candidates[0]
   } else {
-    // Prod: use resources/bin path (files are in resources/bin/)
+    // Prod: binary is copied via extraResources "from": "bin", "to": "bin"
+    // Check the same candidate structure as dev (win/ subdir first, then flat)
     const resourcesPath = process.resourcesPath || path.join(app.getAppPath(), '..', 'resources')
     const platform = process.platform
     const arch = process.arch
     let binaryName = 'audiowaveform'
-    
+
     if (platform === 'win32') {
       binaryName = 'audiowaveform.exe'
     } else if (platform === 'darwin') {
-      // Allow shipping separate audiowaveform binaries per-architecture
-      if (arch === 'arm64') {
-        binaryName = 'audiowaveform-mac-arm64'
-      } else {
-        binaryName = 'audiowaveform-mac-amd64'
-      }
+      binaryName = arch === 'arm64' ? 'audiowaveform-mac-arm64' : 'audiowaveform-mac-amd64'
     } else if (platform === 'linux') {
       binaryName = 'audiowaveform-linux'
     }
-    
-    return path.join(resourcesPath, 'bin', binaryName)
+
+    const candidates: string[] = []
+    if (platform === 'win32') {
+      candidates.push(path.join(resourcesPath, 'bin', 'win', binaryName))
+    }
+    candidates.push(path.join(resourcesPath, 'bin', binaryName))
+
+    const existing = candidates.find(c => fs.existsSync(c))
+    if (existing) return existing
+
+    console.error('[Audiowaveform] Binary not found. Checked:')
+    candidates.forEach(c => console.error(`  ${c}`))
+    return candidates[candidates.length - 1]
   }
 }
 
@@ -1081,26 +1088,34 @@ function getVoiceExtractorPath(): string {
     const existing = candidates.find(candidate => fs.existsSync(candidate))
     return existing || candidates[0]
   } else {
-    // Prod: use resources/bin path (files are in resources/bin/)
+    // Prod: binary is copied via extraResources "from": "bin", "to": "bin"
+    // Check the same candidate structure as dev (win/ subdir first, then flat)
     const resourcesPath = process.resourcesPath || path.join(app.getAppPath(), '..', 'resources')
     const platform = process.platform
     const arch = process.arch
     let binaryName = 'csgove'
-    
+
     if (platform === 'win32') {
       binaryName = 'csgove.exe'
     } else if (platform === 'darwin') {
-      // Allow shipping separate voice extractor binaries per-architecture
-      if (arch === 'arm64') {
-        binaryName = 'csgove-mac-arm64'
-      } else {
-        binaryName = 'csgove-mac-amd64'
-      }
+      binaryName = arch === 'arm64' ? 'csgove-mac-arm64' : 'csgove-mac-amd64'
     } else if (platform === 'linux') {
       binaryName = 'csgove-linux'
     }
-    
-    return path.join(resourcesPath, 'bin', binaryName)
+
+    const candidates: string[] = []
+    if (platform === 'win32') {
+      candidates.push(path.join(resourcesPath, 'bin', 'win', binaryName))
+    }
+    candidates.push(path.join(resourcesPath, 'bin', binaryName))
+
+    const existing = candidates.find(c => fs.existsSync(c))
+    if (existing) return existing
+
+    // Log all checked paths to help diagnose missing binary
+    console.error('[Voice Extractor] Binary not found. Checked:')
+    candidates.forEach(c => console.error(`  ${c}`))
+    return candidates[candidates.length - 1] // return last so error message shows expected path
   }
 }
 
@@ -5452,7 +5467,7 @@ ipcMain.handle('voice:extract', async (_, options: { demoPath: string; outputPat
       
       return {
         success: true,
-        outputPath: cached.cachePath,
+        outputPath: null, // Don't expose cache dir - cleanup handler would delete it
         files: cached.files,
         filePaths: cached.filePaths,
       }
@@ -5500,15 +5515,9 @@ ipcMain.handle('voice:extract', async (_, options: { demoPath: string; outputPat
   const libraryPathVarName = process.platform === 'darwin' ? 'DYLD_LIBRARY_PATH' : 'LD_LIBRARY_PATH'
   const extractorDir = path.dirname(extractorPath)
   
-  return new Promise<{ success: boolean; outputPath: string; files: string[]; filePaths: string[] }>((resolve, reject) => {
+  return new Promise<{ success: boolean; outputPath: string | null; files: string[]; filePaths: string[] }>((resolve, reject) => {
     console.log(`[Voice Extraction] Starting extractor: ${extractorPath}`)
     console.log(`[Voice Extraction] Args: ${args.join(' ')}`)
-    
-    // On Windows, handle paths with spaces properly
-    // Quote all paths/args that contain spaces
-    const quoteIfNeeded = (arg: string) => {
-      return arg.includes(' ') && !arg.startsWith('"') ? `"${arg}"` : arg
-    }
     
     // Kill any existing extractor process before starting a new one
     if (extractorProcess) {
@@ -5516,36 +5525,20 @@ ipcMain.handle('voice:extract', async (_, options: { demoPath: string; outputPat
       extractorProcess.kill('SIGTERM')
       extractorProcess = null
     }
-    
-    if (process.platform === 'win32') {
-      // On Windows with shell: true, build full command string to handle spaces
-      const quotedExtractorPath = quoteIfNeeded(extractorPath)
-      const quotedArgs = args.map(quoteIfNeeded).join(' ')
-      const fullCommand = `${quotedExtractorPath} ${quotedArgs}`
-      
-      extractorProcess = exec(fullCommand, {
-        cwd: extractorDir,
-        env: {
-          ...process.env,
-          [libraryPathVarName]: extractorDir,
-          // Set process name via environment variable for identification
-          PROCESS_NAME: 'CS2 Voice Extractor',
-        },
-        windowsHide: true,
-      }) as ChildProcess
-    } else {
-      // On Unix, spawn works fine with array args
-      extractorProcess = spawn(extractorPath, args, {
-        cwd: extractorDir,
-        env: {
-          ...process.env,
-          [libraryPathVarName]: extractorDir,
-          // Set process name via environment variable for identification
-          PROCESS_NAME: 'CS2 Voice Extractor',
-        },
-        shell: false,
-      })
-    }
+
+    // Use spawn (not exec) on all platforms: avoids the cmd.exe shell wrapper on Windows,
+    // eliminates the exec 1MB stdout buffer limit, and handles spaces in paths correctly
+    // by passing args as an array rather than a quoted string.
+    extractorProcess = spawn(extractorPath, args, {
+      cwd: extractorDir,
+      env: {
+        ...process.env,
+        [libraryPathVarName]: extractorDir,
+        PROCESS_NAME: 'CS2 Voice Extractor',
+      },
+      shell: false,
+      windowsHide: true,
+    })
     
     let stdout = ''
     let stderr = ''
@@ -5585,7 +5578,12 @@ ipcMain.handle('voice:extract', async (_, options: { demoPath: string; outputPat
             path: path.join(outputPath, file),
           }))
         console.log(`[Voice Extraction] Completed successfully. Extracted ${files.length} file(s).`)
-        
+        if (files.length === 0) {
+          console.log(`[Voice Extraction] No WAV files in output dir: ${outputPath}`)
+          console.log(`[Voice Extraction] stdout was: ${stdout}`)
+          console.log(`[Voice Extraction] stderr was: ${stderr}`)
+        }
+
         // Save to cache if extracting for a single player
         if (steamIds.length === 1) {
           try {

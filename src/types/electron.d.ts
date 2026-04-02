@@ -93,7 +93,7 @@ export interface ElectronAPI {
   selectDemoFolders: () => Promise<{ success: boolean; folders?: string[] }>
   addDemoFolder: () => Promise<{ success: boolean; folder?: string }>
   getDemoFolders: () => Promise<string[]>
-  extractVoice: (options: { demoPath: string; outputPath?: string; mode?: 'split-compact' | 'split-full' | 'single-full'; steamIds?: string[] }) => Promise<{ success: boolean; outputPath: string; files: string[]; filePaths?: string[] }>
+  extractVoice: (options: { demoPath: string; outputPath?: string; mode?: 'split-compact' | 'split-full' | 'single-full'; steamIds?: string[] }) => Promise<{ success: boolean; outputPath: string | null; files: string[]; filePaths?: string[] }>
   getVoiceAudio: (filePath: string) => Promise<{ success: boolean; data?: string; error?: string }>
   generateWaveform: (
     filePath: string,
