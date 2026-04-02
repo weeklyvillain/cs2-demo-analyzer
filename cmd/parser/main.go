@@ -499,8 +499,9 @@ func run(ctx context.Context, demoPath, outPath, matchID string, positionInterva
 
 		// Store rounds
 		output.Log("info", fmt.Sprintf("Storing %d rounds...", len(matchData.Rounds)))
+		dbRounds := make([]db.Round, 0, len(matchData.Rounds))
 		for _, roundData := range matchData.Rounds {
-			round := db.Round{
+			dbRounds = append(dbRounds, db.Round{
 				MatchID:       actualMatchID, // Use actualMatchID for database
 				RoundIndex:    roundData.RoundIndex,
 				StartTick:     roundData.StartTick,
@@ -509,18 +510,17 @@ func run(ctx context.Context, demoPath, outPath, matchID string, positionInterva
 				TWins:         roundData.TWins,
 				CTWins:        roundData.CTWins,
 				Winner:        roundData.Winner,
-			}
-			if err := writer.InsertRound(ctx, round); err != nil {
-				output.Log("warn", fmt.Sprintf("Failed to insert round %d: %v", roundData.RoundIndex, err))
-				// Continue with other rounds
-			}
+			})
+		}
+		if err := writer.BatchInsertRounds(ctx, dbRounds); err != nil {
+			output.Log("warn", fmt.Sprintf("Failed to batch insert rounds: %v", err))
 		}
 
 		// Store events
 		output.Log("info", fmt.Sprintf("Storing %d events...", len(matchData.Events)))
-		eventCount := 0
+		dbEvents := make([]db.Event, 0, len(matchData.Events))
 		for _, eventData := range matchData.Events {
-			event := db.Event{
+			dbEvents = append(dbEvents, db.Event{
 				MatchID:       actualMatchID, // Use actualMatchID for database
 				RoundIndex:    eventData.RoundIndex,
 				Type:          eventData.Type,
@@ -531,19 +531,13 @@ func run(ctx context.Context, demoPath, outPath, matchID string, positionInterva
 				Severity:      &eventData.Severity,
 				Confidence:    &eventData.Confidence,
 				MetaJSON:      eventData.MetaJSON,
-			}
-			if err := writer.InsertEvent(ctx, event); err != nil {
-				output.Log("warn", fmt.Sprintf("Failed to insert event %s: %v", eventData.Type, err))
-				// Continue with other events
-			} else {
-				eventCount++
-				// Rate limit logging: log every 10th event or every event type change
-				if eventCount%10 == 0 {
-					output.Log("info", fmt.Sprintf("Inserted %d events...", eventCount))
-				}
-			}
+			})
 		}
-		output.Log("info", fmt.Sprintf("Stored %d events", eventCount))
+		if err := writer.BatchInsertEvents(ctx, dbEvents); err != nil {
+			output.Log("warn", fmt.Sprintf("Failed to batch insert events: %v", err))
+		} else {
+			output.Log("info", fmt.Sprintf("Stored %d events", len(dbEvents)))
+		}
 
 		// Store chat messages (RAM-only mode accumulates these)
 		if len(matchData.ChatMessages) > 0 {
@@ -793,8 +787,9 @@ func run(ctx context.Context, demoPath, outPath, matchID string, positionInterva
 
 		// Store rounds
 		output.Log("info", fmt.Sprintf("Storing %d rounds...", len(matchData.Rounds)))
+		dbRounds := make([]db.Round, 0, len(matchData.Rounds))
 		for _, roundData := range matchData.Rounds {
-			round := db.Round{
+			dbRounds = append(dbRounds, db.Round{
 				MatchID:       actualMatchID, // Use actualMatchID for database
 				RoundIndex:    roundData.RoundIndex,
 				StartTick:     roundData.StartTick,
@@ -803,18 +798,17 @@ func run(ctx context.Context, demoPath, outPath, matchID string, positionInterva
 				TWins:         roundData.TWins,
 				CTWins:        roundData.CTWins,
 				Winner:        roundData.Winner,
-			}
-			if err := writer.InsertRound(ctx, round); err != nil {
-				output.Log("warn", fmt.Sprintf("Failed to insert round %d: %v", roundData.RoundIndex, err))
-				// Continue with other rounds
-			}
+			})
+		}
+		if err := writer.BatchInsertRounds(ctx, dbRounds); err != nil {
+			output.Log("warn", fmt.Sprintf("Failed to batch insert rounds: %v", err))
 		}
 
 		// Store events
 		output.Log("info", fmt.Sprintf("Storing %d events...", len(matchData.Events)))
-		eventCount := 0
+		dbEvents := make([]db.Event, 0, len(matchData.Events))
 		for _, eventData := range matchData.Events {
-			event := db.Event{
+			dbEvents = append(dbEvents, db.Event{
 				MatchID:       actualMatchID, // Use actualMatchID for database
 				RoundIndex:    eventData.RoundIndex,
 				Type:          eventData.Type,
@@ -825,19 +819,13 @@ func run(ctx context.Context, demoPath, outPath, matchID string, positionInterva
 				Severity:      &eventData.Severity,
 				Confidence:    &eventData.Confidence,
 				MetaJSON:      eventData.MetaJSON,
-			}
-			if err := writer.InsertEvent(ctx, event); err != nil {
-				output.Log("warn", fmt.Sprintf("Failed to insert event %s: %v", eventData.Type, err))
-				// Continue with other events
-			} else {
-				eventCount++
-				// Rate limit logging: log every 10th event or every event type change
-				if eventCount%10 == 0 {
-					output.Log("info", fmt.Sprintf("Inserted %d events...", eventCount))
-				}
-			}
+			})
 		}
-		output.Log("info", fmt.Sprintf("Stored %d events", eventCount))
+		if err := writer.BatchInsertEvents(ctx, dbEvents); err != nil {
+			output.Log("warn", fmt.Sprintf("Failed to batch insert events: %v", err))
+		} else {
+			output.Log("info", fmt.Sprintf("Stored %d events", len(dbEvents)))
+		}
 
 		// Process AFK detection from database positions (streaming mode)
 		output.Log("info", "Processing AFK detection from database...")
