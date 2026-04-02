@@ -2,7 +2,6 @@ package db
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"testing"
 )
@@ -17,7 +16,6 @@ func TestOpenEnablesWAL(t *testing.T) {
 		t.Fatalf("Open failed: %v", err)
 	}
 	defer db.Close()
-	defer os.Remove(path)
 
 	var mode string
 	if err := db.QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&mode); err != nil {
