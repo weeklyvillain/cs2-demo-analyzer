@@ -1011,15 +1011,27 @@ function getParserPath(): string {
 // Helper to get audiowaveform executable path
 function getAudiowaveformPath(): string {
   if (isDev) {
-    // Dev: check for audiowaveform in bin
+    // Dev: support legacy and platform-specific layouts under bin/
     const projectRoot = path.resolve(__dirname, '..')
-    const defaultPath = path.join(projectRoot, 'bin', 'audiowaveform')
-    const devPath = process.env.AUDIOWAVEFORM_PATH || defaultPath
-    // Add .exe on Windows
-    if (process.platform === 'win32') {
-      return devPath + '.exe'
+    const envPath = process.env.AUDIOWAVEFORM_PATH
+    const candidates: string[] = []
+
+    if (envPath) {
+      candidates.push(envPath)
+      if (process.platform === 'win32' && !envPath.toLowerCase().endsWith('.exe')) {
+        candidates.push(`${envPath}.exe`)
+      }
     }
-    return devPath
+
+    if (process.platform === 'win32') {
+      candidates.push(path.join(projectRoot, 'bin', 'win', 'audiowaveform.exe'))
+      candidates.push(path.join(projectRoot, 'bin', 'audiowaveform.exe'))
+    } else {
+      candidates.push(path.join(projectRoot, 'bin', 'audiowaveform'))
+    }
+
+    const existing = candidates.find(candidate => fs.existsSync(candidate))
+    return existing || candidates[0]
   } else {
     // Prod: use resources/bin path (files are in resources/bin/)
     const resourcesPath = process.resourcesPath || path.join(app.getAppPath(), '..', 'resources')
@@ -1047,15 +1059,27 @@ function getAudiowaveformPath(): string {
 // Helper to get voice extractor executable path
 function getVoiceExtractorPath(): string {
   if (isDev) {
-    // Dev: check for voice extractor in bin or resources
+    // Dev: support legacy and platform-specific layouts under bin/
     const projectRoot = path.resolve(__dirname, '..')
-    const defaultPath = path.join(projectRoot, 'bin', 'csgove')
-    const devPath = process.env.VOICE_EXTRACTOR_PATH || defaultPath
-    // Add .exe on Windows
-    if (process.platform === 'win32') {
-      return devPath + '.exe'
+    const envPath = process.env.VOICE_EXTRACTOR_PATH
+    const candidates: string[] = []
+
+    if (envPath) {
+      candidates.push(envPath)
+      if (process.platform === 'win32' && !envPath.toLowerCase().endsWith('.exe')) {
+        candidates.push(`${envPath}.exe`)
+      }
     }
-    return devPath
+
+    if (process.platform === 'win32') {
+      candidates.push(path.join(projectRoot, 'bin', 'win', 'csgove.exe'))
+      candidates.push(path.join(projectRoot, 'bin', 'csgove.exe'))
+    } else {
+      candidates.push(path.join(projectRoot, 'bin', 'csgove'))
+    }
+
+    const existing = candidates.find(candidate => fs.existsSync(candidate))
+    return existing || candidates[0]
   } else {
     // Prod: use resources/bin path (files are in resources/bin/)
     const resourcesPath = process.resourcesPath || path.join(app.getAppPath(), '..', 'resources')

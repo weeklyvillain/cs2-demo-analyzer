@@ -34,7 +34,9 @@ export default function MatchesRoundsTab({
   onWatchAtTick,
   onSetViewer2D,
 }: Props) {
-  const [expandedRounds, setExpandedRounds] = useState<Set<number>>(new Set())
+  const [expandedRounds, setExpandedRounds] = useState<Set<number>>(
+    () => new Set(rounds.map((round) => round.roundIndex))
+  )
 
   const toggleRound = (roundIndex: number) => {
     setExpandedRounds(prev => {

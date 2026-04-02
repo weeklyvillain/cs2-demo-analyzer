@@ -550,7 +550,7 @@ export default function VoicePlaybackModal({
     onClose()
   }
 
-  const progressPercentage = duration > 0 ? (currentTime / duration) * 100 : 0
+  const hasWaveformViewport = waveformLoading || Boolean(waveformUrl)
 
   // Get modal title based on state
   const getModalTitle = () => {
@@ -656,7 +656,10 @@ export default function VoicePlaybackModal({
                   <div className="space-y-3">
                     <div className="bg-surface/50 border border-border rounded p-4">
                       {/* Waveform visualization with progress overlay */}
-                      <div className="mb-3 relative overflow-hidden rounded" style={{ width: '600px', height: '150px' }}>
+                      <div
+                        className="mb-3 relative overflow-hidden rounded"
+                        style={{ width: '600px', height: hasWaveformViewport ? '150px' : 'auto' }}
+                      >
                         {waveformLoading ? (
                           <div className="flex items-center justify-center" style={{ width: '600px', height: '150px' }}>
                             <Loader2 className="w-6 h-6 animate-spin text-accent mr-2" />
