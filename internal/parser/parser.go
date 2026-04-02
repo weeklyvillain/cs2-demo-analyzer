@@ -1596,6 +1596,7 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 	// Track player positions at specified interval for AFK detection
 	// Only track after freeze time ends
 	lastPositionTick := 0
+	steamIDCache := make(map[uint64]string) // cache to avoid fmt.Sprintf on every tick
 	// positionInterval is passed as parameter (1=all, 2=half, 4=quarter)
 
 	p.parser.RegisterEventHandler(func(e events.FrameDone) {
@@ -1640,7 +1641,11 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 				continue
 			}
 
-			steamID := fmt.Sprintf("%d", player.SteamID64)
+			steamID, ok := steamIDCache[player.SteamID64]
+			if !ok {
+				steamID = fmt.Sprintf("%d", player.SteamID64)
+				steamIDCache[player.SteamID64] = steamID
+			}
 
 			// Skip position tracking if AFK detection is complete for this player in this round
 			// Once a player moves or dies (ending their AFK period), we don't need more positions
