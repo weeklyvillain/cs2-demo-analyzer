@@ -124,6 +124,39 @@ func (w *Writer) InsertRound(ctx context.Context, r Round) error {
 	return nil
 }
 
+// BatchInsertRounds inserts multiple rounds in a single transaction.
+func (w *Writer) BatchInsertRounds(ctx context.Context, rounds []Round) error {
+	if len(rounds) == 0 {
+		return nil
+	}
+
+	tx, err := w.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT OR REPLACE INTO rounds (match_id, round_index, start_tick, freeze_end_tick, end_tick, t_wins, ct_wins, winner)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to prepare round statement: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, r := range rounds {
+		if _, err := stmt.ExecContext(ctx, r.MatchID, r.RoundIndex, r.StartTick, r.FreezeEndTick, r.EndTick, r.TWins, r.CTWins, r.Winner); err != nil {
+			return fmt.Errorf("failed to insert round %d: %w", r.RoundIndex, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+	return nil
+}
+
 // InsertEvent inserts an event record.
 func (w *Writer) InsertEvent(ctx context.Context, e Event) error {
 	query := `
@@ -288,7 +321,6 @@ type PlayerPosition struct {
 }
 
 // InsertPlayerPositions inserts multiple player positions in a transaction.
-// It ensures all players exist in the database before inserting positions to satisfy foreign key constraints.
 func (w *Writer) InsertPlayerPositions(ctx context.Context, positions []PlayerPosition) error {
 	if len(positions) == 0 {
 		return nil
@@ -300,54 +332,12 @@ func (w *Writer) InsertPlayerPositions(ctx context.Context, positions []PlayerPo
 	}
 	defer tx.Rollback()
 
-	// First, ensure all players exist in the database
-	// Collect unique (match_id, steamid) pairs
-	playerSet := make(map[string]bool) // key: "match_id|steamid"
-	playerKeys := make([]struct {
-		MatchID string
-		SteamID string
-	}, 0)
-	
-	for _, pos := range positions {
-		key := pos.MatchID + "|" + pos.SteamID
-		if !playerSet[key] {
-			playerSet[key] = true
-			playerKeys = append(playerKeys, struct {
-				MatchID string
-				SteamID string
-			}{pos.MatchID, pos.SteamID})
-		}
-	}
-
-	// Insert missing players with default names
-	// Use INSERT OR IGNORE to avoid errors if player already exists
-	playerQuery := `
-		INSERT OR IGNORE INTO players (match_id, steamid, name, team)
-		VALUES (?, ?, ?, ?)
-	`
-	playerStmt, err := tx.PrepareContext(ctx, playerQuery)
-	if err != nil {
-		return fmt.Errorf("failed to prepare player statement: %w", err)
-	}
-	defer playerStmt.Close()
-
-	for _, pk := range playerKeys {
-		// Use default name if player doesn't exist
-		defaultName := fmt.Sprintf("Player_%s", pk.SteamID)
-		_, err := playerStmt.ExecContext(ctx, pk.MatchID, pk.SteamID, defaultName, nil)
-		if err != nil {
-			return fmt.Errorf("failed to ensure player exists %s/%s: %w", pk.MatchID, pk.SteamID, err)
-		}
-	}
-
-	// Now insert positions
 	query := `
 		INSERT OR REPLACE INTO player_positions (
 			match_id, round_index, tick, steamid, x, y, z, yaw, view_dir_x, view_dir_y, team, health, armor, weapon
 		)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
-
 	stmt, err := tx.PrepareContext(ctx, query)
 	if err != nil {
 		return fmt.Errorf("failed to prepare statement: %w", err)
@@ -356,20 +346,10 @@ func (w *Writer) InsertPlayerPositions(ctx context.Context, positions []PlayerPo
 
 	for _, pos := range positions {
 		_, err := stmt.ExecContext(ctx,
-			pos.MatchID,
-			pos.RoundIndex,
-			pos.Tick,
-			pos.SteamID,
-			pos.X,
-			pos.Y,
-			pos.Z,
-			pos.Yaw,
-			pos.ViewDirX,
-			pos.ViewDirY,
-			pos.Team,
-			pos.Health,
-			pos.Armor,
-			pos.Weapon,
+			pos.MatchID, pos.RoundIndex, pos.Tick, pos.SteamID,
+			pos.X, pos.Y, pos.Z,
+			pos.Yaw, pos.ViewDirX, pos.ViewDirY,
+			pos.Team, pos.Health, pos.Armor, pos.Weapon,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to insert player position: %w", err)
@@ -379,7 +359,6 @@ func (w *Writer) InsertPlayerPositions(ctx context.Context, positions []PlayerPo
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
-
 	return nil
 }
 
