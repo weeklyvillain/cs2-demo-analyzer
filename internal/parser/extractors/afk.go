@@ -27,6 +27,9 @@ type AFKExtractor struct {
 	// Track players whose AFK detection is complete for a round (moved or died)
 	// key: roundIndex_steamID -> true if AFK tracking is complete
 	afkComplete map[string]bool
+
+	disconnectIntervals map[string][]struct{ start, end int } // cached per-match, nil until loaded
+	disconnectsLoaded   bool
 }
 
 // MarkAFKComplete marks AFK tracking as complete for a player in a round.
@@ -71,6 +74,46 @@ func NewAFKExtractor(tickRate float64, db *sql.DB) *AFKExtractor {
 		db:                db,
 		afkComplete:       make(map[string]bool),
 	}
+}
+
+// LoadDisconnectEvents pre-loads all disconnect events for a match into memory.
+// Call this once before processing rounds to avoid repeated per-round queries.
+func (e *AFKExtractor) LoadDisconnectEvents(matchID string) error {
+	if e.db == nil || e.disconnectsLoaded {
+		return nil
+	}
+	e.disconnectIntervals = make(map[string][]struct{ start, end int })
+	e.disconnectsLoaded = true
+
+	query := `
+		SELECT actor_steamid, start_tick, end_tick, round_index
+		FROM events
+		WHERE match_id = ? AND type = 'DISCONNECT' AND actor_steamid IS NOT NULL
+		ORDER BY start_tick
+	`
+	rows, err := e.db.Query(query, matchID)
+	if err != nil {
+		return nil // silently skip — no disconnect data yet
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var steamID string
+		var startTick, roundIndex int
+		var endTick sql.NullInt64
+		if err := rows.Scan(&steamID, &startTick, &endTick, &roundIndex); err != nil {
+			continue
+		}
+		end := math.MaxInt32 // still disconnected
+		if endTick.Valid {
+			end = int(endTick.Int64)
+		}
+		e.disconnectIntervals[steamID] = append(e.disconnectIntervals[steamID], struct{ start, end int }{
+			start: startTick,
+			end:   end,
+		})
+	}
+	return nil
 }
 
 // HandlePlayerPositionUpdate should be called periodically to check player positions.
@@ -337,44 +380,11 @@ func (e *AFKExtractor) ProcessAFKFromDatabase(matchID string, roundIndex int, fr
 	// Movement threshold: 2-5 units (using 3.0 as middle ground)
 	moveEps := 3.0
 
-	// Query disconnect events for this round and previous rounds FIRST
-	// Players who disconnect should not be tracked for AFK
-	// We need to check disconnects from previous rounds too, as they might still be disconnected
-	disconnectQuery := `
-		SELECT actor_steamid, start_tick, end_tick, round_index
-		FROM events
-		WHERE match_id = ? AND type = 'DISCONNECT' AND actor_steamid IS NOT NULL
-		ORDER BY start_tick
-	`
-	disconnectRows, err := e.db.Query(disconnectQuery, matchID)
-	disconnectIntervals := make(map[string][]struct{ start, end int }) // steamID -> list of [start, end] intervals
-	if err == nil {
-		defer disconnectRows.Close()
-		for disconnectRows.Next() {
-			var steamID string
-			var startTick int
-			var endTick sql.NullInt64
-			var eventRoundIndex int
-			if err := disconnectRows.Scan(&steamID, &startTick, &endTick, &eventRoundIndex); err == nil {
-				// Only consider disconnects that are relevant to this round
-				// If disconnect happened before this round and no reconnect, they're still disconnected
-				// If disconnect happened during this round, include it
-				if eventRoundIndex < roundIndex {
-					// Disconnect from previous round - if no reconnect, they're still disconnected
-					if !endTick.Valid {
-						// No reconnect, still disconnected - mark as disconnected from round start
-						disconnectIntervals[steamID] = append(disconnectIntervals[steamID], struct{ start, end int }{start: freezeEndTick, end: roundEndTick})
-					}
-				} else if eventRoundIndex == roundIndex {
-					// Disconnect during this round
-					disconnectEnd := roundEndTick // Default to round end if no reconnect
-					if endTick.Valid {
-						disconnectEnd = int(endTick.Int64)
-					}
-					disconnectIntervals[steamID] = append(disconnectIntervals[steamID], struct{ start, end int }{start: startTick, end: disconnectEnd})
-				}
-			}
-		}
+	// Use pre-loaded disconnect intervals (loaded once per match via LoadDisconnectEvents)
+	// Fall back to empty map if not loaded (e.g. in tests without a DB)
+	disconnectIntervals := e.disconnectIntervals
+	if disconnectIntervals == nil {
+		disconnectIntervals = make(map[string][]struct{ start, end int })
 	}
 
 	// Query death events for this round
@@ -416,19 +426,6 @@ func (e *AFKExtractor) ProcessAFKFromDatabase(matchID string, roundIndex int, fr
 		return false
 	}
 
-	// Get all unique players for this round
-	query := `
-		SELECT DISTINCT steamid
-		FROM player_positions
-		WHERE match_id = ? AND round_index = ?
-		ORDER BY steamid
-	`
-	rows, err := e.db.Query(query, matchID, roundIndex)
-	if err != nil {
-		return fmt.Errorf("failed to query players: %w", err)
-	}
-	defer rows.Close()
-
 	// Initialize player states - track movement during grace period
 	// Local type for tracking AFK state during processing
 	type afkPlayerState struct {
@@ -440,66 +437,42 @@ func (e *AFKExtractor) ProcessAFKFromDatabase(matchID string, roundIndex int, fr
 		deathTick         *int
 		firstMovementTick *int
 	}
-	
-	playerStates := make(map[string]*afkPlayerState)
 
-	for rows.Next() {
+	// Bulk query: first position at or after freezeEndTick for each player in this round
+	initPosQuery := `
+		SELECT p.steamid, p.tick, p.x, p.y, p.z
+		FROM player_positions p
+		INNER JOIN (
+			SELECT steamid, MIN(tick) AS min_tick
+			FROM player_positions
+			WHERE match_id = ? AND round_index = ? AND tick >= ?
+			GROUP BY steamid
+		) first ON p.steamid = first.steamid AND p.tick = first.min_tick
+		WHERE p.match_id = ? AND p.round_index = ?
+	`
+	initRows, err := e.db.Query(initPosQuery, matchID, roundIndex, freezeEndTick, matchID, roundIndex)
+	if err != nil {
+		return fmt.Errorf("failed to query initial positions: %w", err)
+	}
+
+	playerStates := make(map[string]*afkPlayerState)
+	for initRows.Next() {
 		var steamID string
-		if err := rows.Scan(&steamID); err != nil {
+		var tick int
+		var x, y, z float64
+		if err := initRows.Scan(&steamID, &tick, &x, &y, &z); err != nil {
 			continue
 		}
-
-		// Skip if player is disconnected at round start - don't track AFK for disconnected players
 		if isPlayerDisconnectedOrDead(steamID, freezeEndTick) {
 			continue
 		}
-
-		// Get position at freeze end (roundStart)
-		queryPos := `
-			SELECT x, y, z
-			FROM player_positions
-			WHERE match_id = ? AND round_index = ? AND steamid = ? AND tick = ?
-		`
-		var x, y, z float64
-		var positionTick int = freezeEndTick
-		row := e.db.QueryRow(queryPos, matchID, roundIndex, steamID, freezeEndTick)
-		if err := row.Scan(&x, &y, &z); err != nil {
-			// Try to get first available position after freeze end
-			queryFirst := `
-				SELECT tick, x, y, z
-				FROM player_positions
-				WHERE match_id = ? AND round_index = ? AND steamid = ? AND tick >= ?
-				ORDER BY tick ASC
-				LIMIT 1
-			`
-			var firstTick int
-			rowFirst := e.db.QueryRow(queryFirst, matchID, roundIndex, steamID, freezeEndTick)
-			if err := rowFirst.Scan(&firstTick, &x, &y, &z); err != nil {
-				continue // Skip if no position data
-			}
-			// Use the actual tick where we found the first position
-			positionTick = firstTick
-		}
-
 		playerStates[steamID] = &afkPlayerState{
-			steamID:           steamID,
-			lastPosition:      &position{X: x, Y: y, Z: z},
-			lastPositionTick:  positionTick,
-			movedDuringGrace:  false,
-			afkStartTick:      nil, // Will be set if no movement during grace
-			deathTick:         nil,
-			firstMovementTick: nil,
+			steamID:          steamID,
+			lastPosition:     &position{X: x, Y: y, Z: z},
+			lastPositionTick: tick,
 		}
 	}
-
-	// Update death ticks in player states
-	for steamID, deathTick := range deathTicks {
-		if state, exists := playerStates[steamID]; exists {
-			if state.deathTick == nil || deathTick < *state.deathTick {
-				state.deathTick = &deathTick
-			}
-		}
-	}
+	initRows.Close()
 
 	// Query all positions for this round, ordered by tick
 	posQuery := `

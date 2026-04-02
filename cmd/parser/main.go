@@ -611,6 +611,9 @@ func run(ctx context.Context, demoPath, outPath, matchID string, positionInterva
 		// Process AFK detection from database positions
 		output.Log("info", "Processing AFK detection from database...")
 		afkExtractor := extractors.NewAFKExtractor(matchData.TickRate, dbConn)
+		if err := afkExtractor.LoadDisconnectEvents(actualMatchID); err != nil {
+			output.Log("warn", fmt.Sprintf("Failed to load disconnect events: %v", err))
+		}
 		for _, roundData := range matchData.Rounds {
 			if roundData.FreezeEndTick == nil {
 				continue // Skip rounds without freeze end tick
@@ -830,6 +833,9 @@ func run(ctx context.Context, demoPath, outPath, matchID string, positionInterva
 		// Process AFK detection from database positions (streaming mode)
 		output.Log("info", "Processing AFK detection from database...")
 		afkExtractor := extractors.NewAFKExtractor(matchData.TickRate, dbConn)
+		if err := afkExtractor.LoadDisconnectEvents(actualMatchID); err != nil {
+			output.Log("warn", fmt.Sprintf("Failed to load disconnect events: %v", err))
+		}
 		for _, roundData := range matchData.Rounds {
 			if roundData.FreezeEndTick == nil {
 				continue // Skip rounds without freeze end tick
