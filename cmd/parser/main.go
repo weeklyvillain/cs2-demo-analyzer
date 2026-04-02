@@ -214,8 +214,6 @@ func runJSON(ctx context.Context, demoPath, outputPath, matchID string, position
 			output.Log("warn", fmt.Sprintf("Error closing parser: %v", closeErr))
 		}
 	}
-	// Force GC to ensure memory is freed before processing events
-	runtime.GC()
 
 	output.Log("info", fmt.Sprintf("Parsed %d rounds, %d players", len(matchData.Rounds), len(matchData.Players)))
 
@@ -315,7 +313,6 @@ func runJSON(ctx context.Context, demoPath, outputPath, matchID string, position
 			}
 
 			jsonEventsChunk = jsonEventsChunk[:0] // Clear chunk (reuse underlying array)
-			runtime.GC()
 			partNumber++
 		}
 	}
@@ -331,7 +328,6 @@ func runJSON(ctx context.Context, demoPath, outputPath, matchID string, position
 			return fmt.Errorf("failed to write final chunk: %w", err)
 		}
 		jsonEventsChunk = nil // Free memory
-		runtime.GC()
 	}
 
 	// Merge sorted chunks into final output (streaming merge, no full file reads)
@@ -449,8 +445,6 @@ func run(ctx context.Context, demoPath, outPath, matchID string, positionInterva
 				output.Log("warn", fmt.Sprintf("Error closing parser: %v", closeErr))
 			}
 		}
-		// Force GC to ensure memory is freed before storing data
-		runtime.GC()
 	}
 
 	if err != nil {

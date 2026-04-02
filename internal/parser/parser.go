@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -330,9 +329,6 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 			}
 			infernoPositionBuffer = infernoPositionBuffer[:0]
 		}
-
-		// Force garbage collection after flushing buffers to free memory
-		runtime.GC()
 
 		return nil
 	}
@@ -901,9 +897,6 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 				}
 				afkExtractor.ClearEvents()
 			}
-
-			// Force garbage collection every round in JSON mode to keep memory low
-			runtime.GC()
 		}
 
 		// Determine winner
@@ -1858,7 +1851,7 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 		}
 
 		// Track all active grenade projectiles
-		for projectileID, grenade := range gs.GrenadeProjectiles() {
+		for _, grenade := range gs.GrenadeProjectiles() {
 			if grenade == nil {
 				continue
 			}
@@ -1918,7 +1911,7 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 					MatchID:        matchID,
 					RoundIndex:     currentRound.RoundIndex,
 					Tick:           tick,
-					ProjectileID:   uint64(projectileID),
+					ProjectileID:   uint64(grenade.UniqueID()),
 					GrenadeName:    normalizedName,
 					X:              float64(pos.X),
 					Y:              float64(pos.Y),
@@ -1942,7 +1935,7 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 				data.GrenadePositions = append(data.GrenadePositions, GrenadePositionData{
 					RoundIndex:     currentRound.RoundIndex,
 					Tick:           tick,
-					ProjectileID:   uint64(projectileID),
+					ProjectileID:   uint64(grenade.UniqueID()),
 					GrenadeName:    normalizedName,
 					X:              float64(pos.X),
 					Y:              float64(pos.Y),
