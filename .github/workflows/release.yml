@@ -121,7 +121,6 @@ jobs:
 
       - name: Build Go parser (Windows)
         run: |
-          mkdir -p bin/win
           cd cmd/parser
           go build -o ../../bin/win/parser.exe .
           cd ../..

@@ -63,7 +63,7 @@ const COMMAND_DELAY_MS = 150
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
 
 function createSplashWindow() {
-  const iconPath = path.join(__dirname, '../resources/logo.png')
+  const iconPath = path.join(__dirname, '../resources/icon.png')
   
   splashWindow = new BrowserWindow({
     width: 500,
@@ -176,8 +176,8 @@ function createSplashWindow() {
 }
 
 function createWindow() {
-  // Get icon path - use logo.png from resources
-  const iconPath = path.join(__dirname, '../resources/logo.png')
+  // Get icon path - use icon.png from resources
+  const iconPath = path.join(__dirname, '../resources/icon.png')
   
   mainWindow = new BrowserWindow({
     width: 1200,
@@ -491,7 +491,7 @@ app.whenReady().then(async () => {
   // IPC handler to get logo image path
   ipcMain.handle('splash:getLogoPath', async () => {
     try {
-      const logoPath = path.join(__dirname, '../resources/logo.png')
+      const logoPath = path.join(__dirname, '../resources/icon.png')
       if (fs.existsSync(logoPath)) {
         // Return file:// URL for splash window
         return `file://${logoPath.replace(/\\/g, '/')}`
@@ -506,7 +506,7 @@ app.whenReady().then(async () => {
   // IPC handler to get logo image as base64 (for renderer process)
   ipcMain.handle('app:getLogoImage', async () => {
     try {
-      const logoPath = path.join(__dirname, '../resources/logo.png')
+      const logoPath = path.join(__dirname, '../resources/icon.png')
       if (fs.existsSync(logoPath)) {
         const imageBuffer = fs.readFileSync(logoPath)
         const base64 = imageBuffer.toString('base64')

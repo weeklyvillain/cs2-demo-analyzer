@@ -84,7 +84,7 @@
     },
     "mac": {
       "target": "dmg",
-      "icon": "resources/logo.png",
+      "icon": "resources/icon.png",
       "category": "public.app-category.utilities",
       "extraResources": [
         {
@@ -95,7 +95,7 @@
     },
     "linux": {
       "target": "AppImage",
-      "icon": "resources/logo.png",
+      "icon": "resources/icon.png",
       "category": "Utility"
     },
     "nsis": {

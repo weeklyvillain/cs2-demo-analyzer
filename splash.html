@@ -149,20 +149,20 @@
             } else if (logoImg) {
               // Fallback: try relative path
               const basePath = window.location.href.substring(0, window.location.href.lastIndexOf('/'))
-              logoImg.src = basePath + '/resources/logo.png'
+              logoImg.src = basePath + '/resources/icon.png'
             }
           }).catch(() => {
             // Fallback: try relative path
             if (logoImg) {
               const basePath = window.location.href.substring(0, window.location.href.lastIndexOf('/'))
-              logoImg.src = basePath + '/resources/logo.png'
+              logoImg.src = basePath + '/resources/icon.png'
             }
           })
         } else {
           // Fallback: try relative path
           if (logoImg) {
             const basePath = window.location.href.substring(0, window.location.href.lastIndexOf('/'))
-            logoImg.src = basePath + '/resources/logo.png'
+            logoImg.src = basePath + '/resources/icon.png'
           }
         }
       }
