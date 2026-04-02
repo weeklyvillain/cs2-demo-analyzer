@@ -329,7 +329,11 @@ function MatchesScreen() {
 
   const handleContextMenuAction = async (action: 'delete' | 'open' | 'showInDb' | 'reparse' | 'select' | 'showLogs', match: Match) => {
     if (action === 'delete') {
-      setSelectedMatches(new Set([match.id]))
+      // If the match is already in a multi-selection, delete all selected matches.
+      // Otherwise, delete only the right-clicked match.
+      if (!selectedMatches.has(match.id)) {
+        setSelectedMatches(new Set([match.id]))
+      }
       setShowDeleteModal(true)
     } else if (action === 'open' && match.demoPath) {
       try {
@@ -655,6 +659,7 @@ function MatchesScreen() {
           onMatchClick={(matchId) => handleMatchClick(matchId)}
           onContextMenuAction={(action, match) => handleContextMenuAction(action, match)}
           onToggleMatchSelection={(matchId) => toggleMatchSelection(matchId)}
+          onClearSelection={() => setSelectedMatches(new Set())}
           onDeleteSelected={handleDeleteSelected}
         />
       ) : (

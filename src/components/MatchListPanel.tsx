@@ -144,6 +144,7 @@ export interface MatchListPanelProps {
   onMatchClick: (matchId: string) => void
   onContextMenuAction: (action: 'delete' | 'open' | 'showInDb' | 'reparse' | 'select' | 'showLogs', match: Match) => void
   onToggleMatchSelection: (matchId: string) => void
+  onClearSelection: () => void
   onDeleteSelected: () => void
 }
 
@@ -166,6 +167,7 @@ export default function MatchListPanel({
   onMatchClick,
   onContextMenuAction,
   onToggleMatchSelection,
+  onClearSelection,
   onDeleteSelected,
 }: MatchListPanelProps) {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; match: Match } | null>(null)
@@ -270,6 +272,26 @@ export default function MatchListPanel({
               </button>
             ))}
             </div>
+            {selectedMatches.size > 0 && (
+              <>
+                <span className="text-sm text-accent font-medium ml-auto">
+                  {t('matches.selected').replace('{count}', selectedMatches.size.toString()).replace('{plural}', selectedMatches.size > 1 ? 'es' : '')}
+                </span>
+                <button
+                  onClick={onClearSelection}
+                  className="px-3 py-1.5 text-sm text-gray-300 hover:text-white bg-surface border border-border rounded transition-colors"
+                >
+                  {t('matches.deselectAll')}
+                </button>
+                <button
+                  onClick={() => setShowDeleteModal(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-white bg-red-600 hover:bg-red-700 rounded transition-colors"
+                >
+                  <Trash2 size={14} />
+                  {t('matches.deleteSelected')}
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}
