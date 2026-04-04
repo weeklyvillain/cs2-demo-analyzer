@@ -632,6 +632,17 @@ function MatchesScreen() {
     }
   }
 
+  const handleAddDemo = async () => {
+    if (!window.electronAPI) return
+    const result = await window.electronAPI.openFileDialog(false, 'demo')
+    if (!result) return
+    const path = Array.isArray(result) ? result[0] : result
+    if (!path) return
+    setDemoToParse(path)
+    setDemosToParse([])
+    setShowParsingModal(true)
+  }
+
   return (
     <div
       className={`flex-1 flex flex-col p-6 overflow-auto transition-colors ${isDragging ? 'bg-accent/10 border-2 border-dashed border-accent' : ''}`}
@@ -661,6 +672,7 @@ function MatchesScreen() {
           onToggleMatchSelection={(matchId) => toggleMatchSelection(matchId)}
           onClearSelection={() => setSelectedMatches(new Set())}
           onDeleteSelected={handleDeleteSelected}
+          onAddDemo={handleAddDemo}
         />
       ) : (
         <div className="flex-1 flex flex-col min-h-0">

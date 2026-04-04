@@ -5662,79 +5662,134 @@ ipcMain.handle('voice:generateWaveform', async (_, filePath: string, audioDurati
       fs.mkdirSync(waveformDir, { recursive: true })
     }
 
-    // Generate unique filename based on audio file content hash
-    // This ensures each unique audio file gets its own waveform
-    const fileBuffer = fs.readFileSync(filePath)
-    const audioHash = crypto.createHash('sha256').update(fileBuffer).digest('hex').substring(0, 32)
-    const waveformPath = path.join(waveformDir, `waveform-${audioHash}.png`)
-
-    const defaultWidth = 600
-    
-    // Calculate pixels-per-second dynamically to ensure waveform is always exactly 600px wide
-    // This must be calculated based on audio duration and target width
     const audioDurationNumber = typeof audioDuration === 'string' ? parseFloat(audioDuration) : audioDuration
     if (audioDurationNumber === undefined || !Number.isFinite(audioDurationNumber) || audioDurationNumber <= 0) {
-      return { success: false, error: 'Audio duration is required to generate waveform with fixed width' }
+      return { success: false, error: 'Audio duration is required to generate waveform' }
     }
 
     const mode = options?.mode || 'fixed'
     const pixelsPerSecondSetting = options?.pixelsPerSecond && options.pixelsPerSecond > 0 ? options.pixelsPerSecond : 4
     const maxWidth = options?.maxWidth && options.maxWidth > 0 ? options.maxWidth : 20000
 
-    let targetWidth = defaultWidth
-    let rawPixelsPerSecond = targetWidth / audioDurationNumber
+    // Cache filename includes mode params so stale cached images are not reused after settings change
+    const fileBuffer = fs.readFileSync(filePath)
+    const audioHash = crypto.createHash('sha256').update(fileBuffer).digest('hex').substring(0, 32)
+    const cacheLabel = mode === 'wide' ? `wide-pps${pixelsPerSecondSetting}` : 'fixed-w600'
+    const waveformPath = path.join(waveformDir, `waveform-${audioHash}-${cacheLabel}.png`)
 
     if (mode === 'wide') {
-      targetWidth = Math.max(defaultWidth, Math.round(audioDurationNumber * pixelsPerSecondSetting))
-      targetWidth = Math.min(targetWidth, maxWidth)
-      rawPixelsPerSecond = targetWidth / audioDurationNumber
+      // Wide mode: let audiowaveform decide the width from --pixels-per-second alone.
+      // Do NOT pass -w — combining both flags causes whichever audiowaveform ignores to
+      // produce an image whose actual pixel width doesn't match our metadata.
+      // We read the actual PNG width after generation and return that as actualWidth.
+
+      if (fs.existsSync(waveformPath)) {
+        const imageBuffer = fs.readFileSync(waveformPath)
+        const dimensions = getPngDimensions(imageBuffer)
+        const actualWidth = dimensions?.width ?? 0
+        if (actualWidth > 0) {
+          return {
+            success: true,
+            data: `data:image/png;base64,${imageBuffer.toString('base64')}`,
+            pixelsPerSecond: pixelsPerSecondSetting,
+            actualWidth,
+          }
+        }
+        fs.unlinkSync(waveformPath) // corrupt / unreadable — regenerate
+      }
+
+      const wideArgs: string[] = [
+        '-i', filePath,
+        '-o', waveformPath,
+        '-h', '150',
+        '--pixels-per-second', Math.min(pixelsPerSecondSetting, Math.floor(maxWidth / audioDurationNumber)).toString(),
+        '--waveform-style', 'bars',
+        '--bar-width', '2',
+        '--bar-gap', '1',
+        '--bar-style', 'rounded',
+        '--background-color', '282b30',
+        '--waveform-color', 'd07a2d',
+        '--no-axis-labels',
+        '--amplitude-scale', '1.8',
+      ]
+
+      return new Promise<{ success: boolean; data?: string; error?: string; pixelsPerSecond?: number; actualWidth?: number }>((resolve) => {
+        if (audiowaveformProcess) {
+          audiowaveformProcess.kill('SIGTERM')
+          audiowaveformProcess = null
+        }
+
+        audiowaveformProcess = spawn(audiowaveformPath, wideArgs, {
+          cwd: path.dirname(audiowaveformPath),
+          windowsHide: true,
+          env: { ...process.env, PROCESS_NAME: 'CS2 Audio Waveform Generator' },
+        })
+
+        let stderr = ''
+        audiowaveformProcess.stderr?.on('data', (data) => { stderr += data.toString() })
+
+        audiowaveformProcess.on('close', (code) => {
+          audiowaveformProcess = null
+          if (code === 0 && fs.existsSync(waveformPath)) {
+            try {
+              const imageBuffer = fs.readFileSync(waveformPath)
+              const dimensions = getPngDimensions(imageBuffer)
+              const actualWidth = dimensions?.width ?? Math.round(audioDurationNumber * pixelsPerSecondSetting)
+              console.log(`[Waveform] Wide waveform generated: ${actualWidth}px (${pixelsPerSecondSetting}pps, ${audioDurationNumber.toFixed(1)}s audio)`)
+              resolve({
+                success: true,
+                data: `data:image/png;base64,${imageBuffer.toString('base64')}`,
+                pixelsPerSecond: pixelsPerSecondSetting,
+                actualWidth,
+              })
+            } catch (error) {
+              resolve({ success: false, error: `Failed to read waveform: ${error instanceof Error ? error.message : String(error)}` })
+            }
+          } else {
+            resolve({ success: false, error: `audiowaveform failed with code ${code}: ${stderr}` })
+          }
+        })
+
+        audiowaveformProcess.on('error', (error) => {
+          audiowaveformProcess = null
+          resolve({ success: false, error: `Failed to spawn audiowaveform: ${error.message}` })
+        })
+      })
     }
 
-    if (!Number.isFinite(rawPixelsPerSecond) || rawPixelsPerSecond <= 0) {
-      return { success: false, error: 'Invalid pixels-per-second calculation' }
-    }
-    const pixelsPerSecond = Math.max(1, Math.ceil(rawPixelsPerSecond))
+    // Fixed mode: pass only -w so audiowaveform scales the full audio to exactly 600px.
+    const targetWidth = 600
+    const pixelsPerSecond = targetWidth / audioDurationNumber
 
-    // Check if waveform already exists (cache)
-    // Note: We still use cached waveforms, but always calculate pixelsPerSecond based on targetWidth
     if (fs.existsSync(waveformPath)) {
       const imageBuffer = fs.readFileSync(waveformPath)
-      const base64 = imageBuffer.toString('base64')
-      
-      // Always use targetWidth for pixelsPerSecond calculation, regardless of cached image size
-      // This ensures consistent behavior even if old cached waveforms have different dimensions
-      
-      return { 
-        success: true, 
-        data: `data:image/png;base64,${base64}`,
-        pixelsPerSecond,
-        actualWidth: targetWidth, // Always report targetWidth as actualWidth for consistency
+      const dimensions = getPngDimensions(imageBuffer)
+      if (dimensions && dimensions.width === targetWidth) {
+        return {
+          success: true,
+          data: `data:image/png;base64,${imageBuffer.toString('base64')}`,
+          pixelsPerSecond,
+          actualWidth: targetWidth,
+        }
       }
+      console.log(`[Waveform] Cached fixed waveform wrong width (${dimensions?.width}px vs ${targetWidth}px), regenerating`)
+      fs.unlinkSync(waveformPath)
     }
 
-    // Build audiowaveform command
-    // Colors: background #282b30, waveform #d07a2d, progress will be overlaid in React
-    // Using bars style for better visual appeal
-    // Calculate pixels-per-second dynamically to ensure waveform is always exactly 600px
     const args: string[] = [
       '-i', filePath,
       '-o', waveformPath,
-      '-w', targetWidth.toString(),   // Fixed width (wide for team waveform)
-      '-h', '150',   // Fixed height for consistent display
+      '-w', targetWidth.toString(),
+      '-h', '150',
       '--waveform-style', 'bars',
-      '--bar-width', '2',   // Slightly thinner bars for higher resolution
+      '--bar-width', '2',
       '--bar-gap', '1',
       '--bar-style', 'rounded',
-      '--background-color', '282b30',  // Dark background matching theme
-      '--waveform-color', 'd07a2d',    // Orange waveform matching accent
-      '--no-axis-labels',              // No axis labels for cleaner look
-      '--amplitude-scale', '1.8',       // Lower fixed scale to preserve volume relationships
-      // Dynamic pixels-per-second ensures waveform is always exactly 600px regardless of duration
+      '--background-color', '282b30',
+      '--waveform-color', 'd07a2d',
+      '--no-axis-labels',
+      '--amplitude-scale', '1.8',
     ]
-
-    if (mode === 'fixed') {
-      args.push('--pixels-per-second', pixelsPerSecond.toString())
-    }
 
     return new Promise<{ success: boolean; data?: string; error?: string; pixelsPerSecond?: number; actualWidth?: number }>((resolve) => {
       // Kill any existing audiowaveform process before starting a new one
@@ -5770,18 +5825,16 @@ ipcMain.handle('voice:generateWaveform', async (_, filePath: string, audioDurati
             const imageBuffer = fs.readFileSync(waveformPath)
             const base64 = imageBuffer.toString('base64')
             
-            // Verify the generated waveform is the correct width
-            // Always use targetWidth for pixelsPerSecond calculation to ensure consistency
             const dimensions = getPngDimensions(imageBuffer)
-            if (dimensions && dimensions.width !== targetWidth) {
-              console.warn(`[Waveform] Generated waveform width (${dimensions.width}px) does not match target (${targetWidth}px)`)
+            const actualWidth = dimensions?.width ?? targetWidth
+            if (actualWidth !== targetWidth) {
+              console.warn(`[Waveform] Fixed waveform width (${actualWidth}px) differs from target (${targetWidth}px)`)
             }
-            
-            resolve({ 
-              success: true, 
+            resolve({
+              success: true,
               data: `data:image/png;base64,${base64}`,
-              pixelsPerSecond, // Already calculated based on targetWidth and audioDuration
-              actualWidth: targetWidth, // Always report targetWidth for consistency
+              pixelsPerSecond: actualWidth / audioDurationNumber,
+              actualWidth,
             })
           } catch (error) {
             resolve({ success: false, error: `Failed to read waveform: ${error instanceof Error ? error.message : String(error)}` })

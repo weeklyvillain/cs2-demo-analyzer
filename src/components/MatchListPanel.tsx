@@ -146,6 +146,7 @@ export interface MatchListPanelProps {
   onToggleMatchSelection: (matchId: string) => void
   onClearSelection: () => void
   onDeleteSelected: () => void
+  onAddDemo: () => void
 }
 
 export default function MatchListPanel({
@@ -169,6 +170,7 @@ export default function MatchListPanel({
   onToggleMatchSelection,
   onClearSelection,
   onDeleteSelected,
+  onAddDemo,
 }: MatchListPanelProps) {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; match: Match } | null>(null)
 
@@ -199,39 +201,48 @@ export default function MatchListPanel({
       {/* Search and Sorting Controls */}
       {matches.length > 0 && (
         <div className="mb-4 space-y-3">
-          {/* Search Bar */}
-          <div className="relative">
-            <input
-              type="text"
-              placeholder={t('matches.searchPlaceholder')}
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full px-4 py-2 pl-10 bg-surface border border-border rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent"
-            />
-            <div className="absolute left-3 top-1/2 transform -translate-y-1/2">
-              <svg
-                className="w-5 h-5 text-gray-500"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-                />
-              </svg>
+          {/* Search Bar + Add Demo */}
+          <div className="flex gap-2">
+            <div className="relative flex-1">
+              <input
+                type="text"
+                placeholder={t('matches.searchPlaceholder')}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full px-4 py-2 pl-10 bg-surface border border-border rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent"
+              />
+              <div className="absolute left-3 top-1/2 transform -translate-y-1/2">
+                <svg
+                  className="w-5 h-5 text-gray-500"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                  />
+                </svg>
+              </div>
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500 hover:text-white transition-colors"
+                  title={t('matches.clearSearch')}
+                >
+                  <X size={18} />
+                </button>
+              )}
             </div>
-            {searchQuery && (
-              <button
-                onClick={() => setSearchQuery('')}
-                className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500 hover:text-white transition-colors"
-                title={t('matches.clearSearch')}
-              >
-                <X size={18} />
-              </button>
-            )}
+            <button
+              onClick={onAddDemo}
+              className="flex items-center gap-2 px-4 py-2 bg-accent hover:bg-accent/80 text-white rounded-lg transition-colors text-sm font-medium whitespace-nowrap"
+            >
+              <Upload size={16} />
+              Add Demo
+            </button>
           </div>
 
           {/* Results count */}
@@ -316,11 +327,18 @@ export default function MatchListPanel({
         </div>
       ) : matches.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-16 gap-4">
-          <div className="text-center text-gray-400">
+          <div className="flex flex-col items-center text-center text-gray-400">
             <Upload className="w-16 h-16 mx-auto mb-4 text-gray-500 opacity-50" />
             <p className="text-lg mb-2">{t('matches.noMatches')}</p>
             <p className="text-sm mb-4">{t('matches.parseToStart')}</p>
-            <div className="mt-6 p-4 bg-surface/50 rounded-lg border border-gray-700/50 max-w-md">
+            <button
+              onClick={onAddDemo}
+              className="flex items-center gap-2 px-5 py-2.5 bg-accent hover:bg-accent/80 text-white rounded-lg transition-colors text-sm font-medium"
+            >
+              <Upload size={16} />
+              {t('matches.addDemo')}
+            </button>
+            <div className="mt-4 p-4 bg-surface/50 rounded-lg border border-gray-700/50 max-w-md">
               <p className="text-sm text-gray-300 mb-2 font-medium">{t('matches.dragDrop')}</p>
               <p className="text-xs text-gray-400">
                 {t('matches.dragDropDesc')}
