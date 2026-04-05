@@ -446,6 +446,12 @@ function sendCommandLogToOverlay(): void {
   overlayWindow.webContents.send('overlay:commandLog', log)
 }
 
+// Must be called before app is ready. Registers audio-file:// as a privileged scheme
+// so the renderer can use fetch() and <audio src> with it without CORS/security blocks.
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'audio-file', privileges: { supportFetchAPI: true, corsEnabled: true, stream: true } },
+])
+
 app.whenReady().then(async () => {
   // Register protocol to serve map images (thumbnails for cards)
   protocol.registerFileProtocol('map', (request, callback) => {
@@ -467,21 +473,47 @@ app.whenReady().then(async () => {
     const radarPath = path.join(__dirname, '../resources/radars', url)
     callback({ path: radarPath })
   })
+
+  // Stream audio files for voice playback via audio-file:// scheme.
+  // This avoids transferring large WAV files as base64 over IPC, which
+  // would freeze the renderer via synchronous structured-clone deserialization.
+  protocol.handle('audio-file', async (request) => {
+    const url = new URL(request.url)
+    let filePath = decodeURIComponent(url.pathname)
+    // Windows: pathname is /C:/path/... — strip the leading slash before the drive letter
+    if (/^\/[A-Za-z]:\//.test(filePath)) filePath = filePath.slice(1)
+    try {
+      const ext = path.extname(filePath).toLowerCase()
+      const mimeType = ext === '.mp3' ? 'audio/mpeg' : 'audio/wav'
+      const stat = await fs.promises.stat(filePath)
+      const fileStream = fs.createReadStream(filePath)
+      const readable = new ReadableStream({
+        start(controller) {
+          fileStream.on('data', chunk => controller.enqueue(chunk))
+          fileStream.on('end', () => controller.close())
+          fileStream.on('error', err => controller.error(err))
+        },
+      })
+      return new Response(readable, {
+        headers: { 'Content-Type': mimeType, 'Content-Length': String(stat.size) },
+      })
+    } catch {
+      return new Response('Not found', { status: 404 })
+    }
+  })
   
-  // IPC handler to get audio file as base64 (to avoid CORS/file protocol issues)
+  // IPC handler to get audio file URL for voice playback.
+  // Returns an audio-file:// URL served by the custom protocol handler above,
+  // so the renderer never receives raw file bytes over IPC.
   ipcMain.handle('voice:getAudio', async (_, filePath: string) => {
     try {
       if (!fs.existsSync(filePath)) {
         return { success: false, error: 'Audio file not found' }
       }
-      
-      const audioBuffer = await fs.promises.readFile(filePath)
-      const base64 = audioBuffer.toString('base64')
-      // Determine MIME type from file extension
-      const ext = path.extname(filePath).toLowerCase()
-      const mimeType = ext === '.wav' ? 'audio/wav' : ext === '.mp3' ? 'audio/mpeg' : 'audio/wav'
-      
-      return { success: true, data: `data:${mimeType};base64,${base64}` }
+      // Normalise to forward slashes; prepend / so Windows drive letters produce /C:/...
+      const normalised = filePath.replace(/\\/g, '/')
+      const withSlash = normalised.startsWith('/') ? normalised : `/${normalised}`
+      return { success: true, data: `audio-file://${withSlash}` }
     } catch (error) {
       console.error('Error loading audio file:', error)
       return { success: false, error: String(error) }
