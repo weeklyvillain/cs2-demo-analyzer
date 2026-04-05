@@ -244,6 +244,87 @@ export default function VoicePlaybackModal({
     }
   }, [selectedFile, isOpen])
 
+  // Decode audio data and compute RMS amplitudes when the data URL is ready.
+  // Sets audioDuration from audioBuffer.duration — the single source of truth for all time math.
+  useEffect(() => {
+    if (!audioUrl || !isOpen) {
+      setAmplitudes(null)
+      setAudioDuration(0)
+      setNumBars(0)
+      return
+    }
+
+    let cancelled = false
+
+    const decode = async () => {
+      try {
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext
+        if (!AudioContextClass) return
+
+        const arrayBuffer = dataUrlToArrayBuffer(audioUrl)
+        const ctx = new AudioContextClass()
+        const audioBuffer = await ctx.decodeAudioData(arrayBuffer)
+        await ctx.close()
+
+        if (cancelled) return
+
+        const channelData = audioBuffer.getChannelData(0)
+        const dur = audioBuffer.duration
+        // displayWidth may be 0 on first run; computeNumBars handles that gracefully
+        const bars = computeNumBars(dur, displayWidth || 400)
+        const rms = computeRmsAmplitudes(channelData, bars)
+
+        setAudioDuration(dur)
+        setNumBars(bars)
+        setAmplitudes(rms)
+        // Override duration state so time display uses audioBuffer duration
+        setDuration(dur)
+      } catch (err) {
+        console.error('[VoicePlaybackModal] decodeAudioData failed:', err)
+      }
+    }
+
+    decode()
+    return () => { cancelled = true }
+  }, [audioUrl, isOpen])
+
+  // Measure the canvas container so waveform bars fill the available width.
+  // Recomputes numBars when the container resizes.
+  useEffect(() => {
+    const container = canvasContainerRef.current
+    if (!container) return
+
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width ?? 0
+      if (width > 0) {
+        setDisplayWidth(width)
+        if (audioDuration > 0) {
+          const bars = computeNumBars(audioDuration, width)
+          setNumBars(bars)
+        }
+      }
+    })
+    observer.observe(container)
+    return () => observer.disconnect()
+  }, [audioDuration])
+
+  // Redraw the waveform canvas whenever playback position or waveform data changes.
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas || !amplitudes || numBars === 0 || displayWidth === 0 || audioDuration <= 0) return
+
+    // Keep canvas pixel size in sync with display size
+    if (canvas.width !== displayWidth) canvas.width = displayWidth
+
+    const { scrollX, playheadPx, playedBarIndex } = computeScrollState(
+      currentTime,
+      audioDuration,
+      numBars,
+      displayWidth,
+    )
+    drawWaveform(canvas, amplitudes, scrollX, playedBarIndex, playheadPx, displayWidth)
+  }, [currentTime, amplitudes, numBars, displayWidth, audioDuration])
+
   // Set up Web Audio API for volume boost above 100%
   useEffect(() => {
     if (!audioRef.current || !audioUrl) return
