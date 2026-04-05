@@ -1,8 +1,7 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Play, Pause, Volume2, Download, Gauge, Loader2 } from 'lucide-react'
 import Modal from './Modal'
 import {
-  computeRmsAmplitudes,
   computeNumBars,
   computeScrollState,
   canvasXToTime,
@@ -57,6 +56,10 @@ export default function VoicePlaybackModal({
   const logsEndRef = useRef<HTMLDivElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const canvasContainerRef = useRef<HTMLDivElement | null>(null)
+  // Smooth playhead interpolation: stores the last known audio clock anchor so
+  // the rAF draw loop can interpolate between timeupdate (~4Hz) ticks using
+  // performance.now() — giving sub-millisecond smooth waveform scrolling.
+  const playRefRef = useRef<{ audioTime: number; perfTime: number; rate: number } | null>(null)
 
   const selectedFile = audioFiles[selectedFileIndex]
 
@@ -243,8 +246,10 @@ export default function VoicePlaybackModal({
 
   // Decode audio data and compute RMS amplitudes when the data URL is ready.
   // Sets audioDuration from audioBuffer.duration — the single source of truth for all time math.
+  // Compute waveform amplitudes in the main process via WAV parsing.
+  // Fires when the selected file changes; no audio API used in the renderer.
   useEffect(() => {
-    if (!audioUrl || !isOpen) {
+    if (!selectedFile || !isOpen) {
       setAmplitudes(null)
       setAudioDuration(0)
       setNumBars(0)
@@ -253,74 +258,70 @@ export default function VoicePlaybackModal({
 
     let cancelled = false
 
-    const decode = async () => {
+    const computeWaveform = async () => {
       try {
-        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext
-        if (!AudioContextClass) return
-
-        const arrayBuffer = await fetch(audioUrl).then(r => r.arrayBuffer())
-        const ctx = new AudioContextClass()
-        const audioBuffer = await ctx.decodeAudioData(arrayBuffer)
-        await ctx.close()
-
-        if (cancelled) return
-
-        const channelData = audioBuffer.getChannelData(0)
-        const dur = audioBuffer.duration
-        // displayWidth may be 0 on first run; computeNumBars handles that gracefully
-        const bars = computeNumBars(dur, displayWidth || 400)
-        const rms = computeRmsAmplitudes(channelData, bars)
-
-        setAudioDuration(dur)
-        setNumBars(bars)
-        setAmplitudes(rms)
-        // Override duration state so time display uses audioBuffer duration
-        setDuration(dur)
+        const bars = computeNumBars(audioDuration || duration || 60, displayWidth || 600)
+        const result = await window.electronAPI.computeWaveformFromFile(selectedFile.path, bars)
+        if (cancelled || !result.success || !result.amplitudes) return
+        const dur = result.duration ?? 0
+        setAmplitudes(new Float32Array(result.amplitudes))
+        setNumBars(result.amplitudes.length)
+        if (dur > 0) {
+          setAudioDuration(dur)
+          setDuration(dur)
+        }
       } catch (err) {
-        console.error('[VoicePlaybackModal] decodeAudioData failed:', err)
+        console.error('[VoicePlaybackModal] computeWaveform failed:', err)
       }
     }
 
-    decode()
+    computeWaveform()
     return () => { cancelled = true }
-  }, [audioUrl, isOpen])
+  }, [selectedFile, isOpen])
 
-  // Measure the canvas container so waveform bars fill the available width.
-  // Recomputes numBars when the container resizes.
+  // Measure the canvas container so scroll/draw math uses actual pixel width.
+  // Depends on audioUrl: the canvas div only renders once audioUrl is set,
+  // so we re-run after that state change to actually find canvasContainerRef.current.
   useEffect(() => {
     const container = canvasContainerRef.current
     if (!container) return
-
     const observer = new ResizeObserver((entries) => {
       const width = entries[0]?.contentRect.width ?? 0
-      if (width > 0) {
-        setDisplayWidth(width)
-        if (audioDuration > 0) {
-          const bars = computeNumBars(audioDuration, width)
-          setNumBars(bars)
-        }
-      }
+      if (width > 0) setDisplayWidth(width)
     })
     observer.observe(container)
     return () => observer.disconnect()
-  }, [audioDuration])
+  }, [audioUrl])
 
-  // Redraw the waveform canvas whenever playback position or waveform data changes.
+  // Redraw the waveform canvas at ~60fps via requestAnimationFrame.
+  // During playback, interpolates currentTime using performance.now() so scrolling
+  // is smooth regardless of how often the audio clock ticks.
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas || !amplitudes || numBars === 0 || displayWidth === 0 || audioDuration <= 0) return
 
-    // Keep canvas pixel size in sync with display size
     if (canvas.width !== displayWidth) canvas.width = displayWidth
 
-    const { scrollX, playheadPx, playedBarIndex } = computeScrollState(
-      currentTime,
-      audioDuration,
-      numBars,
-      displayWidth,
-    )
-    drawWaveform(canvas, amplitudes, scrollX, playedBarIndex, playheadPx, displayWidth)
-  }, [currentTime, amplitudes, numBars, displayWidth, audioDuration])
+    let rafId: number
+    const draw = () => {
+      let time: number
+      const ref = playRefRef.current
+      if (ref) {
+        // Interpolate smoothly between timeupdate corrections
+        const elapsed = (performance.now() - ref.perfTime) / 1000
+        time = Math.min(audioDuration, ref.audioTime + elapsed * ref.rate)
+      } else {
+        time = audioRef.current?.currentTime ?? 0
+      }
+      const { scrollX, playheadPx, playedBarIndex } = computeScrollState(
+        time, audioDuration, numBars, displayWidth,
+      )
+      drawWaveform(canvas, amplitudes, scrollX, playedBarIndex, playheadPx, displayWidth)
+      rafId = requestAnimationFrame(draw)
+    }
+    rafId = requestAnimationFrame(draw)
+    return () => cancelAnimationFrame(rafId)
+  }, [amplitudes, numBars, displayWidth, audioDuration])
 
   // Set up Web Audio API for volume boost above 100%
   useEffect(() => {
@@ -423,10 +424,43 @@ export default function VoicePlaybackModal({
     }
   }
 
-  // Update current time during playback
+  // Update current time during playback; also resets the smooth-scroll anchor
+  // so the rAF interpolation stays in sync with the real audio clock.
   const handleTimeUpdate = () => {
     if (audioRef.current) {
-      setCurrentTime(audioRef.current.currentTime)
+      const t = audioRef.current.currentTime
+      setCurrentTime(t)
+      if (playRefRef.current) {
+        playRefRef.current = { audioTime: t, perfTime: performance.now(), rate: audioRef.current.playbackRate }
+      }
+    }
+  }
+
+  const handlePlay = () => {
+    if (audioRef.current) {
+      playRefRef.current = { audioTime: audioRef.current.currentTime, perfTime: performance.now(), rate: audioRef.current.playbackRate }
+    }
+  }
+
+  const handlePause = () => {
+    playRefRef.current = null
+  }
+
+  const handleEnded = () => {
+    setIsPlaying(false)
+    handlePause()
+    // Reset to beginning so the next play starts fresh and seek/skip work correctly
+    if (audioRef.current) {
+      audioRef.current.currentTime = 0
+    }
+    setCurrentTime(0)
+  }
+
+  const handleSeeked = () => {
+    if (audioRef.current) {
+      playRefRef.current = audioRef.current.paused
+        ? null
+        : { audioTime: audioRef.current.currentTime, perfTime: performance.now(), rate: audioRef.current.playbackRate }
     }
   }
 
@@ -515,7 +549,7 @@ export default function VoicePlaybackModal({
   // Handle skip backward
   const handleSkipBackward = () => {
     if (audioRef.current) {
-      const newTime = Math.max(0, currentTime - skipTime)
+      const newTime = Math.max(0, audioRef.current.currentTime - skipTime)
       audioRef.current.currentTime = newTime
       setCurrentTime(newTime)
     }
@@ -524,7 +558,7 @@ export default function VoicePlaybackModal({
   // Handle skip forward
   const handleSkipForward = () => {
     if (audioRef.current && duration > 0) {
-      const newTime = Math.min(duration, currentTime + skipTime)
+      const newTime = Math.min(duration, audioRef.current.currentTime + skipTime)
       audioRef.current.currentTime = newTime
       setCurrentTime(newTime)
     }
@@ -645,7 +679,7 @@ export default function VoicePlaybackModal({
 
         {/* Playback Screen */}
         {modalState === 'playback' && (
-          <div className="space-y-0">
+          <div className="space-y-3">
             {playbackError ? (
               <div className="bg-orange-900/20 border border-orange-500/50 rounded p-4">
                 <p className="text-orange-400 font-semibold mb-1">Extraction failed</p>
@@ -766,7 +800,8 @@ export default function VoicePlaybackModal({
                             step="0.05"
                             value={volume}
                             onChange={handleVolumeChange}
-                            className="w-full h-1.5 bg-secondary rounded-lg appearance-none cursor-pointer accent-accent"
+                            className="w-full h-1.5 rounded-lg appearance-none cursor-pointer accent-accent"
+                            style={{ background: `linear-gradient(to right, #d07a2d ${(volume / 2) * 100}%, #36393e ${(volume / 2) * 100}%)` }}
                           />
                         </div>
 
@@ -783,7 +818,8 @@ export default function VoicePlaybackModal({
                             step="0.1"
                             value={playbackRate}
                             onChange={handlePlaybackRateChange}
-                            className="w-full h-1.5 bg-secondary rounded-lg appearance-none cursor-pointer accent-accent"
+                            className="w-full h-1.5 rounded-lg appearance-none cursor-pointer accent-accent"
+                            style={{ background: `linear-gradient(to right, #d07a2d ${((playbackRate - 0.5) / 1.5) * 100}%, #36393e ${((playbackRate - 0.5) / 1.5) * 100}%)` }}
                           />
                         </div>
 
@@ -805,7 +841,7 @@ export default function VoicePlaybackModal({
                         {/* Canvas waveform */}
                         <div
                           ref={canvasContainerRef}
-                          className="flex-1 bg-secondary rounded-md overflow-hidden cursor-pointer"
+                          className="bg-secondary rounded-md overflow-hidden cursor-pointer"
                           style={{ minHeight: '180px', position: 'relative' }}
                           onClick={(e) => {
                             if (!amplitudes || numBars === 0 || audioDuration <= 0 || !canvasContainerRef.current) return
@@ -850,7 +886,8 @@ export default function VoicePlaybackModal({
                               if (audioRef.current) audioRef.current.currentTime = newTime
                               setCurrentTime(newTime)
                             }}
-                            className="w-full h-1.5 bg-secondary rounded-lg appearance-none cursor-pointer accent-accent border border-border"
+                            className="w-full h-1.5 rounded-lg appearance-none cursor-pointer accent-accent border border-border"
+                            style={{ background: `linear-gradient(to right, #d07a2d ${((audioDuration || duration) > 0 ? currentTime / (audioDuration || duration) : 0) * 100}%, #36393e ${((audioDuration || duration) > 0 ? currentTime / (audioDuration || duration) : 0) * 100}%)` }}
                           />
                         </div>
                       </div>
@@ -879,9 +916,10 @@ export default function VoicePlaybackModal({
                       src={audioUrl}
                       onLoadedMetadata={handleLoadedMetadata}
                       onTimeUpdate={handleTimeUpdate}
-                      onEnded={() => setIsPlaying(false)}
-                      onPlay={() => setIsPlaying(true)}
-                      onPause={() => setIsPlaying(false)}
+                      onPlay={(e) => { setIsPlaying(true); handlePlay() }}
+                      onPause={(e) => { setIsPlaying(false); handlePause() }}
+                      onSeeked={handleSeeked}
+                      onEnded={handleEnded}
                     />
                   </>
                 ) : null}

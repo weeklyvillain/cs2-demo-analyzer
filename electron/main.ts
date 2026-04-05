@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, shell, clipboard, protocol, Menu, globalShortcut, screen } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, shell, clipboard, protocol, net as electronNet, Menu, globalShortcut, screen } from 'electron'
 import { autoUpdater, UpdateInfo } from 'electron-updater'
 import { spawn, ChildProcess, exec } from 'child_process'
 import * as path from 'path'
@@ -447,10 +447,99 @@ function sendCommandLogToOverlay(): void {
 }
 
 // Must be called before app is ready. Registers audio-file:// as a privileged scheme
-// so the renderer can use fetch() and <audio src> with it without CORS/security blocks.
+// so the renderer can use <audio src> with it, with range-request (seek) support.
 protocol.registerSchemesAsPrivileged([
-  { scheme: 'audio-file', privileges: { supportFetchAPI: true, corsEnabled: true, stream: true } },
+  { scheme: 'audio-file', privileges: { secure: true, supportFetchAPI: true, stream: true } },
 ])
+
+/**
+ * Parse a WAV file buffer and compute normalised RMS amplitudes for numBars bars.
+ * Runs in the main process so the renderer never loads the raw PCM into its heap.
+ * Supports 8-bit unsigned PCM, 16-bit signed PCM, and 32-bit IEEE float WAV.
+ */
+function computeWavAmplitudes(buf: Buffer, numBars: number): { amplitudes: number[]; duration: number } {
+  const empty = { amplitudes: new Array(numBars).fill(0.05), duration: 0 }
+  if (buf.length < 44) return empty
+  if (buf.toString('ascii', 0, 4) !== 'RIFF') {
+    console.warn('[computeWavAmplitudes] Not a RIFF file, header:', buf.toString('hex', 0, 12))
+    return empty
+  }
+  if (buf.toString('ascii', 8, 12) !== 'WAVE') {
+    console.warn('[computeWavAmplitudes] Not a WAVE file, type:', buf.toString('ascii', 8, 12))
+    return empty
+  }
+
+  let audioFormat = 1, numChannels = 1, sampleRate = 16000, bitsPerSample = 16
+  let dataOffset = -1, dataLength = 0
+  let offset = 12
+
+  while (offset + 8 <= buf.length) {
+    const chunkId = buf.toString('ascii', offset, offset + 4)
+    const chunkSize = buf.readUInt32LE(offset + 4)
+    if (chunkId === 'fmt ' && chunkSize >= 16) {
+      audioFormat   = buf.readUInt16LE(offset + 8)
+      numChannels   = buf.readUInt16LE(offset + 10)
+      sampleRate    = buf.readUInt32LE(offset + 12)
+      bitsPerSample = buf.readUInt16LE(offset + 22)
+    } else if (chunkId === 'data') {
+      dataOffset = offset + 8
+      dataLength = Math.min(chunkSize, buf.length - dataOffset)
+      break
+    }
+    offset += 8 + ((chunkSize + 1) & ~1) // chunks are word-aligned
+  }
+
+  console.log(`[computeWavAmplitudes] fmt: audioFormat=${audioFormat} channels=${numChannels} sampleRate=${sampleRate} bits=${bitsPerSample} dataOffset=${dataOffset} dataLength=${dataLength} bufLen=${buf.length}`)
+
+  if (dataOffset === -1 || sampleRate === 0 || numChannels === 0) return empty
+  const bytesPerSample = Math.ceil(bitsPerSample / 8)
+  const blockAlign = numChannels * bytesPerSample
+  if (blockAlign === 0) return empty
+
+  const numSamples = Math.floor(dataLength / blockAlign)
+  const duration = numSamples / sampleRate
+  if (numSamples === 0) return { ...empty, duration }
+
+  const samplesPerBar = Math.max(1, Math.floor(numSamples / numBars))
+  const amplitudes: number[] = new Array(numBars).fill(0)
+  let maxRms = 0
+
+  for (let i = 0; i < numBars; i++) {
+    const startSample = i * samplesPerBar
+    const endSample = Math.min(startSample + samplesPerBar, numSamples)
+    let sumSq = 0
+    let count = 0
+    for (let j = startSample; j < endSample; j++) {
+      const byteOff = dataOffset + j * blockAlign
+      if (byteOff + bytesPerSample > buf.length) break
+      let sample = 0
+      if (bitsPerSample === 16 && audioFormat === 1) {
+        sample = buf.readInt16LE(byteOff) / 32768
+      } else if (bitsPerSample === 8 && audioFormat === 1) {
+        sample = (buf.readUInt8(byteOff) - 128) / 128
+      } else if (bitsPerSample === 32 && audioFormat === 1) {
+        sample = buf.readInt32LE(byteOff) / 2147483648
+      } else if (bitsPerSample === 32 && audioFormat === 3) {
+        sample = buf.readFloatLE(byteOff)
+      }
+      sumSq += sample * sample
+      count++
+    }
+    if (count > 0) {
+      amplitudes[i] = Math.sqrt(sumSq / count)
+      if (amplitudes[i] > maxRms) maxRms = amplitudes[i]
+    }
+  }
+
+  console.log(`[computeWavAmplitudes] numSamples=${numSamples} duration=${duration.toFixed(2)}s maxRms=${maxRms.toFixed(6)} numBars=${numBars}`)
+
+  if (maxRms > 0) {
+    for (let i = 0; i < numBars; i++) {
+      amplitudes[i] = Math.pow(amplitudes[i] / maxRms, 0.6)
+    }
+  }
+  return { amplitudes, duration }
+}
 
 app.whenReady().then(async () => {
   // Register protocol to serve map images (thumbnails for cards)
@@ -475,31 +564,17 @@ app.whenReady().then(async () => {
   })
 
   // Stream audio files for voice playback via audio-file:// scheme.
-  // This avoids transferring large WAV files as base64 over IPC, which
-  // would freeze the renderer via synchronous structured-clone deserialization.
-  protocol.handle('audio-file', async (request) => {
+  // Uses net.fetch (Electron's own fetch) which correctly handles file:// with
+  // range requests (seek support) and doesn't require ReadableStream compatibility.
+  protocol.handle('audio-file', (request) => {
     const url = new URL(request.url)
     let filePath = decodeURIComponent(url.pathname)
-    // Windows: pathname is /C:/path/... — strip the leading slash before the drive letter
+    // Windows: strip leading slash before drive letter (/C:/... → C:/...)
     if (/^\/[A-Za-z]:\//.test(filePath)) filePath = filePath.slice(1)
-    try {
-      const ext = path.extname(filePath).toLowerCase()
-      const mimeType = ext === '.mp3' ? 'audio/mpeg' : 'audio/wav'
-      const stat = await fs.promises.stat(filePath)
-      const fileStream = fs.createReadStream(filePath)
-      const readable = new ReadableStream({
-        start(controller) {
-          fileStream.on('data', chunk => controller.enqueue(chunk))
-          fileStream.on('end', () => controller.close())
-          fileStream.on('error', err => controller.error(err))
-        },
-      })
-      return new Response(readable, {
-        headers: { 'Content-Type': mimeType, 'Content-Length': String(stat.size) },
-      })
-    } catch {
-      return new Response('Not found', { status: 404 })
-    }
+    // Forward Range header so the audio element can seek
+    return electronNet.fetch(`file:///${filePath.replace(/\\/g, '/')}`, {
+      headers: request.headers,
+    })
   })
   
   // IPC handler to get audio file URL for voice playback.
@@ -516,6 +591,21 @@ app.whenReady().then(async () => {
       return { success: true, data: `audio-file://${withSlash}` }
     } catch (error) {
       console.error('Error loading audio file:', error)
+      return { success: false, error: String(error) }
+    }
+  })
+
+  // Compute waveform amplitudes from a WAV file in the main process.
+  // Parses PCM data directly — avoids decoding audio in the renderer which can
+  // cause OOM or native audio-subsystem crashes for large files.
+  ipcMain.handle('voice:computeWaveform', async (_, filePath: string, numBars: number) => {
+    try {
+      if (!fs.existsSync(filePath)) return { success: false, error: 'Audio file not found' }
+      const buf = await fs.promises.readFile(filePath)
+      const result = computeWavAmplitudes(buf, Math.max(1, numBars))
+      return { success: true, ...result }
+    } catch (error) {
+      console.error('[voice:computeWaveform]', error)
       return { success: false, error: String(error) }
     }
   })

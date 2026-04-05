@@ -95,6 +95,7 @@ export interface ElectronAPI {
   getDemoFolders: () => Promise<string[]>
   extractVoice: (options: { demoPath: string; outputPath?: string; mode?: 'split-compact' | 'split-full' | 'single-full'; steamIds?: string[] }) => Promise<{ success: boolean; outputPath: string | null; files: string[]; filePaths?: string[] }>
   getVoiceAudio: (filePath: string) => Promise<{ success: boolean; data?: string; error?: string }>
+  computeWaveformFromFile: (filePath: string, numBars: number) => Promise<{ success: boolean; amplitudes?: number[]; duration?: number; error?: string }>
   generateWaveform: (
     filePath: string,
     audioDuration?: number,
