@@ -118,7 +118,7 @@ export function drawWaveform(
   const centerY = height / 2
   const maxBarHalfHeight = centerY * 0.88
 
-  ctx.clearRect(0, 0, displayWidth, height)
+  ctx.clearRect(0, 0, canvas.width, height)
 
   // Played-region tint
   const playheadInDisplay = playheadPx - scrollX

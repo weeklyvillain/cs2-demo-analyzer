@@ -513,7 +513,7 @@ export default function VoicePlaybackModal({
     return () => {
       window.removeEventListener('keydown', handleKeyDown)
     }
-  }, [isOpen, modalState])
+  }, [isOpen, modalState, duration, skipTime])
 
   // Handle skip backward
   const handleSkipBackward = () => {
@@ -826,7 +826,8 @@ export default function VoicePlaybackModal({
                             if (!amplitudes || numBars === 0 || audioDuration <= 0 || !canvasContainerRef.current) return
                             const rect = canvasContainerRef.current.getBoundingClientRect()
                             const canvasX = e.clientX - rect.left
-                            const { scrollX } = computeScrollState(currentTime, audioDuration, numBars, displayWidth)
+                            const liveTime = audioRef.current?.currentTime ?? currentTime
+                            const { scrollX } = computeScrollState(liveTime, audioDuration, numBars, displayWidth)
                             const newTime = canvasXToTime(canvasX, scrollX, numBars, audioDuration)
                             if (audioRef.current) audioRef.current.currentTime = newTime
                             setCurrentTime(newTime)
@@ -840,6 +841,7 @@ export default function VoicePlaybackModal({
                           ) : (
                             <canvas
                               ref={canvasRef}
+                              width={1}
                               height={180}
                               style={{ display: 'block', width: '100%', height: '180px' }}
                             />
