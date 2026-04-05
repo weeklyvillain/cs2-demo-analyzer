@@ -619,7 +619,7 @@ export default function VoicePlaybackModal({
       isOpen={isOpen}
       onClose={handleClose}
       title={getModalTitle()}
-      size="lg"
+      size="xl"
       canClose={modalState === 'playback' || (modalState === 'extracting' && extractionError !== null)}
     >
       <div className="space-y-4">
@@ -660,7 +660,7 @@ export default function VoicePlaybackModal({
 
         {/* Playback Screen */}
         {modalState === 'playback' && (
-          <div className="space-y-4">
+          <div className="space-y-0">
             {playbackError ? (
               <div className="bg-orange-900/20 border border-orange-500/50 rounded p-4">
                 <p className="text-orange-400 font-semibold mb-1">Extraction failed</p>
@@ -675,9 +675,9 @@ export default function VoicePlaybackModal({
               </div>
             ) : (
               <>
-                {/* File selector */}
+                {/* File selector — only shown when multiple files */}
                 {audioFiles.length > 1 && (
-                  <div>
+                  <div className="mb-3">
                     <label className="block text-sm font-medium text-gray-300 mb-2">
                       Select Player Voice:
                     </label>
@@ -701,94 +701,51 @@ export default function VoicePlaybackModal({
                   </div>
                 )}
 
-                {/* Audio player */}
                 {!audioUrl ? (
                   <div className="flex items-center justify-center py-8">
                     <Loader2 className="w-6 h-6 animate-spin text-accent mr-2" />
                     <span className="text-gray-400">Loading audio...</span>
                   </div>
                 ) : selectedFile ? (
-                  <div className="space-y-3">
-                    <div className="bg-surface/50 border border-border rounded p-4">
-                      {/* Seek slider — always visible, full width */}
-                      <input
-                        type="range"
-                        min={0}
-                        max={duration || 0}
-                        step={0.1}
-                        value={currentTime}
-                        onChange={(e) => {
-                          const newTime = parseFloat(e.target.value)
-                          if (audioRef.current) audioRef.current.currentTime = newTime
-                          setCurrentTime(newTime)
-                        }}
-                        className="w-full mb-3 h-1.5 bg-secondary rounded-lg appearance-none cursor-pointer accent-accent"
-                        style={{ width: '600px' }}
-                      />
+                  <>
+                    {/* Two-panel layout */}
+                    <div className="grid gap-4" style={{ gridTemplateColumns: '180px 1fr' }}>
 
-                      {/* Scrolling waveform — playhead moves left→center, then waveform scrolls */}
-                      {hasWaveformViewport && (
-                        <div className="mb-3 rounded overflow-hidden" style={{ width: '600px', height: '150px' }}>
-                          {waveformLoading ? (
-                            <div className="flex items-center justify-center w-full h-full">
-                              <Loader2 className="w-6 h-6 animate-spin text-accent mr-2" />
-                              <span className="text-gray-400 text-sm">Generating waveform...</span>
-                            </div>
-                          ) : waveformUrl ? (
-                            <div
-                              ref={waveformContainerRef}
-                              className="relative cursor-pointer overflow-hidden"
-                              style={{ width: '600px', height: '150px' }}
-                              onClick={(e) => {
-                                if (audioRef.current && duration > 0 && wfTotalWidth > 0 && waveformContainerRef.current) {
-                                  const rect = waveformContainerRef.current.getBoundingClientRect()
-                                  const waveformX = (e.clientX - rect.left) + wfScroll
-                                  // Use pixelsPerSecond for inverse mapping so seek aligns with playhead
-                                  const newTime = waveformMetadata
-                                    ? Math.max(0, Math.min(duration, waveformX / waveformMetadata.pixelsPerSecond))
-                                    : Math.max(0, Math.min(duration, (waveformX / wfTotalWidth) * duration))
-                                  audioRef.current.currentTime = newTime
-                                  setCurrentTime(newTime)
+                      {/* ── LEFT PANEL ── */}
+                      <div className="flex flex-col gap-3 border-r border-border pr-4">
+
+                        {/* Player info */}
+                        <div>
+                          <p className="text-xs text-gray-500 uppercase tracking-wide mb-0.5">Player</p>
+                          <p className="text-sm font-bold text-white">{selectedFile.playerName || selectedFile.steamId || selectedFile.name}</p>
+                          {selectedFile.steamId && (
+                            <button
+                              onClick={async () => {
+                                if (window.electronAPI?.openExternal) {
+                                  await window.electronAPI.openExternal(`https://steamcommunity.com/profiles/${selectedFile.steamId}`)
+                                } else {
+                                  window.open(`https://steamcommunity.com/profiles/${selectedFile.steamId}`, '_blank')
                                 }
                               }}
+                              className="text-xs text-accent hover:text-accent/80 underline bg-transparent border-none cursor-pointer p-0 truncate max-w-full text-left"
+                              title={selectedFile.steamId}
                             >
-                              {/* Waveform image scrolled left by wfScroll px */}
-                              <img
-                                src={waveformUrl}
-                                alt="Waveform"
-                                style={{
-                                  position: 'absolute',
-                                  left: `-${wfScroll}px`,
-                                  top: 0,
-                                  height: '150px',
-                                  width: `${wfTotalWidth}px`,
-                                  display: 'block',
-                                }}
-                              />
-                              {/* Played region overlay */}
-                              <div
-                                className="absolute top-0 bottom-0 bg-black/30 pointer-events-none"
-                                style={{ left: 0, width: `${playheadInContainer}px`, zIndex: 1 }}
-                              />
-                              {/* Playhead line */}
-                              <div
-                                className="absolute top-0 bottom-0 bg-accent pointer-events-none"
-                                style={{ left: `${playheadInContainer}px`, width: '2px', zIndex: 2 }}
-                              />
-                            </div>
-                          ) : null}
+                              {selectedFile.steamId} →
+                            </button>
+                          )}
                         </div>
-                      )}
 
-                      {/* Time display and controls */}
-                      <div className="flex items-center justify-between mb-4">
-                        <span className="text-xs text-gray-400">
-                          {formatTime(currentTime)} / {formatTime(duration)}
-                        </span>
+                        {/* Time display */}
+                        <div className="font-mono font-bold text-white" style={{ fontSize: '1.25rem' }}>
+                          {formatTime(currentTime)}{' '}
+                          <span className="text-xs text-gray-500 font-normal">/ {formatTime(audioDuration || duration)}</span>
+                        </div>
+
+                        {/* Transport controls */}
                         <div className="flex items-center gap-2">
                           <button
                             onClick={handleSkipBackward}
-                            className="px-3 py-1.5 bg-secondary hover:bg-surface text-white rounded text-sm font-medium transition-colors"
+                            className="px-2.5 py-1.5 bg-secondary hover:bg-surface text-white rounded text-xs font-medium transition-colors border border-border"
                             aria-label={`Skip backward ${skipTime}s`}
                             title={`Skip backward ${skipTime}s`}
                           >
@@ -796,34 +753,27 @@ export default function VoicePlaybackModal({
                           </button>
                           <button
                             onClick={togglePlayback}
-                            className="p-2 bg-accent hover:bg-accent/90 text-white rounded transition-colors"
+                            className="w-9 h-9 rounded-full bg-accent hover:bg-accent/90 text-white flex items-center justify-center transition-colors flex-shrink-0"
                             aria-label={isPlaying ? 'Pause' : 'Play'}
                           >
-                            {isPlaying ? <Pause size={20} /> : <Play size={20} />}
+                            {isPlaying ? <Pause size={16} /> : <Play size={16} />}
                           </button>
                           <button
                             onClick={handleSkipForward}
-                            className="px-3 py-1.5 bg-secondary hover:bg-surface text-white rounded text-sm font-medium transition-colors"
+                            className="px-2.5 py-1.5 bg-secondary hover:bg-surface text-white rounded text-xs font-medium transition-colors border border-border"
                             aria-label={`Skip forward ${skipTime}s`}
                             title={`Skip forward ${skipTime}s`}
                           >
                             +{skipTime}s
                           </button>
-                          <button
-                            onClick={handleDownload}
-                            className="p-2 bg-secondary hover:bg-surface text-white rounded transition-colors"
-                            aria-label="Download"
-                          >
-                            <Download size={18} />
-                          </button>
                         </div>
-                      </div>
 
-                      {/* Volume and speed controls on same row */}
-                      <div className="grid grid-cols-2 gap-4">
-                        {/* Volume control (0% to 200%) */}
-                        <div className="flex items-center gap-3">
-                          <Volume2 className="text-gray-400" size={18} />
+                        {/* Volume */}
+                        <div>
+                          <div className="flex justify-between text-xs text-gray-500 mb-1.5">
+                            <span className="flex items-center gap-1"><Volume2 size={12} /> Volume</span>
+                            <span className="text-gray-300">{Math.round(volume * 100)}%</span>
+                          </div>
                           <input
                             type="range"
                             min="0"
@@ -831,16 +781,16 @@ export default function VoicePlaybackModal({
                             step="0.05"
                             value={volume}
                             onChange={handleVolumeChange}
-                            className="flex-1 h-1.5 bg-secondary rounded-lg appearance-none cursor-pointer accent-accent"
+                            className="w-full h-1.5 bg-secondary rounded-lg appearance-none cursor-pointer accent-accent"
                           />
-                          <span className="text-xs text-gray-400 w-10 text-right">
-                            {Math.round(volume * 100)}%
-                          </span>
                         </div>
 
-                        {/* Playback speed control (0.5x to 2.0x) */}
-                        <div className="flex items-center gap-3">
-                          <Gauge className="text-gray-400" size={18} />
+                        {/* Speed */}
+                        <div>
+                          <div className="flex justify-between text-xs text-gray-500 mb-1.5">
+                            <span className="flex items-center gap-1"><Gauge size={12} /> Speed</span>
+                            <span className="text-gray-300">{playbackRate.toFixed(1)}x</span>
+                          </div>
                           <input
                             type="range"
                             min="0.5"
@@ -848,16 +798,95 @@ export default function VoicePlaybackModal({
                             step="0.1"
                             value={playbackRate}
                             onChange={handlePlaybackRateChange}
-                            className="flex-1 h-1.5 bg-secondary rounded-lg appearance-none cursor-pointer accent-accent"
+                            className="w-full h-1.5 bg-secondary rounded-lg appearance-none cursor-pointer accent-accent"
                           />
-                          <span className="text-xs text-gray-400 w-10 text-right">
-                            {playbackRate.toFixed(1)}x
-                          </span>
+                        </div>
+
+                        {/* File info + download */}
+                        <div className="mt-auto flex flex-col gap-2">
+                          <p className="text-xs text-gray-600 truncate" title={selectedFile.name}>{selectedFile.name}</p>
+                          <button
+                            onClick={handleDownload}
+                            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-secondary hover:bg-surface text-gray-400 hover:text-white rounded text-xs transition-colors border border-border"
+                          >
+                            <Download size={13} /> Show in folder
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* ── RIGHT PANEL ── */}
+                      <div className="flex flex-col gap-2">
+
+                        {/* Canvas waveform */}
+                        <div
+                          ref={canvasContainerRef}
+                          className="flex-1 bg-secondary rounded-md overflow-hidden cursor-pointer"
+                          style={{ minHeight: '180px', position: 'relative' }}
+                          onClick={(e) => {
+                            if (!amplitudes || numBars === 0 || audioDuration <= 0 || !canvasContainerRef.current) return
+                            const rect = canvasContainerRef.current.getBoundingClientRect()
+                            const canvasX = e.clientX - rect.left
+                            const { scrollX } = computeScrollState(currentTime, audioDuration, numBars, displayWidth)
+                            const newTime = canvasXToTime(canvasX, scrollX, numBars, audioDuration)
+                            if (audioRef.current) audioRef.current.currentTime = newTime
+                            setCurrentTime(newTime)
+                          }}
+                        >
+                          {!amplitudes ? (
+                            <div className="flex items-center justify-center w-full h-full" style={{ minHeight: '180px' }}>
+                              <Loader2 className="w-5 h-5 animate-spin text-accent mr-2" />
+                              <span className="text-gray-400 text-sm">Analysing audio...</span>
+                            </div>
+                          ) : (
+                            <canvas
+                              ref={canvasRef}
+                              height={180}
+                              style={{ display: 'block', width: '100%', height: '180px' }}
+                            />
+                          )}
+                        </div>
+
+                        {/* Minimap seek slider */}
+                        <div>
+                          <div className="flex justify-between text-xs text-gray-600 mb-1 font-mono">
+                            <span>0:00</span>
+                            <span>{formatTime(audioDuration || duration)}</span>
+                          </div>
+                          <input
+                            type="range"
+                            min={0}
+                            max={audioDuration || duration || 0}
+                            step={0.01}
+                            value={currentTime}
+                            onChange={(e) => {
+                              const newTime = parseFloat(e.target.value)
+                              if (audioRef.current) audioRef.current.currentTime = newTime
+                              setCurrentTime(newTime)
+                            }}
+                            className="w-full h-1.5 bg-secondary rounded-lg appearance-none cursor-pointer accent-accent border border-border"
+                          />
                         </div>
                       </div>
                     </div>
 
-                    {/* Hidden audio element (kept for Web Audio API volume boost) */}
+                    {/* ── KEYBOARD SHORTCUTS BAR ── */}
+                    <div className="flex items-center gap-4 mt-3 pt-3 border-t border-border">
+                      <span className="text-xs text-gray-600 uppercase tracking-wide">Shortcuts</span>
+                      <span className="text-xs text-gray-500 flex items-center gap-1">
+                        <kbd className="px-1.5 py-0.5 bg-secondary border border-border rounded text-xs text-gray-400 font-mono">Space</kbd>
+                        Play/Pause
+                      </span>
+                      <span className="text-xs text-gray-500 flex items-center gap-1">
+                        <kbd className="px-1.5 py-0.5 bg-secondary border border-border rounded text-xs text-gray-400 font-mono">← →</kbd>
+                        Skip
+                      </span>
+                      <span className="text-xs text-gray-500 flex items-center gap-1">
+                        <kbd className="px-1.5 py-0.5 bg-secondary border border-border rounded text-xs text-gray-400 font-mono">↑ ↓</kbd>
+                        Volume
+                      </span>
+                    </div>
+
+                    {/* Hidden audio element */}
                     <audio
                       ref={audioRef}
                       src={audioUrl}
@@ -867,33 +896,8 @@ export default function VoicePlaybackModal({
                       onPlay={() => setIsPlaying(true)}
                       onPause={() => setIsPlaying(false)}
                     />
-                  </div>
+                  </>
                 ) : null}
-
-                {/* File info */}
-                {selectedFile && (
-                  <div className="text-xs text-gray-400 space-y-1">
-                    <div>File: {selectedFile.name}</div>
-                    {selectedFile.playerName && <div>Player: {selectedFile.playerName}</div>}
-                    {selectedFile.steamId && (
-                      <div>
-                        Steam ID:{' '}
-                        <button
-                          onClick={async () => {
-                            if (window.electronAPI?.openExternal) {
-                              await window.electronAPI.openExternal(`https://steamcommunity.com/profiles/${selectedFile.steamId}`)
-                            } else {
-                              window.open(`https://steamcommunity.com/profiles/${selectedFile.steamId}`, '_blank')
-                            }
-                          }}
-                          className="text-accent hover:text-accent/80 underline bg-transparent border-none cursor-pointer p-0"
-                        >
-                          {selectedFile.steamId}
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                )}
               </>
             )}
           </div>
