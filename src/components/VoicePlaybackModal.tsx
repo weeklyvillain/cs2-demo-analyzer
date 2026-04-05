@@ -2,7 +2,6 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { Play, Pause, Volume2, Download, Gauge, Loader2 } from 'lucide-react'
 import Modal from './Modal'
 import {
-  dataUrlToArrayBuffer,
   computeRmsAmplitudes,
   computeNumBars,
   computeScrollState,
@@ -259,7 +258,7 @@ export default function VoicePlaybackModal({
         const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext
         if (!AudioContextClass) return
 
-        const arrayBuffer = dataUrlToArrayBuffer(audioUrl)
+        const arrayBuffer = await fetch(audioUrl).then(r => r.arrayBuffer())
         const ctx = new AudioContextClass()
         const audioBuffer = await ctx.decodeAudioData(arrayBuffer)
         await ctx.close()

@@ -475,7 +475,7 @@ app.whenReady().then(async () => {
         return { success: false, error: 'Audio file not found' }
       }
       
-      const audioBuffer = fs.readFileSync(filePath)
+      const audioBuffer = await fs.promises.readFile(filePath)
       const base64 = audioBuffer.toString('base64')
       // Determine MIME type from file extension
       const ext = path.extname(filePath).toLowerCase()
@@ -5671,17 +5671,22 @@ ipcMain.handle('voice:generateWaveform', async (_, filePath: string, audioDurati
     const pixelsPerSecondSetting = options?.pixelsPerSecond && options.pixelsPerSecond > 0 ? options.pixelsPerSecond : 4
     const maxWidth = options?.maxWidth && options.maxWidth > 0 ? options.maxWidth : 20000
 
-    // Cache filename includes mode params so stale cached images are not reused after settings change
+    // Cache filename includes mode params so stale cached images are not reused after settings change.
+    // Wide mode uses -w (same as fixed) to guarantee full audio coverage — cache label uses the
+    // target width so regeneration happens if the expected size changes (e.g. different duration).
     const fileBuffer = fs.readFileSync(filePath)
     const audioHash = crypto.createHash('sha256').update(fileBuffer).digest('hex').substring(0, 32)
-    const cacheLabel = mode === 'wide' ? `wide-pps${pixelsPerSecondSetting}` : 'fixed-w600'
+    // Wide mode target width: cap at maxWidth so very long recordings don't produce giant images.
+    const wideTargetWidth = Math.min(maxWidth, Math.ceil(audioDurationNumber * pixelsPerSecondSetting))
+    const cacheLabel = mode === 'wide' ? `wide-w${wideTargetWidth}` : 'fixed-w600'
     const waveformPath = path.join(waveformDir, `waveform-${audioHash}-${cacheLabel}.png`)
 
     if (mode === 'wide') {
-      // Wide mode: let audiowaveform decide the width from --pixels-per-second alone.
-      // Do NOT pass -w — combining both flags causes whichever audiowaveform ignores to
-      // produce an image whose actual pixel width doesn't match our metadata.
-      // We read the actual PNG width after generation and return that as actualWidth.
+      // Wide mode: use -w (exact pixel width) instead of --pixels-per-second.
+      // With bar style, --pixels-per-second gets rounded to whole bar units internally, producing
+      // an image shorter than expected (e.g. floor(4/3)*3 = 3 effective px/s instead of 4).
+      // Passing -w forces audiowaveform to scale the full audio to exactly wideTargetWidth pixels,
+      // the same way fixed mode works — then we derive the true pixelsPerSecond from the result.
 
       if (fs.existsSync(waveformPath)) {
         const imageBuffer = fs.readFileSync(waveformPath)
@@ -5691,7 +5696,7 @@ ipcMain.handle('voice:generateWaveform', async (_, filePath: string, audioDurati
           return {
             success: true,
             data: `data:image/png;base64,${imageBuffer.toString('base64')}`,
-            pixelsPerSecond: pixelsPerSecondSetting,
+            pixelsPerSecond: actualWidth / audioDurationNumber,
             actualWidth,
           }
         }
@@ -5701,8 +5706,8 @@ ipcMain.handle('voice:generateWaveform', async (_, filePath: string, audioDurati
       const wideArgs: string[] = [
         '-i', filePath,
         '-o', waveformPath,
+        '-w', wideTargetWidth.toString(),
         '-h', '150',
-        '--pixels-per-second', Math.min(pixelsPerSecondSetting, Math.floor(maxWidth / audioDurationNumber)).toString(),
         '--waveform-style', 'bars',
         '--bar-width', '2',
         '--bar-gap', '1',
@@ -5734,12 +5739,15 @@ ipcMain.handle('voice:generateWaveform', async (_, filePath: string, audioDurati
             try {
               const imageBuffer = fs.readFileSync(waveformPath)
               const dimensions = getPngDimensions(imageBuffer)
-              const actualWidth = dimensions?.width ?? Math.round(audioDurationNumber * pixelsPerSecondSetting)
-              console.log(`[Waveform] Wide waveform generated: ${actualWidth}px (${pixelsPerSecondSetting}pps, ${audioDurationNumber.toFixed(1)}s audio)`)
+              const actualWidth = dimensions?.width ?? wideTargetWidth
+              if (actualWidth !== wideTargetWidth) {
+                console.warn(`[Waveform] Wide waveform width (${actualWidth}px) differs from target (${wideTargetWidth}px)`)
+              }
+              console.log(`[Waveform] Wide waveform generated: ${actualWidth}px (${(actualWidth / audioDurationNumber).toFixed(2)}pps, ${audioDurationNumber.toFixed(1)}s audio)`)
               resolve({
                 success: true,
                 data: `data:image/png;base64,${imageBuffer.toString('base64')}`,
-                pixelsPerSecond: pixelsPerSecondSetting,
+                pixelsPerSecond: actualWidth / audioDurationNumber,
                 actualWidth,
               })
             } catch (error) {

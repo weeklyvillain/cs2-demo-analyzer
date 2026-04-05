@@ -7,20 +7,6 @@ const BASE_BARS_PER_SECOND = 20
 const MAX_BARS = 6000
 
 /**
- * Convert a base64 data URL (e.g. data:audio/wav;base64,...) to an ArrayBuffer
- * so it can be passed to audioContext.decodeAudioData.
- */
-export function dataUrlToArrayBuffer(dataUrl: string): ArrayBuffer {
-  const base64 = dataUrl.split(',')[1]
-  const binary = atob(base64)
-  const bytes = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i)
-  }
-  return bytes.buffer
-}
-
-/**
  * Divide PCM channel data into numBars equal chunks and compute the RMS amplitude
  * of each chunk. The result is normalised so the loudest bar = 1.0.
  */
