@@ -1,6 +1,15 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { X, Play, Pause, Volume2, Download, Gauge, Loader2 } from 'lucide-react'
 import Modal from './Modal'
+import {
+  dataUrlToArrayBuffer,
+  computeRmsAmplitudes,
+  computeNumBars,
+  computeScrollState,
+  canvasXToTime,
+  drawWaveform,
+  BAR_STRIDE,
+} from '../utils/waveformUtils'
 
 type VoiceExtractionMode = 'split-compact' | 'split-full' | 'single-full'
 type ModalState = 'extracting' | 'playback'
@@ -40,15 +49,17 @@ export default function VoicePlaybackModal({
   const [volume, setVolume] = useState(1)
   const [playbackRate, setPlaybackRate] = useState(1)
   const [skipTime, setSkipTime] = useState(10) // Default 10 seconds (will be loaded from settings)
-  const [waveformUrl, setWaveformUrl] = useState<string | null>(null)
-  const [waveformLoading, setWaveformLoading] = useState(false)
-  const [waveformMetadata, setWaveformMetadata] = useState<{ pixelsPerSecond: number; actualWidth: number } | null>(null)
+  const [amplitudes, setAmplitudes] = useState<Float32Array | null>(null)
+  const [audioDuration, setAudioDuration] = useState(0)
+  const [displayWidth, setDisplayWidth] = useState(0)
+  const [numBars, setNumBars] = useState(0)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
   const gainNodeRef = useRef<GainNode | null>(null)
   const sourceRef = useRef<MediaElementAudioSourceNode | null>(null)
   const logsEndRef = useRef<HTMLDivElement | null>(null)
-  const waveformContainerRef = useRef<HTMLDivElement | null>(null)
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const canvasContainerRef = useRef<HTMLDivElement | null>(null)
 
   const selectedFile = audioFiles[selectedFileIndex]
 
@@ -187,54 +198,6 @@ export default function VoicePlaybackModal({
     }
   }, [modalState])
 
-  // Generate waveform when audio file is selected
-  useEffect(() => {
-    if (!selectedFile || !isOpen || modalState !== 'playback') {
-      setWaveformUrl(null)
-      setWaveformMetadata(null)
-      return
-    }
-
-    let mounted = true
-    setWaveformLoading(true)
-
-    const generateWaveform = async () => {
-      try {
-        // Pass duration if available to help with alignment
-        const result = await window.electronAPI.generateWaveform(selectedFile.path, duration > 0 ? duration : undefined)
-        if (result.success && result.data && mounted) {
-          setWaveformUrl(result.data)
-          // Store metadata for proper alignment
-          if (result.pixelsPerSecond && result.actualWidth) {
-            setWaveformMetadata({
-              pixelsPerSecond: result.pixelsPerSecond,
-              actualWidth: result.actualWidth,
-            })
-          }
-        } else if (mounted) {
-          console.warn('Failed to generate waveform:', result.error)
-          setWaveformUrl(null)
-          setWaveformMetadata(null)
-        }
-      } catch (error) {
-        console.error('Error generating waveform:', error)
-        if (mounted) {
-          setWaveformUrl(null)
-          setWaveformMetadata(null)
-        }
-      } finally {
-        if (mounted) {
-          setWaveformLoading(false)
-        }
-      }
-    }
-
-    generateWaveform()
-
-    return () => {
-      mounted = false
-    }
-  }, [selectedFile, isOpen, modalState, selectedFileIndex, duration])
 
   useEffect(() => {
     let mounted = true
@@ -557,7 +520,6 @@ export default function VoicePlaybackModal({
     onClose()
   }
 
-  const hasWaveformViewport = waveformLoading || Boolean(waveformUrl)
 
   // Get modal title based on state
   const getModalTitle = () => {
@@ -667,117 +629,75 @@ export default function VoicePlaybackModal({
                 ) : selectedFile ? (
                   <div className="space-y-3">
                     <div className="bg-surface/50 border border-border rounded p-4">
-                      {/* Waveform visualization with progress overlay */}
-                      <div
-                        className="mb-3 relative overflow-hidden rounded"
-                        style={{ width: '600px', height: hasWaveformViewport ? '150px' : 'auto' }}
-                      >
-                        {waveformLoading ? (
-                          <div className="flex items-center justify-center" style={{ width: '600px', height: '150px' }}>
-                            <Loader2 className="w-6 h-6 animate-spin text-accent mr-2" />
-                            <span className="text-gray-400 text-sm">Generating waveform...</span>
-                          </div>
-                        ) : waveformUrl ? (
-                          <div 
-                            ref={waveformContainerRef}
-                            className="relative cursor-pointer overflow-hidden"
-                            style={{ width: '600px', height: '150px' }}
-                            onClick={(e) => {
-                              if (audioRef.current && duration > 0 && waveformContainerRef.current) {
-                                const rect = waveformContainerRef.current.getBoundingClientRect()
-                                const x = e.clientX - rect.left
-                                
-                                // Use actual waveform width for accurate time calculation
-                                let timePosition = 0
-                                if (waveformMetadata && waveformMetadata.actualWidth > 0) {
-                                  // Calculate time based on actual waveform pixels
-                                  const pixelsPerSecond = waveformMetadata.pixelsPerSecond
-                                  const scale = rect.width / waveformMetadata.actualWidth
-                                  const waveformX = x / scale
-                                  timePosition = waveformX / pixelsPerSecond
-                                } else {
-                                  // Fallback to percentage-based calculation
-                                  const percentage = x / rect.width
-                                  timePosition = percentage * duration
+                      {/* Seek slider — always visible, full width */}
+                      <input
+                        type="range"
+                        min={0}
+                        max={duration || 0}
+                        step={0.1}
+                        value={currentTime}
+                        onChange={(e) => {
+                          const newTime = parseFloat(e.target.value)
+                          if (audioRef.current) audioRef.current.currentTime = newTime
+                          setCurrentTime(newTime)
+                        }}
+                        className="w-full mb-3 h-1.5 bg-secondary rounded-lg appearance-none cursor-pointer accent-accent"
+                        style={{ width: '600px' }}
+                      />
+
+                      {/* Scrolling waveform — playhead moves left→center, then waveform scrolls */}
+                      {hasWaveformViewport && (
+                        <div className="mb-3 rounded overflow-hidden" style={{ width: '600px', height: '150px' }}>
+                          {waveformLoading ? (
+                            <div className="flex items-center justify-center w-full h-full">
+                              <Loader2 className="w-6 h-6 animate-spin text-accent mr-2" />
+                              <span className="text-gray-400 text-sm">Generating waveform...</span>
+                            </div>
+                          ) : waveformUrl ? (
+                            <div
+                              ref={waveformContainerRef}
+                              className="relative cursor-pointer overflow-hidden"
+                              style={{ width: '600px', height: '150px' }}
+                              onClick={(e) => {
+                                if (audioRef.current && duration > 0 && wfTotalWidth > 0 && waveformContainerRef.current) {
+                                  const rect = waveformContainerRef.current.getBoundingClientRect()
+                                  const waveformX = (e.clientX - rect.left) + wfScroll
+                                  // Use pixelsPerSecond for inverse mapping so seek aligns with playhead
+                                  const newTime = waveformMetadata
+                                    ? Math.max(0, Math.min(duration, waveformX / waveformMetadata.pixelsPerSecond))
+                                    : Math.max(0, Math.min(duration, (waveformX / wfTotalWidth) * duration))
+                                  audioRef.current.currentTime = newTime
+                                  setCurrentTime(newTime)
                                 }
-                                
-                                const newTime = Math.max(0, Math.min(duration, timePosition))
-                                audioRef.current.currentTime = newTime
-                                setCurrentTime(newTime)
-                              }
-                            }}
-                          >
-                            <img 
-                              src={waveformUrl} 
-                              alt="Waveform" 
-                              className="block"
-                              style={{ 
-                                width: '600px',
-                                height: '150px',
-                                objectFit: 'contain',
-                                display: 'block'
                               }}
-                            />
-                            {/* Progress overlay */}
-                            {duration > 0 && waveformMetadata && waveformMetadata.actualWidth > 0 && (
-                              <>
-                                {/* Progress line - calculated based on actual waveform width */}
-                                <div
-                                  className="absolute top-0 bottom-0 w-0.5 bg-accent z-10 pointer-events-none"
-                                  style={{
-                                    left: `${(currentTime * waveformMetadata.pixelsPerSecond / waveformMetadata.actualWidth) * 100}%`,
-                                  }}
-                                />
-                                {/* Progress fill overlay (darker area for played portion) */}
-                                <div
-                                  className="absolute top-0 bottom-0 bg-black/30 z-0 pointer-events-none"
-                                  style={{
-                                    left: '0%',
-                                    width: `${(currentTime * waveformMetadata.pixelsPerSecond / waveformMetadata.actualWidth) * 100}%`,
-                                  }}
-                                />
-                              </>
-                            )}
-                            {/* Fallback progress if metadata not available */}
-                            {duration > 0 && (!waveformMetadata || waveformMetadata.actualWidth === 0) && (
-                              <>
-                                {/* Progress line */}
-                                <div
-                                  className="absolute top-0 bottom-0 w-0.5 bg-accent z-10 pointer-events-none"
-                                  style={{
-                                    left: `${(currentTime / duration) * 100}%`,
-                                  }}
-                                />
-                                {/* Progress fill overlay (darker area for played portion) */}
-                                <div
-                                  className="absolute top-0 bottom-0 bg-black/30 z-0 pointer-events-none"
-                                  style={{
-                                    left: '0%',
-                                    width: `${(currentTime / duration) * 100}%`,
-                                  }}
-                                />
-                              </>
-                            )}
-                          </div>
-                        ) : (
-                          /* Fallback progress slider */
-                          <input
-                            type="range"
-                            min="0"
-                            max={duration || 100}
-                            step="0.1"
-                            value={currentTime}
-                            onChange={(e) => {
-                              const newTime = parseFloat(e.target.value)
-                              if (audioRef.current) {
-                                audioRef.current.currentTime = newTime
-                                setCurrentTime(newTime)
-                              }
-                            }}
-                            className="w-full h-1.5 bg-secondary rounded-lg appearance-none cursor-pointer accent-accent"
-                          />
-                        )}
-                      </div>
+                            >
+                              {/* Waveform image scrolled left by wfScroll px */}
+                              <img
+                                src={waveformUrl}
+                                alt="Waveform"
+                                style={{
+                                  position: 'absolute',
+                                  left: `-${wfScroll}px`,
+                                  top: 0,
+                                  height: '150px',
+                                  width: `${wfTotalWidth}px`,
+                                  display: 'block',
+                                }}
+                              />
+                              {/* Played region overlay */}
+                              <div
+                                className="absolute top-0 bottom-0 bg-black/30 pointer-events-none"
+                                style={{ left: 0, width: `${playheadInContainer}px`, zIndex: 1 }}
+                              />
+                              {/* Playhead line */}
+                              <div
+                                className="absolute top-0 bottom-0 bg-accent pointer-events-none"
+                                style={{ left: `${playheadInContainer}px`, width: '2px', zIndex: 2 }}
+                              />
+                            </div>
+                          ) : null}
+                        </div>
+                      )}
 
                       {/* Time display and controls */}
                       <div className="flex items-center justify-between mb-4">
