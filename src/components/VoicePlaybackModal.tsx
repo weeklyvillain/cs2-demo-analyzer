@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { X, Play, Pause, Volume2, Download, Gauge, Loader2 } from 'lucide-react'
+import { Play, Pause, Volume2, Download, Gauge, Loader2 } from 'lucide-react'
 import Modal from './Modal'
 import {
   dataUrlToArrayBuffer,
@@ -8,10 +8,8 @@ import {
   computeScrollState,
   canvasXToTime,
   drawWaveform,
-  BAR_STRIDE,
 } from '../utils/waveformUtils'
 
-type VoiceExtractionMode = 'split-compact' | 'split-full' | 'single-full'
 type ModalState = 'extracting' | 'playback'
 
 interface VoicePlaybackModalProps {
@@ -545,18 +543,6 @@ export default function VoicePlaybackModal({
     const newRate = parseFloat(e.target.value)
     setPlaybackRate(newRate)
     // Playback rate is synced via useEffect above
-  }
-
-  // Handle progress bar click
-  const handleProgressClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (audioRef.current && duration > 0) {
-      const rect = e.currentTarget.getBoundingClientRect()
-      const x = e.clientX - rect.left
-      const percentage = x / rect.width
-      const newTime = percentage * duration
-      audioRef.current.currentTime = newTime
-      setCurrentTime(newTime)
-    }
   }
 
   // Format time in MM:SS
