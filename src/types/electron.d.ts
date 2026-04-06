@@ -102,6 +102,13 @@ export interface ElectronAPI {
     options?: { mode?: 'fixed' | 'wide'; pixelsPerSecond?: number; maxWidth?: number }
   ) => Promise<{ success: boolean; data?: string; error?: string; pixelsPerSecond?: number; actualWidth?: number }>
   cleanupVoiceFiles: (outputPath: string) => Promise<{ success: boolean; error?: string }>
+  transcriptionStatus: (model: string) => Promise<{ binaryReady: boolean; modelReady: boolean; currentModel: string; whisperDir: string }>
+  transcriptionDownloadBinary: () => Promise<{ success: boolean; error?: string }>
+  transcriptionDownloadModel: (model: string) => Promise<{ success: boolean; error?: string }>
+  transcriptionRun: (opts: { audioFilePath: string; steamId: string; audioFilename: string; matchId: string; model: string }) => Promise<{ success: boolean; segments?: Array<{ fromMs: number; toMs: number; text: string }>; language?: string; cached?: boolean; error?: string }>
+  transcriptionDeleteBinary: () => Promise<{ success: boolean; error?: string }>
+  transcriptionDeleteModel: (model: string) => Promise<{ success: boolean; error?: string }>
+  onTranscriptionProgress: (callback: (data: { phase: 'binary' | 'model' | 'extracting' | 'transcribing'; percent: number; receivedBytes?: number; totalBytes?: number; estimatedSecondsRemaining?: number | null }) => void) => () => void
   exportClips: (payload: {
     demoPath: string
     clipRanges: Array<{ 

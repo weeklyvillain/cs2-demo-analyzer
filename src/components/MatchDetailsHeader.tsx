@@ -13,7 +13,6 @@ interface MatchDetailsHeaderProps {
   setActiveTab: (tab: ActiveTab) => void
   hasRadarForCurrentMap: boolean
   onWatchInCS2: () => void
-  onDeleteDemo: () => void
   onOpenExportPanel: () => void
   onFetchChatMessages: (matchId: string) => void
 }
@@ -29,7 +28,6 @@ export default function MatchDetailsHeader({
   setActiveTab,
   hasRadarForCurrentMap,
   onWatchInCS2,
-  onDeleteDemo,
   onOpenExportPanel,
   onFetchChatMessages,
 }: MatchDetailsHeaderProps) {
@@ -132,14 +130,6 @@ export default function MatchDetailsHeader({
                     <span>Export Clips</span>
                   </button>)
               }
-              <button
-                onClick={onDeleteDemo}
-                className="px-3 py-1.5 bg-accent text-white text-sm rounded hover:bg-accent/80 transition-colors flex items-center gap-1"
-                title="Delete this demo"
-              >
-                <span>🗑️</span>
-                <span>Delete Demo</span>
-              </button>
             </>
           )}
         </div>

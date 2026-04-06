@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { Play, Pause, Volume2, Download, Gauge, Loader2 } from 'lucide-react'
 import Modal from './Modal'
+import TranscriptPanel from './TranscriptPanel'
 import {
   computeNumBars,
   computeScrollState,
@@ -16,6 +17,7 @@ interface VoicePlaybackModalProps {
   demoPath: string | null
   playerSteamId: string
   playerName: string
+  matchId?: string | null
   audioFiles?: Array<{ path: string; name: string; steamId?: string; playerName?: string }>
   outputPath?: string
   onCleanup?: () => void
@@ -27,6 +29,7 @@ export default function VoicePlaybackModal({
   demoPath,
   playerSteamId,
   playerName,
+  matchId,
   audioFiles: initialAudioFiles,
   outputPath: initialOutputPath,
   onCleanup,
@@ -37,6 +40,7 @@ export default function VoicePlaybackModal({
   const [extractionLogs, setExtractionLogs] = useState<string[]>([])
   const [extractionError, setExtractionError] = useState<string | null>(null)
   const [playbackError, setPlaybackError] = useState<string | null>(null)
+  const [transcriptionEnabled, setTranscriptionEnabled] = useState(false)
   
   const [selectedFileIndex, setSelectedFileIndex] = useState(0)
   const [isPlaying, setIsPlaying] = useState(false)
@@ -83,6 +87,14 @@ export default function VoicePlaybackModal({
     }
     
     loadSkipTime()
+  }, [isOpen])
+
+  // Load transcription enabled setting
+  useEffect(() => {
+    if (!isOpen || !window.electronAPI) return
+    window.electronAPI.getSetting('transcription_enabled', 'false')
+      .then((v) => setTranscriptionEnabled(v === 'true'))
+      .catch(() => {})
   }, [isOpen])
 
   // Reset state and start extraction when modal opens
@@ -449,11 +461,12 @@ export default function VoicePlaybackModal({
   const handleEnded = () => {
     setIsPlaying(false)
     handlePause()
-    // Reset to beginning so the next play starts fresh and seek/skip work correctly
+    // Chromium bug: a MediaElementAudioSourceNode blocks seeks on an ended audio element.
+    // Reloading resets it to a seekable state without re-fetching (src is a data URL in memory).
     if (audioRef.current) {
-      audioRef.current.currentTime = 0
+      audioRef.current.load()
+      setCurrentTime(0)
     }
-    setCurrentTime(0)
   }
 
   const handleSeeked = () => {
@@ -470,7 +483,9 @@ export default function VoicePlaybackModal({
       if (isPlaying) {
         audioRef.current.pause()
       } else {
-        audioRef.current.play()
+        // Resume AudioContext — Chromium auto-suspends it after inactivity
+        audioContextRef.current?.resume()
+        audioRef.current.play().catch(() => {})
       }
       setIsPlaying(!isPlaying)
     }
@@ -504,7 +519,8 @@ export default function VoicePlaybackModal({
 
       if (isSpace) {
         if (audioRef.current.paused) {
-          audioRef.current.play()
+          audioContextRef.current?.resume()
+          audioRef.current.play().catch(() => {})
           setIsPlaying(true)
         } else {
           audioRef.current.pause()
@@ -764,6 +780,7 @@ export default function VoicePlaybackModal({
                         <div className="flex items-center gap-2">
                           <button
                             onClick={handleSkipBackward}
+                            onMouseUp={(e) => e.currentTarget.blur()}
                             className="px-2.5 py-1.5 bg-secondary hover:bg-surface text-white rounded text-xs font-medium transition-colors border border-border"
                             aria-label={`Skip backward ${skipTime}s`}
                             title={`Skip backward ${skipTime}s`}
@@ -772,6 +789,7 @@ export default function VoicePlaybackModal({
                           </button>
                           <button
                             onClick={togglePlayback}
+                            onMouseUp={(e) => e.currentTarget.blur()}
                             className="w-9 h-9 rounded-full bg-accent hover:bg-accent/90 text-white flex items-center justify-center transition-colors flex-shrink-0"
                             aria-label={isPlaying ? 'Pause' : 'Play'}
                           >
@@ -779,6 +797,7 @@ export default function VoicePlaybackModal({
                           </button>
                           <button
                             onClick={handleSkipForward}
+                            onMouseUp={(e) => e.currentTarget.blur()}
                             className="px-2.5 py-1.5 bg-secondary hover:bg-surface text-white rounded text-xs font-medium transition-colors border border-border"
                             aria-label={`Skip forward ${skipTime}s`}
                             title={`Skip forward ${skipTime}s`}
@@ -798,6 +817,7 @@ export default function VoicePlaybackModal({
                             min="0"
                             max="2"
                             step="0.05"
+                            onMouseUp={(e) => e.currentTarget.blur()}
                             value={volume}
                             onChange={handleVolumeChange}
                             className="w-full h-1.5 rounded-lg appearance-none cursor-pointer accent-accent"
@@ -815,6 +835,7 @@ export default function VoicePlaybackModal({
                             type="range"
                             min="0.5"
                             max="2"
+                            onMouseUp={(e) => e.currentTarget.blur()}
                             step="0.1"
                             value={playbackRate}
                             onChange={handlePlaybackRateChange}
@@ -872,13 +893,14 @@ export default function VoicePlaybackModal({
                         {/* Minimap seek slider */}
                         <div>
                           <div className="flex justify-between text-xs text-gray-600 mb-1 font-mono">
-                            <span>0:00</span>
+                            <span>{formatTime(currentTime)}{' '}</span>
                             <span>{formatTime(audioDuration || duration)}</span>
                           </div>
                           <input
                             type="range"
                             min={0}
                             max={audioDuration || duration || 0}
+                            onMouseUp={(e) => e.currentTarget.blur()}
                             step={0.01}
                             value={currentTime}
                             onChange={(e) => {
@@ -890,10 +912,27 @@ export default function VoicePlaybackModal({
                             style={{ background: `linear-gradient(to right, #d07a2d ${((audioDuration || duration) > 0 ? currentTime / (audioDuration || duration) : 0) * 100}%, #36393e ${((audioDuration || duration) > 0 ? currentTime / (audioDuration || duration) : 0) * 100}%)` }}
                           />
                         </div>
-                      </div>
-                    </div>
 
-                    {/* ── KEYBOARD SHORTCUTS BAR ── */}
+                        {/* Transcript panel — stacked below minimap */}
+                        {transcriptionEnabled && selectedFile && (
+                          <TranscriptPanel
+                            audioFilePath={selectedFile.path}
+                            steamId={selectedFile.steamId ?? playerSteamId}
+                            audioFilename={selectedFile.name}
+                            matchId={matchId ?? null}
+                            currentTimeMs={currentTime * 1000}
+                            onSeek={(ms) => {
+                              const secs = ms / 1000
+                              if (audioRef.current) audioRef.current.currentTime = secs
+                              setCurrentTime(secs)
+                            }}
+                          />
+                        )}
+                      </div>
+
+                    </div>{/* end grid */}
+
+                    {/* ── KEYBOARD SHORTCUTS BAR── */}
                     <div className="flex items-center gap-4 mt-3 pt-3 border-t border-border">
                       <span className="text-xs text-gray-600 uppercase tracking-wide">Shortcuts</span>
                       <span className="text-xs text-gray-500 flex items-center gap-1">

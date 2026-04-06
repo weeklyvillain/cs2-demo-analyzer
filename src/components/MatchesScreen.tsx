@@ -702,7 +702,6 @@ function MatchesScreen() {
                   setActiveTab={setActiveTab}
                   hasRadarForCurrentMap={hasRadarForCurrentMap}
                   onWatchInCS2={handleWatchInCS2}
-                  onDeleteDemo={handleDeleteDemo}
                   onOpenExportPanel={() => setShowExportPanel(true)}
                   onFetchChatMessages={fetchChatMessages}
                 />
@@ -869,6 +868,7 @@ function MatchesScreen() {
           demoPath={demoPath}
           playerSteamId={voicePlayerSteamId}
           playerName={voicePlayerName}
+          matchId={selectedMatch}
         />
 
         {/* Team Voice Modal */}

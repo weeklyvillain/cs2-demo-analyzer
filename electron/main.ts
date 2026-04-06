@@ -16,6 +16,9 @@ import { cs2OverlayTracker } from './cs2OverlayTracker'
 import { overlayHoverController } from './overlayHoverController'
 import { ClipExportService, ExportOptions } from './clipExportService'
 import { HlaeLauncher, HlaeLogger, CS2CommandSender } from './hlaeRecorder'
+import * as transcriptionService from './transcriptionService'
+import * as transcriptionDb from './transcriptionDb'
+import type { WhisperModelSize } from './transcriptionService'
 
 let mainWindow: BrowserWindow | null = null
 let splashWindow: BrowserWindow | null = null
@@ -6017,5 +6020,88 @@ ipcMain.handle('voice:cleanup', async (_, outputPath: string) => {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error'
     console.error(`[Voice Cleanup] Failed to delete directory ${outputPath}:`, errorMessage)
     return { success: false, error: errorMessage }
+  }
+})
+
+// ─── Transcription IPC Handlers ───────────────────────────────────────────────
+
+ipcMain.handle('transcription:status',async (_, model: string) => {
+  try {
+    return transcriptionService.getTranscriptionStatus(model as WhisperModelSize)
+  } catch (err) {
+    console.error('[transcription:status]', err)
+    throw new Error('Failed to get transcription status')
+  }
+})
+
+ipcMain.handle('transcription:downloadBinary', async (event) => {
+  try {
+    await transcriptionService.downloadBinary((progress) => {
+      event.sender.send('transcription:progress', progress)
+    })
+    return { success: true }
+  } catch (err) {
+    console.error('[transcription:downloadBinary]', err)
+    return { success: false, error: err instanceof Error ? err.message : String(err) }
+  }
+})
+
+ipcMain.handle('transcription:downloadModel', async (event, model: string) => {
+  try {
+    await transcriptionService.downloadModel(model as WhisperModelSize, (progress) => {
+      event.sender.send('transcription:progress', progress)
+    })
+    return { success: true }
+  } catch (err) {
+    console.error('[transcription:downloadModel]', err)
+    return { success: false, error: err instanceof Error ? err.message : String(err) }
+  }
+})
+
+ipcMain.handle('transcription:deleteBinary', async () => {
+  try {
+    await transcriptionService.deleteWhisperDir()
+    return { success: true }
+  } catch (err) {
+    console.error('[transcription:deleteBinary]', err)
+    return { success: false, error: err instanceof Error ? err.message : String(err) }
+  }
+})
+
+ipcMain.handle('transcription:deleteModel', async (_, model: string) => {
+  try {
+    await transcriptionService.deleteWhisperModel(model as WhisperModelSize)
+    return { success: true }
+  } catch (err) {
+    console.error('[transcription:deleteModel]', err)
+    return { success: false, error: err instanceof Error ? err.message : String(err) }
+  }
+})
+
+ipcMain.handle('transcription:run', async (event, opts: {
+  audioFilePath: string
+  steamId: string
+  audioFilename: string
+  matchId: string
+  model: string
+}) => {
+  try {
+    const { audioFilePath, steamId, audioFilename, matchId, model } = opts
+    const modelSize = model as WhisperModelSize
+    const matchDbPath = path.join(matchesService.getMatchesDir(), `${matchId}.sqlite`)
+
+    const cached = await transcriptionDb.getCachedTranscript(matchDbPath, steamId, audioFilename, modelSize)
+    if (cached) {
+      return { success: true, segments: cached.segments, language: cached.language, cached: true }
+    }
+
+    const result = await transcriptionService.transcribeAudio(audioFilePath, modelSize, (progress) => {
+      event.sender.send('transcription:progress', { phase: 'transcribing', ...progress })
+    })
+    await transcriptionDb.saveTranscript(matchDbPath, steamId, audioFilename, modelSize, result.language, result.segments)
+    return { success: true, segments: result.segments, language: result.language, cached: false }
+  } catch (err) {
+    console.error('[transcription:run]', err)
+    return { success: false, error: err instanceof Error ? err.message : String(err) }
   }
 })

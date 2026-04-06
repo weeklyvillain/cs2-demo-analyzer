@@ -110,6 +110,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('voice:generateWaveform', filePath, audioDuration, options),
   cleanupVoiceFiles: (outputPath: string) => ipcRenderer.invoke('voice:cleanup', outputPath),
 
+  // Transcription
+  transcriptionStatus: (model: string) => ipcRenderer.invoke('transcription:status', model),
+  transcriptionDownloadBinary: () => ipcRenderer.invoke('transcription:downloadBinary'),
+  transcriptionDownloadModel: (model: string) => ipcRenderer.invoke('transcription:downloadModel', model),
+  transcriptionRun: (opts: { audioFilePath: string; steamId: string; audioFilename: string; matchId: string; model: string }) =>
+    ipcRenderer.invoke('transcription:run', opts),
+  transcriptionDeleteBinary: () => ipcRenderer.invoke('transcription:deleteBinary'),
+  transcriptionDeleteModel: (model: string) => ipcRenderer.invoke('transcription:deleteModel', model),
+  onTranscriptionProgress: (callback: (data: { phase: 'binary' | 'model' | 'extracting' | 'transcribing'; percent: number; receivedBytes?: number; totalBytes?: number; estimatedSecondsRemaining?: number | null }) => void) => {
+    const wrapper = (_: unknown, data: any) => callback(data)
+    ipcRenderer.on('transcription:progress', wrapper)
+    return () => ipcRenderer.removeListener('transcription:progress', wrapper)
+  },
+
   // Clip Export
   exportClips: (payload: any) => ipcRenderer.invoke('clips:export', payload),
   onClipsExportProgress: (callback: (progress: any) => void) => {

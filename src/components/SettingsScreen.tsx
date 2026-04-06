@@ -37,6 +37,8 @@ interface Settings {
   autoplayAfterSpectate: string
   language: string
   demo_folders: string
+  transcription_enabled: string
+  transcription_model: string
 }
 
 function SettingsScreen() {
@@ -72,6 +74,8 @@ function SettingsScreen() {
     autoplayAfterSpectate: 'true',
     language: getLanguage(),
     demo_folders: '',
+    transcription_enabled: 'false',
+    transcription_model: 'small',
   })
   const [demoFolders, setDemoFolders] = useState<string[]>([])
   const [, forceUpdate] = useState(0) // Force re-render when language changes
@@ -89,6 +93,11 @@ function SettingsScreen() {
   const [hlaeTestStatus, setHlaeTestStatus] = useState<'idle' | 'running' | 'success' | 'error'>('idle')
   const [hlaeTestError, setHlaeTestError] = useState<string | null>(null)
   const [hlaeTestLogPath, setHlaeTestLogPath] = useState<string | null>(null)
+  const [transcriptionStatus, setTranscriptionStatus] = useState<{ binaryReady: boolean; modelReady: boolean } | null>(null)
+  const [transcriptionDownloading, setTranscriptionDownloading] = useState<'binary' | 'model' | null>(null)
+  const [transcriptionDownloadPercent, setTranscriptionDownloadPercent] = useState(0)
+  const [transcriptionDownloadError, setTranscriptionDownloadError] = useState<string | null>(null)
+  const [transcriptionDeleting, setTranscriptionDeleting] = useState<'binary' | 'model' | null>(null)
   const [appInfo, setAppInfo] = useState<{
     version: string
     platform: string
@@ -111,6 +120,7 @@ function SettingsScreen() {
     loadSettings()
     loadAppInfo()
     loadAvailableVersions()
+    loadTranscriptionStatus()
     
     // Refresh app info periodically to update storage usage (especially voice cache)
     const refreshInterval = setInterval(() => {
@@ -119,6 +129,58 @@ function SettingsScreen() {
     
     return () => clearInterval(refreshInterval)
   }, [])
+
+  const loadTranscriptionStatus = async () => {
+    if (!window.electronAPI) return
+    try {
+      const model = settings.transcription_model || 'small'
+      const status = await window.electronAPI.transcriptionStatus(model)
+      setTranscriptionStatus(status)
+    } catch {}
+  }
+
+  const handleTranscriptionDownload = async (type: 'binary' | 'model') => {
+    if (!window.electronAPI) return
+    setTranscriptionDownloading(type)
+    setTranscriptionDownloadPercent(0)
+    setTranscriptionDownloadError(null)
+    const unsub = window.electronAPI.onTranscriptionProgress((data) => {
+      if (data.phase === 'extracting') {
+        setTranscriptionDownloadPercent(data.percent === 100 ? 100 : -1) // -1 = indeterminate
+      } else {
+        setTranscriptionDownloadPercent(data.percent)
+      }
+    })
+    try {
+      const res = type === 'binary'
+        ? await window.electronAPI.transcriptionDownloadBinary()
+        : await window.electronAPI.transcriptionDownloadModel(settings.transcription_model || 'small')
+      if (!res.success) throw new Error(res.error ?? 'Download failed')
+      await loadTranscriptionStatus()
+    } catch (err) {
+      setTranscriptionDownloadError(err instanceof Error ? err.message : String(err))
+    } finally {
+      unsub()
+      setTranscriptionDownloading(null)
+    }
+  }
+
+  const handleTranscriptionDelete = async (type: 'binary' | 'model') => {
+    if (!window.electronAPI) return
+    setTranscriptionDeleting(type)
+    setTranscriptionDownloadError(null)
+    try {
+      const res = type === 'binary'
+        ? await window.electronAPI.transcriptionDeleteBinary()
+        : await window.electronAPI.transcriptionDeleteModel(settings.transcription_model || 'small')
+      if (!res.success) throw new Error(res.error ?? 'Delete failed')
+      await loadTranscriptionStatus()
+    } catch (err) {
+      setTranscriptionDownloadError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setTranscriptionDeleting(null)
+    }
+  }
 
   const loadAvailableVersions = async () => {
     if (!window.electronAPI) return
@@ -186,6 +248,8 @@ function SettingsScreen() {
         autoplayAfterSpectate: allSettings.autoplayAfterSpectate !== undefined ? allSettings.autoplayAfterSpectate : 'true',
         language: allSettings.language || getLanguage(),
         demo_folders: allSettings.demo_folders || '',
+        transcription_enabled: allSettings.transcription_enabled || 'false',
+        transcription_model: allSettings.transcription_model || 'small',
       })
       // Set language from settings
       if (allSettings.language && (allSettings.language === 'en' || allSettings.language === 'sv')) {
@@ -1190,6 +1254,154 @@ function SettingsScreen() {
             </div>
           </div>
 
+
+          {/* Transcription Settings (Experimental) */}
+          <div className="bg-secondary rounded-lg border border-border p-4">
+            <div className="flex items-center gap-2 mb-4">
+              <h3 className="text-lg font-semibold">Transcription</h3>
+              <span className="text-xs px-1.5 py-0.5 bg-yellow-500/20 text-yellow-400 rounded font-medium">Experimental</span>
+            </div>
+            <p className="text-xs text-gray-500 mb-4">
+              Uses <a href="#" onClick={(e) => { e.preventDefault(); window.electronAPI?.openExternal('https://github.com/ggml-org/whisper.cpp') }} className="text-accent hover:underline">whisper.cpp</a> to transcribe voice audio locally on your machine. The binary and model are downloaded separately and stored in your app data folder.
+            </p>
+
+            <div className="space-y-4">
+              {/* Enable toggle */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-1">Enable Transcription</label>
+                  <p className="text-xs text-gray-500">Show transcript panel in the voice playback modal</p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.transcription_enabled === 'true'}
+                    onChange={async (e) => {
+                      const value = e.target.checked ? 'true' : 'false'
+                      setSettings((prev) => ({ ...prev, transcription_enabled: value }))
+                      await handleSaveSingleSetting('transcription_enabled', value)
+                    }}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-surface peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-accent"></div>
+                </label>
+              </div>
+
+              {/* Model size */}
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-1">Model Size</label>
+                <p className="text-xs text-gray-500 mb-2">Larger models are more accurate but slower and require more storage</p>
+                <select
+                  value={settings.transcription_model || 'small'}
+                  onChange={async (e) => {
+                    const value = e.target.value
+                    setSettings((prev) => ({ ...prev, transcription_model: value }))
+                    await handleSaveSingleSetting('transcription_model', value)
+                    setTranscriptionStatus(null)
+                    loadTranscriptionStatus()
+                  }}
+                  className="px-3 py-2 bg-surface border border-border rounded text-sm text-gray-300 focus:outline-none focus:ring-1 focus:ring-accent"
+                >
+                  <option value="tiny">tiny — ~75 MB (fastest, rough)</option>
+                  <option value="base">base — ~150 MB</option>
+                  <option value="small">small — ~500 MB (recommended)</option>
+                  <option value="medium">medium — ~1.5 GB (accurate)</option>
+                  <option value="large">large — ~3 GB (most accurate)</option>
+                </select>
+              </div>
+
+              {/* Status + downloads */}
+              <div className="space-y-2">
+                <p className="text-xs font-medium text-gray-400 uppercase tracking-wide">Download Status</p>
+
+                {/* Binary */}
+                <div className="flex items-center justify-between bg-surface/50 rounded px-3 py-2">
+                  <div>
+                    <span className="text-sm text-gray-300">whisper-cli binary</span>
+                    <p className="text-xs text-gray-500">The transcription engine</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {transcriptionStatus?.binaryReady ? (
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-green-400 font-medium">✓ Ready</span>
+                        <button
+                          onClick={() => handleTranscriptionDownload('binary')}
+                          disabled={!!transcriptionDownloading || !!transcriptionDeleting}
+                          className="px-2 py-0.5 bg-surface hover:bg-border text-gray-400 hover:text-gray-200 border border-border rounded text-xs transition-colors disabled:opacity-50"
+                          title="Re-download binary (fixes missing DLL errors)"
+                        >
+                          Re-download
+                        </button>
+                        <button
+                          onClick={() => handleTranscriptionDelete('binary')}
+                          disabled={!!transcriptionDownloading || !!transcriptionDeleting}
+                          className="px-2 py-0.5 bg-surface hover:bg-red-900/40 text-gray-400 hover:text-red-400 border border-border rounded text-xs transition-colors disabled:opacity-50"
+                          title="Delete entire whisper folder (binary + models)"
+                        >
+                          {transcriptionDeleting === 'binary' ? 'Deleting...' : 'Delete'}
+                        </button>
+                      </div>
+                    ) : transcriptionDownloading === 'binary' ? (
+                      <span className="text-xs text-accent">
+                        {transcriptionDownloadPercent === -1 ? 'Extracting...' : `${transcriptionDownloadPercent}%`}
+                      </span>
+                    ) : (
+                      <button
+                        onClick={() => handleTranscriptionDownload('binary')}
+                        disabled={!!transcriptionDownloading}
+                        className="px-2.5 py-1 bg-accent hover:bg-accent/90 text-white rounded text-xs font-medium transition-colors disabled:opacity-50"
+                      >
+                        Download
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Model */}
+                <div className="flex items-center justify-between bg-surface/50 rounded px-3 py-2">
+                  <div>
+                    <span className="text-sm text-gray-300">ggml-{settings.transcription_model || 'small'}.bin model</span>
+                    <p className="text-xs text-gray-500">The speech recognition model</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {transcriptionStatus?.modelReady ? (
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-green-400 font-medium">✓ Ready</span>
+                        <button
+                          onClick={() => handleTranscriptionDelete('model')}
+                          disabled={!!transcriptionDownloading || !!transcriptionDeleting}
+                          className="px-2 py-0.5 bg-surface hover:bg-red-900/40 text-gray-400 hover:text-red-400 border border-border rounded text-xs transition-colors disabled:opacity-50"
+                          title="Delete this model file"
+                        >
+                          {transcriptionDeleting === 'model' ? 'Deleting...' : 'Delete'}
+                        </button>
+                      </div>
+                    ) : transcriptionDownloading === 'model' ? (
+                      <div className="flex items-center gap-2">
+                        <div className="w-20 h-1.5 bg-surface rounded-full overflow-hidden">
+                          <div className="h-full bg-accent rounded-full transition-all" style={{ width: `${transcriptionDownloadPercent}%` }} />
+                        </div>
+                        <span className="text-xs text-accent">{transcriptionDownloadPercent}%</span>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => handleTranscriptionDownload('model')}
+                        disabled={!!transcriptionDownloading || !transcriptionStatus?.binaryReady}
+                        className="px-2.5 py-1 bg-accent hover:bg-accent/90 text-white rounded text-xs font-medium transition-colors disabled:opacity-50"
+                        title={!transcriptionStatus?.binaryReady ? 'Download binary first' : undefined}
+                      >
+                        Download
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {transcriptionDownloadError && (
+                  <p className="text-xs text-red-400 mt-1">{transcriptionDownloadError}</p>
+                )}
+              </div>
+            </div>
+          </div>
 
           {/* Advanced Settings */}
           <div className="bg-secondary rounded-lg border border-border p-4">
