@@ -4986,6 +4986,9 @@ ipcMain.handle('cs2:launchPOV', async (
         } else if (currentRound === rounds.length - 1 && currentTick >= jumpTick) {
           if (povPollIntervalId) clearInterval(povPollIntervalId)
           povPollIntervalId = null
+        } else {
+          // Re-assert spectate target each interval to handle cases where CS2 loses focus after round skip
+          await sendCS2CommandsSequentially(netconPort, [`spec_player ${playerNameQuoted}`])
         }
       } catch {
         // CS2 closed or netcon error: stop polling
