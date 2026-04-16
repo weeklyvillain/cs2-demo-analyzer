@@ -39,6 +39,7 @@ const parserJobs = new Map<string, ParserJob>()
 let extractorProcess: ChildProcess | null = null // Track voice extractor process
 let audiowaveformProcess: ChildProcess | null = null // Track audiowaveform process
 let startupCleanupDeleted: Array<{ matchId: string; reason: string }> = []
+const voiceTempDirectories = new Set<string>()
 let overlayInteractive: boolean = false
 let overlayExplicitlyShown: boolean = false // Track if user explicitly toggled overlay visibility
 let currentDemoPath: string | null = null // Track currently loaded demo in CS2
@@ -537,8 +538,19 @@ function computeWavAmplitudes(buf: Buffer, numBars: number): { amplitudes: numbe
   console.log(`[computeWavAmplitudes] numSamples=${numSamples} duration=${duration.toFixed(2)}s maxRms=${maxRms.toFixed(6)} numBars=${numBars}`)
 
   if (maxRms > 0) {
+    const nonZeroAmplitudes = amplitudes.filter((value) => value > 0)
+    const sortedAmplitudes = [...nonZeroAmplitudes].sort((a, b) => a - b)
+    const floorIndex = sortedAmplitudes.length > 0
+      ? Math.floor((sortedAmplitudes.length - 1) * 0.2)
+      : 0
+    const noiseFloor = sortedAmplitudes.length > 0 ? sortedAmplitudes[floorIndex] : 0
+
     for (let i = 0; i < numBars; i++) {
-      amplitudes[i] = Math.pow(amplitudes[i] / maxRms, 0.6)
+      const cleanedAmplitude = Math.max(0, amplitudes[i] - noiseFloor * 0.85)
+      const normalisedAmplitude = cleanedAmplitude > 0 ? cleanedAmplitude / Math.max(maxRms - noiseFloor * 0.85, 1e-6) : 0
+      amplitudes[i] = normalisedAmplitude > 0
+        ? Math.max(0.08, Math.pow(normalisedAmplitude, 0.45))
+        : 0
     }
   }
   return { amplitudes, duration }
@@ -567,17 +579,62 @@ app.whenReady().then(async () => {
   })
 
   // Stream audio files for voice playback via audio-file:// scheme.
-  // Uses net.fetch (Electron's own fetch) which correctly handles file:// with
-  // range requests (seek support) and doesn't require ReadableStream compatibility.
+  // Uses fs.createReadStream so large audio files are streamed without buffering
+  // the entire file into a Uint8Array (which caused RangeError OOM on big files).
   protocol.handle('audio-file', (request) => {
     const url = new URL(request.url)
     let filePath = decodeURIComponent(url.pathname)
     // Windows: strip leading slash before drive letter (/C:/... → C:/...)
     if (/^\/[A-Za-z]:\//.test(filePath)) filePath = filePath.slice(1)
-    // Forward Range header so the audio element can seek
-    return electronNet.fetch(`file:///${filePath.replace(/\\/g, '/')}`, {
-      headers: request.headers,
-    })
+
+    try {
+      const stat = fs.statSync(filePath)
+      const fileSize = stat.size
+      const rangeHeader = request.headers.get('range')
+
+      const makeStream = (start: number, end: number) => {
+        const nodeStream = fs.createReadStream(filePath, { start, end })
+        return new ReadableStream({
+          start(controller) {
+            nodeStream.on('data', (chunk) => {
+              controller.enqueue(chunk instanceof Buffer ? chunk : Buffer.from(chunk as string))
+            })
+            nodeStream.on('end', () => controller.close())
+            nodeStream.on('error', (err) => controller.error(err))
+          },
+          cancel() { nodeStream.destroy() },
+        })
+      }
+
+      if (rangeHeader) {
+        const match = rangeHeader.match(/bytes=(\d*)-(\d*)/)
+        if (match) {
+          const start = match[1] ? parseInt(match[1], 10) : 0
+          const end = match[2] ? Math.min(parseInt(match[2], 10), fileSize - 1) : fileSize - 1
+          const chunkSize = end - start + 1
+          return new Response(makeStream(start, end), {
+            status: 206,
+            headers: {
+              'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+              'Accept-Ranges': 'bytes',
+              'Content-Length': String(chunkSize),
+              'Content-Type': 'audio/wav',
+            },
+          })
+        }
+      }
+
+      return new Response(makeStream(0, fileSize - 1), {
+        status: 200,
+        headers: {
+          'Accept-Ranges': 'bytes',
+          'Content-Length': String(fileSize),
+          'Content-Type': 'audio/wav',
+        },
+      })
+    } catch {
+      return new Response('File not found', { status: 404 })
+    }
   })
   
   // IPC handler to get audio file URL for voice playback.
@@ -849,6 +906,9 @@ app.whenReady().then(async () => {
   
   // Ensure matches directory exists
   matchesService.ensureMatchesDir()
+
+  // Clean up stale temp voice extraction directories from previous sessions
+  cleanupStaleVoiceTempEntriesOnStartup()
   
   // Perform startup integrity check
   startupCleanupDeleted = await matchesService.performStartupIntegrityCheck()
@@ -1034,6 +1094,66 @@ function killProcessForcefully(childProcess: ChildProcess | null, name: string):
   }
 }
 
+function isPathInTempDirectory(targetPath: string): boolean {
+  const normalizedTargetPath = path.resolve(path.normalize(targetPath))
+  const normalizedTempDir = path.resolve(path.normalize(app.getPath('temp')))
+  return normalizedTargetPath === normalizedTempDir || normalizedTargetPath.startsWith(`${normalizedTempDir}${path.sep}`)
+}
+
+function registerVoiceTempDirectory(outputPath: string): void {
+  if (!isPathInTempDirectory(outputPath)) return
+  voiceTempDirectories.add(path.resolve(path.normalize(outputPath)))
+}
+
+function unregisterVoiceTempDirectory(outputPath: string): void {
+  voiceTempDirectories.delete(path.resolve(path.normalize(outputPath)))
+}
+
+function cleanupRegisteredVoiceTempDirectories(): void {
+  for (const outputPath of voiceTempDirectories) {
+    try {
+      if (fs.existsSync(outputPath)) {
+        fs.rmSync(outputPath, { recursive: true, force: true })
+        console.log(`[Voice Cleanup] Deleted registered temp directory: ${outputPath}`)
+      }
+    } catch (error) {
+      console.error(`[Voice Cleanup] Failed to delete registered temp directory ${outputPath}:`, error)
+    } finally {
+      voiceTempDirectories.delete(outputPath)
+    }
+  }
+}
+
+function cleanupStaleVoiceTempEntriesOnStartup(): void {
+  const tempDir = app.getPath('temp')
+  let deletedCount = 0
+
+  try {
+    const entries = fs.readdirSync(tempDir, { withFileTypes: true })
+    for (const entry of entries) {
+      if (!entry.name.startsWith('cs2-voice-')) continue
+
+      const entryPath = path.join(tempDir, entry.name)
+      if (!isPathInTempDirectory(entryPath)) continue
+
+      try {
+        fs.rmSync(entryPath, { recursive: true, force: true })
+        deletedCount += 1
+        console.log(`[Voice Cleanup] Deleted stale startup temp entry: ${entryPath}`)
+      } catch (error) {
+        console.warn(`[Voice Cleanup] Failed to delete stale startup temp entry ${entryPath}:`, error)
+      }
+    }
+  } catch (error) {
+    console.warn('[Voice Cleanup] Failed to scan temp directory for stale voice entries:', error)
+    return
+  }
+
+  if (deletedCount > 0) {
+    console.log(`[Voice Cleanup] Deleted ${deletedCount} stale cs2-voice-* temp entr${deletedCount === 1 ? 'y' : 'ies'} on startup`)
+  }
+}
+
 app.on('before-quit', (event) => {
   console.log('[App] Cleaning up processes before quit...')
   
@@ -1064,6 +1184,9 @@ app.on('before-quit', (event) => {
   
   // Unregister all global shortcuts
   globalShortcut.unregisterAll()
+  
+  // Cleanup any leftover temp voice extraction directories
+  cleanupRegisteredVoiceTempDirectories()
   
   // Stop overlay tracking (this will also stop WinEvent hooks and health check interval)
   if (overlayWindow) {
@@ -5611,6 +5734,8 @@ ipcMain.handle('voice:extract', async (_, options: { demoPath: string; outputPat
     const outputDir = `cs2-voice-${Date.now()}`
     outputPath = path.join(tempDir, outputDir)
   }
+
+  registerVoiceTempDirectory(outputPath)
   
   // Create output directory if it doesn't exist
   if (!fs.existsSync(outputPath)) {
@@ -6000,11 +6125,7 @@ ipcMain.handle('voice:cleanup', async (_, outputPath: string) => {
 
   try {
     // Only delete if path is in temp directory (safety check)
-    const tempDir = app.getPath('temp')
-    const normalizedOutputPath = path.normalize(outputPath)
-    const normalizedTempDir = path.normalize(tempDir)
-
-    if (!normalizedOutputPath.startsWith(normalizedTempDir)) {
+    if (!isPathInTempDirectory(outputPath)) {
       console.warn(`[Voice Cleanup] Refusing to delete path outside temp directory: ${outputPath}`)
       return { success: false, error: 'Path is not in temp directory' }
     }
@@ -6012,11 +6133,13 @@ ipcMain.handle('voice:cleanup', async (_, outputPath: string) => {
     // Check if directory exists
     if (!fs.existsSync(outputPath)) {
       console.log(`[Voice Cleanup] Directory does not exist: ${outputPath}`)
+      unregisterVoiceTempDirectory(outputPath)
       return { success: true }
     }
 
     // Delete directory and all contents
     fs.rmSync(outputPath, { recursive: true, force: true })
+    unregisterVoiceTempDirectory(outputPath)
     console.log(`[Voice Cleanup] Deleted temp directory: ${outputPath}`)
     return { success: true }
   } catch (error) {
