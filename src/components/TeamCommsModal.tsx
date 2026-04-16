@@ -922,8 +922,7 @@ export default function TeamCommsModal({ isOpen, onClose, demoPath, teamName, pl
 								/>
 							</div>
 
-							<div className="text-xs text-gray-500 uppercase tracking-wide">Seek</div>
-							<div ref={waveformContainerRef} className="space-y-1">
+							<div ref={waveformContainerRef} className="space-y-1 col-span-2">
 								<div className="flex justify-between text-xs text-gray-500 font-mono">
 									<span>{formatTime(displayedTime)}</span>
 									<span>{formatTime(duration)}</span>

@@ -556,6 +556,129 @@ function computeWavAmplitudes(buf: Buffer, numBars: number): { amplitudes: numbe
   return { amplitudes, duration }
 }
 
+/**
+ * Streaming version of computeWavAmplitudes — reads the file in 256 KB chunks
+ * so the entire WAV is never held in memory at once.
+ */
+async function computeWavAmplitudesFromFile(
+  filePath: string,
+  numBars: number,
+): Promise<{ amplitudes: number[]; duration: number }> {
+  const empty = { amplitudes: new Array(numBars).fill(0.05), duration: 0 }
+  const fd = await fs.promises.open(filePath, 'r')
+  try {
+    // WAV fmt+data headers fit well within the first 2 KB for all standard files.
+    const headerBuf = Buffer.alloc(2048)
+    const { bytesRead: hRead } = await fd.read(headerBuf, 0, 2048, 0)
+    if (hRead < 44) return empty
+    if (headerBuf.toString('ascii', 0, 4) !== 'RIFF') return empty
+    if (headerBuf.toString('ascii', 8, 12) !== 'WAVE') return empty
+
+    let audioFormat = 1, numChannels = 1, sampleRate = 16000, bitsPerSample = 16
+    let dataOffset = -1, dataLength = 0
+    let offset = 12
+    while (offset + 8 <= hRead) {
+      const chunkId = headerBuf.toString('ascii', offset, offset + 4)
+      const chunkSize = headerBuf.readUInt32LE(offset + 4)
+      if (chunkId === 'fmt ' && chunkSize >= 16) {
+        audioFormat   = headerBuf.readUInt16LE(offset + 8)
+        numChannels   = headerBuf.readUInt16LE(offset + 10)
+        sampleRate    = headerBuf.readUInt32LE(offset + 12)
+        bitsPerSample = headerBuf.readUInt16LE(offset + 22)
+      } else if (chunkId === 'data') {
+        dataOffset = offset + 8
+        dataLength = chunkSize
+        break
+      }
+      offset += 8 + ((chunkSize + 1) & ~1)
+    }
+    if (dataOffset === -1 || sampleRate === 0 || numChannels === 0) return empty
+
+    const bytesPerSample = Math.ceil(bitsPerSample / 8)
+    const blockAlign = numChannels * bytesPerSample
+    if (blockAlign === 0) return empty
+
+    const { size: fileSize } = await fd.stat()
+    const actualDataLength = Math.min(dataLength, fileSize - dataOffset)
+    const numSamples = Math.floor(actualDataLength / blockAlign)
+    const duration = numSamples / sampleRate
+    if (numSamples === 0) return { ...empty, duration }
+
+    const samplesPerBar = Math.max(1, Math.floor(numSamples / numBars))
+    const amplitudes: number[] = new Array(numBars).fill(0)
+    let maxRms = 0
+
+    const CHUNK = 256 * 1024
+    // Extra blockAlign bytes so partial samples at chunk boundaries are carried over.
+    const buf = Buffer.alloc(CHUNK + blockAlign)
+    let filePos = dataOffset
+    let leftover = 0
+    let globalSample = 0
+    let barIdx = 0
+    let barSumSq = 0
+    let barCount = 0
+
+    while (filePos < dataOffset + actualDataLength && barIdx < numBars) {
+      const toRead = Math.min(CHUNK, dataOffset + actualDataLength - filePos)
+      const { bytesRead: br } = await fd.read(buf, leftover, toRead, filePos)
+      if (br === 0) break
+      filePos += br
+      const available = leftover + br
+
+      let pos = 0
+      while (pos + blockAlign <= available && barIdx < numBars) {
+        let sample = 0
+        if (bitsPerSample === 16 && audioFormat === 1) {
+          sample = buf.readInt16LE(pos) / 32768
+        } else if (bitsPerSample === 8 && audioFormat === 1) {
+          sample = (buf.readUInt8(pos) - 128) / 128
+        } else if (bitsPerSample === 32 && audioFormat === 1) {
+          sample = buf.readInt32LE(pos) / 2147483648
+        } else if (bitsPerSample === 32 && audioFormat === 3) {
+          sample = buf.readFloatLE(pos)
+        }
+        barSumSq += sample * sample
+        barCount++
+        pos += blockAlign
+        globalSample++
+
+        if (globalSample >= (barIdx + 1) * samplesPerBar) {
+          amplitudes[barIdx] = barCount > 0 ? Math.sqrt(barSumSq / barCount) : 0
+          if (amplitudes[barIdx] > maxRms) maxRms = amplitudes[barIdx]
+          barIdx++
+          barSumSq = 0
+          barCount = 0
+        }
+      }
+
+      leftover = available - pos
+      if (leftover > 0) buf.copy(buf, 0, pos, available)
+    }
+
+    // Flush the final bar if it has data.
+    if (barIdx < numBars && barCount > 0) {
+      amplitudes[barIdx] = Math.sqrt(barSumSq / barCount)
+      if (amplitudes[barIdx] > maxRms) maxRms = amplitudes[barIdx]
+    }
+
+    if (maxRms > 0) {
+      const nonZero = amplitudes.filter(v => v > 0)
+      const sorted = [...nonZero].sort((a, b) => a - b)
+      const noiseFloor = sorted.length > 0 ? sorted[Math.floor((sorted.length - 1) * 0.2)] : 0
+      for (let i = 0; i < numBars; i++) {
+        const cleaned = Math.max(0, amplitudes[i] - noiseFloor * 0.85)
+        const normed = cleaned > 0 ? cleaned / Math.max(maxRms - noiseFloor * 0.85, 1e-6) : 0
+        amplitudes[i] = normed > 0 ? Math.max(0.08, Math.pow(normed, 0.45)) : 0
+      }
+    }
+
+    console.log(`[computeWavAmplitudesFromFile] bars=${numBars} duration=${duration.toFixed(2)}s maxRms=${maxRms.toFixed(6)}`)
+    return { amplitudes, duration }
+  } finally {
+    await fd.close()
+  }
+}
+
 app.whenReady().then(async () => {
   // Register protocol to serve map images (thumbnails for cards)
   protocol.registerFileProtocol('map', (request, callback) => {
@@ -593,17 +716,23 @@ app.whenReady().then(async () => {
       const rangeHeader = request.headers.get('range')
 
       const makeStream = (start: number, end: number) => {
-        const nodeStream = fs.createReadStream(filePath, { start, end })
-        return new ReadableStream({
-          start(controller) {
-            nodeStream.on('data', (chunk) => {
-              controller.enqueue(chunk instanceof Buffer ? chunk : Buffer.from(chunk as string))
-            })
-            nodeStream.on('end', () => controller.close())
-            nodeStream.on('error', (err) => controller.error(err))
+        const nodeStream = fs.createReadStream(filePath, { start, end, highWaterMark: 64 * 1024 })
+        nodeStream.pause()
+        return new ReadableStream(
+          {
+            start(controller) {
+              nodeStream.on('data', (chunk) => {
+                controller.enqueue(chunk instanceof Buffer ? chunk : Buffer.from(chunk as string))
+                if ((controller.desiredSize ?? 1) <= 0) nodeStream.pause()
+              })
+              nodeStream.on('end', () => controller.close())
+              nodeStream.on('error', (err) => controller.error(err))
+            },
+            pull() { nodeStream.resume() },
+            cancel() { nodeStream.destroy() },
           },
-          cancel() { nodeStream.destroy() },
-        })
+          { highWaterMark: 2 },
+        )
       }
 
       if (rangeHeader) {
@@ -617,7 +746,6 @@ app.whenReady().then(async () => {
             headers: {
               'Content-Range': `bytes ${start}-${end}/${fileSize}`,
               'Accept-Ranges': 'bytes',
-              'Content-Length': String(chunkSize),
               'Content-Type': 'audio/wav',
             },
           })
@@ -628,7 +756,6 @@ app.whenReady().then(async () => {
         status: 200,
         headers: {
           'Accept-Ranges': 'bytes',
-          'Content-Length': String(fileSize),
           'Content-Type': 'audio/wav',
         },
       })
@@ -661,8 +788,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('voice:computeWaveform', async (_, filePath: string, numBars: number) => {
     try {
       if (!fs.existsSync(filePath)) return { success: false, error: 'Audio file not found' }
-      const buf = await fs.promises.readFile(filePath)
-      const result = computeWavAmplitudes(buf, Math.max(1, numBars))
+      const result = await computeWavAmplitudesFromFile(filePath, Math.max(1, numBars))
       return { success: true, ...result }
     } catch (error) {
       console.error('[voice:computeWaveform]', error)
