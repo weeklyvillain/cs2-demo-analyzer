@@ -357,6 +357,7 @@ export default function MatchListPanel({
             return (
               <div
                 key={match.id}
+                data-match-id={match.id}
                 onContextMenu={(e) => handleContextMenu(e, match)}
                 className={`bg-secondary rounded-lg border-2 overflow-hidden transition-all hover:shadow-xl group flex flex-col relative box-border ${
                   isSelected
