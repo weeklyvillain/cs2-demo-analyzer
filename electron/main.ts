@@ -243,6 +243,10 @@ function createWindow() {
           details: startupCleanupDeleted,
         })
       }
+      // Flush any .dem paths received before window was ready
+      for (const filePath of pendingDemoPaths.splice(0)) {
+        mainWindow.webContents.send('demo:openFile', filePath)
+      }
     }
   })
 
@@ -799,7 +803,14 @@ app.whenReady().then(async () => {
       return new Response('File not found', { status: 404 })
     }
   })
-  
+
+  // Cold start: check if a .dem file was passed as CLI argument
+  // process.argv[0] = node/electron, process.argv[1] = script or '--', rest = user args
+  const coldStartDemo = process.argv.slice(1).find(arg => arg.toLowerCase().endsWith('.dem'))
+  if (coldStartDemo) {
+    handleDemoOpen(coldStartDemo)
+  }
+
   // IPC handler to get audio file URL for voice playback.
   // Returns an audio-file:// URL served by the custom protocol handler above,
   // so the renderer never receives raw file bytes over IPC.
