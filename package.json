@@ -113,6 +113,14 @@
         "owner": "weeklyvillain",
         "repo": "cs2-demo-analyzer"
       }
+    ],
+    "fileAssociations": [
+      {
+        "ext": "dem",
+        "name": "CS2 Demo File",
+        "role": "Viewer",
+        "mimeType": "application/x-csgo-demo"
+      }
     ]
   }
 }
