@@ -138,6 +138,7 @@ export interface ElectronAPI {
     message: string
   }) => void) => void
   showItemInFolder: (filePath: string) => Promise<void>
+  onDemoOpen: (callback: (filePath: string) => void) => () => void
   onParserMessage: (callback: (message: string | { processId: string; message: string }) => void) => () => void
   onParserLog: (callback: (log: string) => void) => () => void
   onParserExit: (callback: (data: { code: number | null; signal: string | null; processId?: string }) => void) => () => void

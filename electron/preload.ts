@@ -131,6 +131,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   showItemInFolder: (filePath: string) => ipcRenderer.invoke('file:showInFolder', filePath),
 
+  // Demo file association
+  onDemoOpen: (callback: (filePath: string) => void) => {
+    const wrapper = (_: unknown, filePath: string) => callback(filePath)
+    ipcRenderer.on('demo:openFile', wrapper)
+    return () => ipcRenderer.removeListener('demo:openFile', wrapper)
+  },
+
   // Listeners (return unsubscribe so callers can remove only their own listener)
   onParserMessage: (callback: (message: string | { processId: string; message: string }) => void) => {
     const wrapper = (_: unknown, message: string | { processId: string; message: string }) => callback(message)
