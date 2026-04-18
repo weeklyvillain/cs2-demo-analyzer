@@ -692,6 +692,9 @@ function MatchesScreen({ pendingDemos = [], onPendingDemosConsumed }: MatchesScr
           onMatchClick={(matchId) => handleMatchClick(matchId)}
           onContextMenuAction={(action, match) => handleContextMenuAction(action, match)}
           onToggleMatchSelection={(matchId) => toggleMatchSelection(matchId)}
+          onAddToSelection={(ids) =>
+            setSelectedMatches((prev) => new Set([...prev, ...ids]))
+          }
           onClearSelection={() => setSelectedMatches(new Set())}
           onDeleteSelected={handleDeleteSelected}
           onAddDemo={handleAddDemo}

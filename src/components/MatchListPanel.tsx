@@ -144,6 +144,7 @@ export interface MatchListPanelProps {
   onMatchClick: (matchId: string) => void
   onContextMenuAction: (action: 'delete' | 'open' | 'showInDb' | 'reparse' | 'select' | 'showLogs', match: Match) => void
   onToggleMatchSelection: (matchId: string) => void
+  onAddToSelection: (matchIds: string[]) => void
   onClearSelection: () => void
   onDeleteSelected: () => void
   onAddDemo: () => void
@@ -168,6 +169,7 @@ export default function MatchListPanel({
   onMatchClick,
   onContextMenuAction,
   onToggleMatchSelection,
+  onAddToSelection,
   onClearSelection,
   onDeleteSelected,
   onAddDemo,
