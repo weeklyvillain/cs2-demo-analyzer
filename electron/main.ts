@@ -37,6 +37,56 @@ function handleDemoOpen(filePath: string): void {
   }
 }
 
+/** Launch CS2 directly playing a demo, no analysis. Used by the right-click "Play in CS2" shell verb. */
+async function playDemoInCS2(demoPath: string): Promise<void> {
+  if (!demoPath || !fs.existsSync(demoPath)) return
+
+  let cs2Exe = getSetting('cs2_path', '')
+  if (!cs2Exe || !fs.existsSync(cs2Exe)) {
+    const cs2Paths = [
+      'C:\\Program Files (x86)\\Steam\\steamapps\\common\\Counter-Strike Global Offensive\\game\\bin\\win64\\cs2.exe',
+      'C:\\Program Files\\Steam\\steamapps\\common\\Counter-Strike Global Offensive\\game\\bin\\win64\\cs2.exe',
+      process.env.CS2_PATH || '',
+    ]
+    for (const p of cs2Paths) {
+      if (p && fs.existsSync(p)) { cs2Exe = p; setSetting('cs2_path', cs2Exe); break }
+    }
+  }
+  if (!cs2Exe || !fs.existsSync(cs2Exe)) {
+    console.error('[playDemo] CS2 executable not found')
+    return
+  }
+
+  const netconPort = getSetting('cs2_netconport', '2121')
+  const cs2Running = await isCS2Running()
+
+  if (cs2Running) {
+    try {
+      await sendCS2CommandsSequentially(parseInt(netconPort), [`playdemo "${demoPath}"`])
+    } catch (err) {
+      console.error('[playDemo] Failed to send playdemo via netcon:', err)
+    }
+    return
+  }
+
+  const args = ['-insecure', '-novid', `-netconport`, netconPort]
+  const cs2Process = spawn(cs2Exe, args, {
+    detached: true,
+    stdio: 'ignore',
+    cwd: path.dirname(cs2Exe),
+  })
+  cs2Process.unref()
+
+  // Wait for CS2 to start listening on netcon then send playdemo
+  setTimeout(async () => {
+    try {
+      await sendCS2CommandsSequentially(parseInt(netconPort), [`playdemo "${demoPath}"`])
+    } catch (err) {
+      console.error('[playDemo] Failed to send playdemo after launch:', err)
+    }
+  }, 8000)
+}
+
 /** Single process when parallel is off; unused when using parserJobs map. */
 let parserProcess: ChildProcess | null = null
 /** When parallel parsing is enabled, multiple jobs run at once keyed by matchId. */
@@ -704,8 +754,13 @@ if (!gotSingleInstanceLock) {
 } else {
   app.on('second-instance', (_, argv) => {
     // argv[0] is the executable, argv[1] may be '--' or the file path
-    const demPath = argv.find(arg => arg.toLowerCase().endsWith('.dem'))
-    if (demPath) handleDemoOpen(demPath)
+    const playIdx = argv.indexOf('--play-demo')
+    if (playIdx !== -1 && argv[playIdx + 1]) {
+      playDemoInCS2(argv[playIdx + 1])
+    } else {
+      const demPath = argv.find(arg => arg.toLowerCase().endsWith('.dem'))
+      if (demPath) handleDemoOpen(demPath)
+    }
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore()
       mainWindow.focus()
@@ -806,9 +861,13 @@ app.whenReady().then(async () => {
 
   // Cold start: check if a .dem file was passed as CLI argument
   // Dev: argv = [electron, script, ...args]. Packaged: argv = [exe, file.dem]. Search all to be safe.
-  const coldStartDemo = process.argv.slice(1).find(arg => arg.toLowerCase().endsWith('.dem'))
-  if (coldStartDemo) {
-    handleDemoOpen(coldStartDemo)
+  const coldArgv = process.argv.slice(1)
+  const playDemoIdx = coldArgv.indexOf('--play-demo')
+  if (playDemoIdx !== -1 && coldArgv[playDemoIdx + 1]) {
+    playDemoInCS2(coldArgv[playDemoIdx + 1])
+  } else {
+    const coldStartDemo = coldArgv.find(arg => arg.toLowerCase().endsWith('.dem'))
+    if (coldStartDemo) handleDemoOpen(coldStartDemo)
   }
 
   // IPC handler to get audio file URL for voice playback.

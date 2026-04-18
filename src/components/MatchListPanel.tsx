@@ -3,6 +3,12 @@ import Modal from './Modal'
 import { formatDuration } from '../utils/formatters'
 import type { Match, MatchStats } from '../types/matches'
 import { t } from '../utils/translations'
+import {
+  getDragSelectionRect,
+  getOverlappingMatchIds,
+  hasDragSelectionMovement,
+  isDragSelectionIgnoredTagName,
+} from '../utils/matchDragSelection'
 import { Check, ArrowUp, ArrowDown, Trash2, X, Loader2, FolderOpen, Database, RefreshCw, Upload, FileText } from 'lucide-react'
 
 /** Lazy-loads the map thumbnail when the card enters the viewport to avoid loading many images at once. */
@@ -181,7 +187,8 @@ export default function MatchListPanel({
     curX: number
     curY: number
   } | null>(null)
-  const gridRef = useRef<HTMLDivElement>(null)
+  const [dragPreviewMatches, setDragPreviewMatches] = useState<Set<string>>(new Set())
+  const panelRef = useRef<HTMLDivElement>(null)
 
   const handleContextMenu = (e: React.MouseEvent, match: Match) => {
     e.preventDefault()
@@ -208,38 +215,48 @@ export default function MatchListPanel({
   useEffect(() => {
     if (!dragBox) return
 
+    const getHitIds = (nextDragBox: NonNullable<typeof dragBox>) => {
+      if (!hasDragSelectionMovement(nextDragBox)) {
+        return []
+      }
+
+      const selectionRect = getDragSelectionRect(nextDragBox)
+      const cards = Array.from(
+        (panelRef.current ?? document).querySelectorAll<HTMLElement>('[data-match-id]')
+      ).map((el) => {
+        const rect = el.getBoundingClientRect()
+        return {
+          matchId: el.dataset.matchId ?? '',
+          left: rect.left,
+          top: rect.top,
+          right: rect.right,
+          bottom: rect.bottom,
+        }
+      }).filter((card) => card.matchId)
+
+      return getOverlappingMatchIds(cards, selectionRect)
+    }
+
     const onMove = (e: MouseEvent) => {
-      setDragBox((prev) =>
-        prev ? { ...prev, curX: e.clientX, curY: e.clientY } : null
-      )
+      setDragBox((prev) => {
+        if (!prev) return null
+
+        const nextDragBox = { ...prev, curX: e.clientX, curY: e.clientY }
+        setDragPreviewMatches(new Set(getHitIds(nextDragBox)))
+        return nextDragBox
+      })
     }
 
     const onUp = () => {
       setDragBox((prev) => {
         if (!prev) return null
-        const moved =
-          Math.abs(prev.curX - prev.startX) > 4 ||
-          Math.abs(prev.curY - prev.startY) > 4
-        if (moved) {
-          const selRect = {
-            left:   Math.min(prev.startX, prev.curX),
-            top:    Math.min(prev.startY, prev.curY),
-            right:  Math.max(prev.startX, prev.curX),
-            bottom: Math.max(prev.startY, prev.curY),
-          }
-          const cards = (gridRef.current ?? document).querySelectorAll<HTMLElement>('[data-match-id]')
-          const hit: string[] = []
-          cards.forEach((el) => {
-            const r = el.getBoundingClientRect()
-            const overlaps =
-              r.left < selRect.right &&
-              r.right > selRect.left &&
-              r.top < selRect.bottom &&
-              r.bottom > selRect.top
-            if (overlaps) hit.push(el.dataset.matchId!)
-          })
-          if (hit.length > 0) onAddToSelection(hit)
+
+        const hitIds = getHitIds(prev)
+        if (hitIds.length > 0) {
+          onAddToSelection(hitIds)
         }
+
+        setDragPreviewMatches(new Set())
         return null
       })
     }
@@ -252,8 +269,29 @@ export default function MatchListPanel({
     }
   }, [dragBox, onAddToSelection])
 
+  const dragSelectionRect = dragBox ? getDragSelectionRect(dragBox) : null
+
   return (
-    <>
+    <div
+      ref={panelRef}
+      className="relative"
+      onMouseDown={(e) => {
+        if (!e.ctrlKey || e.button !== 0) return
+
+        if (e.target instanceof HTMLElement) {
+          let current: HTMLElement | null = e.target
+          while (current) {
+            if (isDragSelectionIgnoredTagName(current.tagName)) {
+              return
+            }
+            current = current.parentElement
+          }
+        }
+
+        e.preventDefault()
+        setDragBox({ startX: e.clientX, startY: e.clientY, curX: e.clientX, curY: e.clientY })
+      }}
+    >
       {/* Search and Sorting Controls */}
       {matches.length > 0 && (
         <div className="mb-4 space-y-3">
@@ -404,18 +442,13 @@ export default function MatchListPanel({
         </div>
       ) : (
         <div
-          ref={gridRef}
           className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-4 gap-4 relative"
-          onMouseDown={(e) => {
-            if (!e.ctrlKey || e.button !== 0) return
-            e.preventDefault()
-            setDragBox({ startX: e.clientX, startY: e.clientY, curX: e.clientX, curY: e.clientY })
-          }}
         >
           {sortedMatches.map((match) => {
             const thumbnail = getMapThumbnail(match.map)
             const stats = matchStats.get(match.id)
             const isSelected = selectedMatches.has(match.id)
+            const isPreviewSelected = dragPreviewMatches.has(match.id)
             return (
               <div
                 key={match.id}
@@ -424,12 +457,18 @@ export default function MatchListPanel({
                 className={`bg-secondary rounded-lg border-2 overflow-hidden transition-all hover:shadow-xl group flex flex-col relative box-border ${
                   isSelected
                     ? 'border-accent'
+                    : isPreviewSelected
+                      ? 'border-accent/80 ring-2 ring-accent/30'
                     : 'border-transparent hover:border-accent/50'
                 }`}
               >
-                {isSelected && (
+                {(isSelected || isPreviewSelected) && (
                   <div className="absolute top-2 left-2 z-10">
-                    <div className="w-6 h-6 rounded border-2 flex items-center justify-center bg-accent border-accent">
+                    <div className={`w-6 h-6 rounded border-2 flex items-center justify-center ${
+                      isSelected
+                        ? 'bg-accent border-accent'
+                        : 'bg-accent/60 border-accent/80'
+                    }`}>
                       <Check size={16} className="text-white" />
                     </div>
                   </div>
@@ -631,15 +670,15 @@ export default function MatchListPanel({
 
       {/* Rubber-band drag-select overlay */}
       {dragBox &&
-        (Math.abs(dragBox.curX - dragBox.startX) > 4 ||
-          Math.abs(dragBox.curY - dragBox.startY) > 4) && (
+        dragSelectionRect &&
+        hasDragSelectionMovement(dragBox) && (
         <div
           style={{
             position: 'fixed',
-            left:     Math.min(dragBox.startX, dragBox.curX),
-            top:      Math.min(dragBox.startY, dragBox.curY),
-            width:    Math.abs(dragBox.curX - dragBox.startX),
-            height:   Math.abs(dragBox.curY - dragBox.startY),
+            left:     dragSelectionRect.left,
+            top:      dragSelectionRect.top,
+            width:    dragSelectionRect.right - dragSelectionRect.left,
+            height:   dragSelectionRect.bottom - dragSelectionRect.top,
             border:   '2px dashed #3b82f6',
             background: 'rgba(59,130,246,0.08)',
             pointerEvents: 'none',
@@ -648,6 +687,6 @@ export default function MatchListPanel({
           }}
         />
       )}
-    </>
+    </div>
   )
 }

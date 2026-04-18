@@ -105,7 +105,8 @@
       "createStartMenuShortcut": true,
       "shortcutName": "CS2 Demo Analyzer",
       "runAfterFinish": true,
-      "deleteAppDataOnUninstall": false
+      "deleteAppDataOnUninstall": false,
+      "include": "resources/installer.nsh"
     },
     "publish": [
       {
