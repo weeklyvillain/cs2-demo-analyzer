@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import Viewer2D from './Viewer2D'
 import Modal from './Modal'
 import PlayerModal from './PlayerModal'
@@ -21,7 +21,12 @@ import { formatTime, formatEventDuration } from '../utils/formatters'
 import type { Match, MatchStats, PlayerScore, Round, RoundStats, PlayerEvent, ActiveTab, Player } from '../types/matches'
 import { t } from '../utils/translations'
 
-function MatchesScreen() {
+interface MatchesScreenProps {
+  pendingDemos?: string[]
+  onPendingDemosConsumed?: () => void
+}
+
+function MatchesScreen({ pendingDemos = [], onPendingDemosConsumed }: MatchesScreenProps) {
   const [matches, setMatches] = useState<Match[]>([])
   const [selectedMatch, setSelectedMatch] = useState<string | null>(null)
   const [scores, setScores] = useState<PlayerScore[]>([])
@@ -61,6 +66,8 @@ function MatchesScreen() {
   } | null>(null)
   const [showParsingModal, setShowParsingModal] = useState(false)
   const [demoToParse, setDemoToParse] = useState<string | null>(null)
+  const demoToParseRef = useRef<string | null>(null)
+  demoToParseRef.current = demoToParse
   const [demosToParse, setDemosToParse] = useState<string[]>([])
   const [isDragging, setIsDragging] = useState(false)
   const [showVoiceModal, setShowVoiceModal] = useState(false)
@@ -94,6 +101,21 @@ function MatchesScreen() {
     const interval = setInterval(loadDbViewerSetting, 1000)
     return () => clearInterval(interval)
   }, [])
+
+  // Consume demos received via OS file association (queued silently in background)
+  useEffect(() => {
+    if (!pendingDemos || pendingDemos.length === 0) return
+    if (demoToParseRef.current !== null) {
+      // Already parsing — append all new paths to the queue
+      setDemosToParse((prev) => [...prev, ...pendingDemos])
+    } else {
+      // Nothing parsing yet — start queue minimized (background)
+      setDemoToParse(pendingDemos[0])
+      setDemosToParse(pendingDemos.slice(1))
+    }
+    // Do NOT set showParsingModal=true — runs silently in background
+    onPendingDemosConsumed?.()
+  }, [pendingDemos, onPendingDemosConsumed])
 
   // Check if we have a radar image for the selected match's map
   useEffect(() => {
