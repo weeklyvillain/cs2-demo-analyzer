@@ -181,6 +181,7 @@ export default function MatchListPanel({
     curX: number
     curY: number
   } | null>(null)
+  const gridRef = useRef<HTMLDivElement>(null)
 
   const handleContextMenu = (e: React.MouseEvent, match: Match) => {
     e.preventDefault()
@@ -226,7 +227,7 @@ export default function MatchListPanel({
             right:  Math.max(prev.startX, prev.curX),
             bottom: Math.max(prev.startY, prev.curY),
           }
-          const cards = document.querySelectorAll<HTMLElement>('[data-match-id]')
+          const cards = (gridRef.current ?? document).querySelectorAll<HTMLElement>('[data-match-id]')
           const hit: string[] = []
           cards.forEach((el) => {
             const r = el.getBoundingClientRect()
@@ -402,7 +403,15 @@ export default function MatchListPanel({
           </div>
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-4 gap-4">
+        <div
+          ref={gridRef}
+          className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-4 gap-4 relative"
+          onMouseDown={(e) => {
+            if (!e.ctrlKey || e.button !== 0) return
+            e.preventDefault()
+            setDragBox({ startX: e.clientX, startY: e.clientY, curX: e.clientX, curY: e.clientY })
+          }}
+        >
           {sortedMatches.map((match) => {
             const thumbnail = getMapThumbnail(match.map)
             const stats = matchStats.get(match.id)
