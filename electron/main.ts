@@ -693,6 +693,28 @@ async function computeWavAmplitudesFromFile(
   }
 }
 
+// Windows/Linux: prevent second instance, receive file path from it instead
+const gotSingleInstanceLock = app.requestSingleInstanceLock()
+if (!gotSingleInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', (_, argv) => {
+    // argv[0] is the executable, argv[1] may be '--' or the file path
+    const demPath = argv.find(arg => arg.toLowerCase().endsWith('.dem'))
+    if (demPath) handleDemoOpen(demPath)
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.focus()
+    }
+  })
+}
+
+// macOS: file opened via Finder (fires before and after app is ready)
+app.on('open-file', (event, filePath) => {
+  event.preventDefault()
+  handleDemoOpen(filePath)
+})
+
 app.whenReady().then(async () => {
   // Register protocol to serve map images (thumbnails for cards)
   protocol.registerFileProtocol('map', (request, callback) => {
