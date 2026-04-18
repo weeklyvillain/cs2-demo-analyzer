@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Loader2 } from 'lucide-react'
 import Sidebar from './components/Sidebar'
 import MatchesScreen from './components/MatchesScreen'
@@ -24,6 +24,7 @@ function App() {
   const [showWhatsNew, setShowWhatsNew] = useState(false)
   const [appVersion, setAppVersion] = useState<string>('')
   const [pendingDemos, setPendingDemos] = useState<string[]>([])
+  const handlePendingDemosConsumed = useCallback(() => setPendingDemos([]), [])
   const { addToast } = useToast()
 
   // Toasts when a demo finishes parsing (works when parsing in background or with modal)
@@ -142,7 +143,7 @@ function App() {
           {currentScreen === 'matches' && (
             <MatchesScreen
               pendingDemos={pendingDemos}
-              onPendingDemosConsumed={() => setPendingDemos([])}
+              onPendingDemosConsumed={handlePendingDemosConsumed}
             />
           )}
           {currentScreen === 'settings' && <SettingsScreen />}

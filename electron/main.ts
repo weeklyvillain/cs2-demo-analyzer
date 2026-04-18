@@ -805,7 +805,7 @@ app.whenReady().then(async () => {
   })
 
   // Cold start: check if a .dem file was passed as CLI argument
-  // process.argv[0] = node/electron, process.argv[1] = script or '--', rest = user args
+  // Dev: argv = [electron, script, ...args]. Packaged: argv = [exe, file.dem]. Search all to be safe.
   const coldStartDemo = process.argv.slice(1).find(arg => arg.toLowerCase().endsWith('.dem'))
   if (coldStartDemo) {
     handleDemoOpen(coldStartDemo)
