@@ -175,6 +175,12 @@ export default function MatchListPanel({
   onAddDemo,
 }: MatchListPanelProps) {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; match: Match } | null>(null)
+  const [dragBox, setDragBox] = useState<{
+    startX: number
+    startY: number
+    curX: number
+    curY: number
+  } | null>(null)
 
   const handleContextMenu = (e: React.MouseEvent, match: Match) => {
     e.preventDefault()
@@ -197,6 +203,53 @@ export default function MatchListPanel({
       return () => document.removeEventListener('click', handleClickOutside)
     }
   }, [contextMenu])
+
+  useEffect(() => {
+    if (!dragBox) return
+
+    const onMove = (e: MouseEvent) => {
+      setDragBox((prev) =>
+        prev ? { ...prev, curX: e.clientX, curY: e.clientY } : null
+      )
+    }
+
+    const onUp = () => {
+      setDragBox((prev) => {
+        if (!prev) return null
+        const moved =
+          Math.abs(prev.curX - prev.startX) > 4 ||
+          Math.abs(prev.curY - prev.startY) > 4
+        if (moved) {
+          const selRect = {
+            left:   Math.min(prev.startX, prev.curX),
+            top:    Math.min(prev.startY, prev.curY),
+            right:  Math.max(prev.startX, prev.curX),
+            bottom: Math.max(prev.startY, prev.curY),
+          }
+          const cards = document.querySelectorAll<HTMLElement>('[data-match-id]')
+          const hit: string[] = []
+          cards.forEach((el) => {
+            const r = el.getBoundingClientRect()
+            const overlaps =
+              r.left < selRect.right &&
+              r.right > selRect.left &&
+              r.top < selRect.bottom &&
+              r.bottom > selRect.top
+            if (overlaps) hit.push(el.dataset.matchId!)
+          })
+          if (hit.length > 0) onAddToSelection(hit)
+        }
+        return null
+      })
+    }
+
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+    return () => {
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+    }
+  }, [dragBox, onAddToSelection])
 
   return (
     <>

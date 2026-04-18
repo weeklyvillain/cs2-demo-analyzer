@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import Viewer2D from './Viewer2D'
 import Modal from './Modal'
 import PlayerModal from './PlayerModal'
@@ -610,6 +610,10 @@ function MatchesScreen({ pendingDemos = [], onPendingDemosConsumed }: MatchesScr
     })
   }
 
+  const handleAddToSelection = useCallback((ids: string[]) => {
+    setSelectedMatches((prev) => new Set([...prev, ...ids]))
+  }, [])
+
   const handleDeleteSelected = async () => {
     if (selectedMatches.size === 0) return
     setDeleting(true)
@@ -692,9 +696,7 @@ function MatchesScreen({ pendingDemos = [], onPendingDemosConsumed }: MatchesScr
           onMatchClick={(matchId) => handleMatchClick(matchId)}
           onContextMenuAction={(action, match) => handleContextMenuAction(action, match)}
           onToggleMatchSelection={(matchId) => toggleMatchSelection(matchId)}
-          onAddToSelection={(ids) =>
-            setSelectedMatches((prev) => new Set([...prev, ...ids]))
-          }
+          onAddToSelection={handleAddToSelection}
           onClearSelection={() => setSelectedMatches(new Set())}
           onDeleteSelected={handleDeleteSelected}
           onAddDemo={handleAddDemo}
