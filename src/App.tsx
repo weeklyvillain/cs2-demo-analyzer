@@ -23,6 +23,7 @@ function App() {
   const [enableDbViewer, setEnableDbViewer] = useState(false)
   const [showWhatsNew, setShowWhatsNew] = useState(false)
   const [appVersion, setAppVersion] = useState<string>('')
+  const [pendingDemos, setPendingDemos] = useState<string[]>([])
   const { addToast } = useToast()
 
   // Toasts when a demo finishes parsing (works when parsing in background or with modal)
@@ -40,6 +41,15 @@ function App() {
     const unsub = window.electronAPI.onParserDone(onParserDone)
     return unsub
   }, [addToast])
+
+  // Queue .dem files opened via OS file association
+  useEffect(() => {
+    if (!window.electronAPI) return
+    const unsub = window.electronAPI.onDemoOpen((filePath) => {
+      setPendingDemos((prev) => [...prev, filePath])
+    })
+    return unsub
+  }, [])
 
   useEffect(() => {
     // Check if we're in overlay mode (via hash)
@@ -129,7 +139,12 @@ function App() {
       <div className="flex flex-1 overflow-hidden">
         <Sidebar currentScreen={currentScreen} onNavigate={setCurrentScreen} />
         <main className="flex-1 flex flex-col overflow-hidden">
-          {currentScreen === 'matches' && <MatchesScreen />}
+          {currentScreen === 'matches' && (
+            <MatchesScreen
+              pendingDemos={pendingDemos}
+              onPendingDemosConsumed={() => setPendingDemos([])}
+            />
+          )}
           {currentScreen === 'settings' && <SettingsScreen />}
           {currentScreen === 'dbviewer' && <DBViewerScreen />}
           {currentScreen === 'stats' && <StatsScreen />}
