@@ -23,6 +23,20 @@ import type { WhisperModelSize } from './transcriptionService'
 let mainWindow: BrowserWindow | null = null
 let splashWindow: BrowserWindow | null = null
 let overlayWindow: BrowserWindow | null = null
+/** Paths buffered before mainWindow is ready to receive IPC. */
+const pendingDemoPaths: string[] = []
+
+/** Validate and route a .dem path to the renderer, buffering if window not ready. */
+function handleDemoOpen(filePath: string): void {
+  if (!filePath || !filePath.toLowerCase().endsWith('.dem')) return
+  if (!fs.existsSync(filePath)) return
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('demo:openFile', filePath)
+  } else {
+    pendingDemoPaths.push(filePath)
+  }
+}
+
 /** Single process when parallel is off; unused when using parserJobs map. */
 let parserProcess: ChildProcess | null = null
 /** When parallel parsing is enabled, multiple jobs run at once keyed by matchId. */
