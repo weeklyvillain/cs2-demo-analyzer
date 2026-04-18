@@ -628,6 +628,26 @@ export default function MatchListPanel({
           </div>
         </div>
       </Modal>
+
+      {/* Rubber-band drag-select overlay */}
+      {dragBox &&
+        (Math.abs(dragBox.curX - dragBox.startX) > 4 ||
+          Math.abs(dragBox.curY - dragBox.startY) > 4) && (
+        <div
+          style={{
+            position: 'fixed',
+            left:     Math.min(dragBox.startX, dragBox.curX),
+            top:      Math.min(dragBox.startY, dragBox.curY),
+            width:    Math.abs(dragBox.curX - dragBox.startX),
+            height:   Math.abs(dragBox.curY - dragBox.startY),
+            border:   '2px dashed #3b82f6',
+            background: 'rgba(59,130,246,0.08)',
+            pointerEvents: 'none',
+            zIndex:   100,
+            borderRadius: 4,
+          }}
+        />
+      )}
     </>
   )
 }
