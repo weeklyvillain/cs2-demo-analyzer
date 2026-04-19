@@ -72,7 +72,6 @@
     "win": {
       "target": "nsis",
       "icon": "resources/icon.ico",
-      "publisherName": "WeeklyVillain",
       "verifyUpdateCodeSignature": false,
       "requestedExecutionLevel": "asInvoker",
       "extraResources": [
