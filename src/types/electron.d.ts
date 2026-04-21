@@ -14,7 +14,7 @@ export interface ElectronAPI {
   openDirectoryDialog: () => Promise<string | null>
   parseDemo: (args: { demoPath: string }) => Promise<{ matchId: string; dbPath: string }>
   stopParser: () => Promise<void>
-  listMatches: () => Promise<Array<{ id: string; map: string; startedAt: string | null; playerCount: number; demoPath: string | null; isMissingDemo?: boolean; createdAtIso?: string | null; source?: string | null }>>
+  listMatches: () => Promise<Array<{ id: string; map: string; startedAt: string | null; playerCount: number; demoPath: string | null; isMissingDemo?: boolean; createdAtIso?: string | null; source?: string | null; buildNum?: number | null }>>
   getUnparsedDemos: () => Promise<Array<{ fileName: string; filePath: string; fileSize: number; createdAt: string }>>
   getMatchSummary: (matchId: string) => Promise<{ matchId: string; players: any[] }>
   getMatchPlayers: (matchId: string) => Promise<{ matchId: string; players: Array<{ steamId: string; name: string }> }>
@@ -58,6 +58,7 @@ export interface ElectronAPI {
     confirmLoadDemo?: boolean
   ) => Promise<{ success: boolean; tick: number; commands: string; alreadyRunning?: boolean; needsDemoLoad?: boolean; currentDemo?: string | null; newDemo?: string; error?: string }>
   copyCS2Commands: (demoPath: string, startTick?: number, playerName?: string) => Promise<{ success: boolean; commands: string; error?: string }>
+  getLatestCS2Build: () => Promise<number | null>
   launchHlaeCs2: (opts?: { width?: number; height?: number; launchArgs?: string; movieConfigDir?: string }) => Promise<{ success: boolean; pid?: number | null; startedAt?: string; hookVerified?: boolean; logPath?: string; error?: string }>
   getSetting: (key: string, defaultValue?: string) => Promise<string>
   setSetting: (key: string, value: string) => Promise<{ success: boolean }>
@@ -149,7 +150,7 @@ export interface ElectronAPI {
   onDemosFileRemoved: (callback: (data: { filePath: string }) => void) => void
   onMatchesCleanup: (callback: (data: { deleted: number; details: Array<{ matchId: string; reason: string }> }) => void) => void
   onMatchesTrimmed: (callback: (data: { deleted: number; details: Array<{ matchId: string; reason: string }> }) => void) => void
-  onMatchesList: (callback: (matches: Array<{ id: string; map: string; startedAt: string | null; playerCount: number; demoPath: string | null; isMissingDemo?: boolean; createdAtIso?: string | null; source?: string | null }>) => void) => void
+  onMatchesList: (callback: (matches: Array<{ id: string; map: string; startedAt: string | null; playerCount: number; demoPath: string | null; isMissingDemo?: boolean; createdAtIso?: string | null; source?: string | null; buildNum?: number | null }>) => void) => void
   onVoiceExtractionLog: (callback: (log: string) => void) => void
   onUpdateAvailable: (callback: (data: { version: string }) => void) => void
   onUpdateDownloaded: (callback: (data: { version: string }) => void) => void

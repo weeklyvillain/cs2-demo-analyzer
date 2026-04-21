@@ -7,6 +7,7 @@ export interface Match {
   isMissingDemo?: boolean
   createdAtIso?: string | null
   source?: string | null
+  buildNum?: number | null
 }
 
 export interface MatchStats {
