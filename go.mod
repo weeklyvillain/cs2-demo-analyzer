@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/golang/geo v0.0.0-20260415063119-550b242b3150
-	github.com/markus-wa/demoinfocs-golang/v5 v5.1.4
+	github.com/markus-wa/demoinfocs-golang/v5 v5.2.0
 	github.com/mattn/go-sqlite3 v1.14.16
 	modernc.org/sqlite v1.44.1
 )
