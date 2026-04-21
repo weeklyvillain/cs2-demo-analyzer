@@ -12,6 +12,8 @@ interface MatchDetailsHeaderProps {
   activeTab: ActiveTab
   setActiveTab: (tab: ActiveTab) => void
   hasRadarForCurrentMap: boolean
+  buildNum: number | null
+  latestCS2Build: number | null
   onWatchInCS2: () => void
   onOpenExportPanel: () => void
   onFetchChatMessages: (matchId: string) => void
@@ -27,6 +29,8 @@ export default function MatchDetailsHeader({
   activeTab,
   setActiveTab,
   hasRadarForCurrentMap,
+  buildNum,
+  latestCS2Build,
   onWatchInCS2,
   onOpenExportPanel,
   onFetchChatMessages,
@@ -106,6 +110,15 @@ export default function MatchDetailsHeader({
               }
               return null
             })()}
+            {/* Outdated badge */}
+            {buildNum != null && latestCS2Build != null && buildNum !== latestCS2Build && (
+              <div
+                className="px-1.5 py-0.5 text-xs font-semibold rounded bg-amber-500/90 text-black cursor-default"
+                title={`Demo build: #${buildNum} · Current: #${latestCS2Build}`}
+              >
+                Outdated
+              </div>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-2">
