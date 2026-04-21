@@ -147,6 +147,7 @@ export interface MatchListPanelProps {
   setShowDeleteModal: (v: boolean) => void
   deleting: boolean
   enableDbViewer: boolean
+  latestCS2Build: number | null
   onMatchClick: (matchId: string) => void
   onContextMenuAction: (action: 'delete' | 'open' | 'showInDb' | 'reparse' | 'select' | 'showLogs', match: Match) => void
   onToggleMatchSelection: (matchId: string) => void
@@ -172,6 +173,7 @@ export default function MatchListPanel({
   setShowDeleteModal,
   deleting,
   enableDbViewer,
+  latestCS2Build,
   onMatchClick,
   onContextMenuAction,
   onToggleMatchSelection,
@@ -492,6 +494,14 @@ export default function MatchListPanel({
                       className="w-full h-full object-cover object-center group-hover:scale-110 transition-transform duration-300"
                     />
                     <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
+                    {match.buildNum && latestCS2Build && match.buildNum !== latestCS2Build && (
+                      <div
+                        className="absolute top-2 right-2 z-10 px-1.5 py-0.5 text-xs font-semibold rounded bg-amber-500/90 text-black"
+                        title={`Demo build: #${match.buildNum} · Current: #${latestCS2Build}`}
+                      >
+                        Outdated
+                      </div>
+                    )}
                     <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between gap-2">
                       <div className="font-semibold text-white text-base truncate">
                         {match.map || 'Unknown Map'}
