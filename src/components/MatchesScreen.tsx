@@ -54,6 +54,7 @@ function MatchesScreen({ pendingDemos = [], onPendingDemosConsumed }: MatchesScr
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [showDemoLoadModal, setShowDemoLoadModal] = useState(false)
+  const [latestCS2Build, setLatestCS2Build] = useState<number | null>(null)
   const [pendingDemoAction, setPendingDemoAction] = useState<{
     demoPath: string
     startTick: number
@@ -142,6 +143,15 @@ function MatchesScreen({ pendingDemos = [], onPendingDemosConsumed }: MatchesScr
       setActiveTab('overview')
     }
   }, [activeTab, hasRadarForCurrentMap])
+
+  // Fetch latest CS2 build on mount
+  useEffect(() => {
+    window.electronAPI.getLatestCS2Build().then((build) => {
+      setLatestCS2Build(build)
+    }).catch(() => {
+      // Offline or IPC failure — no badge shown
+    })
+  }, [])
 
   const fetchMatches = async () => {
     if (!window.electronAPI) {
@@ -693,6 +703,7 @@ function MatchesScreen({ pendingDemos = [], onPendingDemosConsumed }: MatchesScr
           setShowDeleteModal={setShowDeleteModal}
           deleting={deleting}
           enableDbViewer={enableDbViewer}
+          latestCS2Build={latestCS2Build}
           onMatchClick={(matchId) => handleMatchClick(matchId)}
           onContextMenuAction={(action, match) => handleContextMenuAction(action, match)}
           onToggleMatchSelection={(matchId) => toggleMatchSelection(matchId)}
@@ -718,20 +729,27 @@ function MatchesScreen({ pendingDemos = [], onPendingDemosConsumed }: MatchesScr
           <div className="flex-1 bg-secondary rounded-lg border border-border p-4 overflow-auto min-h-0 [scrollbar-gutter:stable]">
             {selectedMatch ? (
               <>
-                <MatchDetailsHeader
-                  selectedMatch={selectedMatch}
-                  matchStats={matchStats}
-                  rounds={rounds}
-                  tickRate={tickRate}
-                  allPlayers={allPlayers}
-                  demoPath={demoPath}
-                  activeTab={activeTab}
-                  setActiveTab={setActiveTab}
-                  hasRadarForCurrentMap={hasRadarForCurrentMap}
-                  onWatchInCS2={handleWatchInCS2}
-                  onOpenExportPanel={() => setShowExportPanel(true)}
-                  onFetchChatMessages={fetchChatMessages}
-                />
+                {(() => {
+                  const selectedMatchData = matches.find((m) => m.id === selectedMatch) ?? null
+                  return (
+                    <MatchDetailsHeader
+                      selectedMatch={selectedMatch}
+                      matchStats={matchStats}
+                      rounds={rounds}
+                      tickRate={tickRate}
+                      allPlayers={allPlayers}
+                      demoPath={demoPath}
+                      activeTab={activeTab}
+                      setActiveTab={setActiveTab}
+                      hasRadarForCurrentMap={hasRadarForCurrentMap}
+                      buildNum={selectedMatchData?.buildNum ?? null}
+                      latestCS2Build={latestCS2Build}
+                      onWatchInCS2={handleWatchInCS2}
+                      onOpenExportPanel={() => setShowExportPanel(true)}
+                      onFetchChatMessages={fetchChatMessages}
+                    />
+                  )
+                })()}
 
                 {loading ? (
                   <div className="text-center text-gray-400 py-8">{t('matches.loading')}</div>
