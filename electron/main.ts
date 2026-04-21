@@ -871,9 +871,9 @@ app.whenReady().then(async () => {
         'https://api.steampowered.com/ISteamApps/UpToDateCheck/v1/?appid=730&version=0',
         { signal: controller.signal }
       )
-      clearTimeout(timeout)
       if (res.ok) {
         const json = await res.json() as { response?: { required_version?: number } }
+        clearTimeout(timeout)
         const ver = json?.response?.required_version
         if (typeof ver === 'number' && ver > 0) {
           latestCS2Build = ver
