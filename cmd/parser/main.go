@@ -1110,6 +1110,11 @@ func run(ctx context.Context, demoPath, outPath, matchID string, positionInterva
 	if err := writer.SetMeta(ctx, "demo_path", demoPath); err != nil {
 		output.Log("warn", fmt.Sprintf("Failed to store demo_path meta: %v", err))
 	}
+	if matchData.BuildNum > 0 {
+		if err := writer.SetMeta(ctx, "build_num", fmt.Sprintf("%d", matchData.BuildNum)); err != nil {
+			output.Log("warn", fmt.Sprintf("Failed to store build_num meta: %v", err))
+		}
+	}
 	createdAtIso := time.Now().Format(time.RFC3339)
 	if err := writer.SetMeta(ctx, "created_at_iso", createdAtIso); err != nil {
 		output.Log("warn", fmt.Sprintf("Failed to store created_at_iso meta: %v", err))
