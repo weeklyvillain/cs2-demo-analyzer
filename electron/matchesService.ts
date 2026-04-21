@@ -16,6 +16,7 @@ export interface MatchInfo {
   isMissingDemo?: boolean
   createdAtIso?: string | null
   source?: string | null
+  buildNum: number | null
 }
 
 export interface TableInfo {
@@ -212,13 +213,18 @@ async function loadOneMatchInfo(
 
     let demoPath: string | null = null
     let createdAtIso: string | null = null
+    let buildNum: number | null = null
     try {
-      const metaStmt = db.prepare('SELECT key, value FROM meta WHERE key IN (?, ?)')
-      metaStmt.bind(['demo_path', 'created_at_iso'])
+      const metaStmt = db.prepare('SELECT key, value FROM meta WHERE key IN (?, ?, ?)')
+      metaStmt.bind(['demo_path', 'created_at_iso', 'build_num'])
       while (metaStmt.step()) {
         const row = metaStmt.get()
         if (row[0] === 'demo_path') demoPath = row[1] || null
         if (row[0] === 'created_at_iso') createdAtIso = row[1] || null
+        if (row[0] === 'build_num') {
+          const parsed = parseInt(row[1], 10)
+          if (!isNaN(parsed) && parsed > 0) buildNum = parsed
+        }
       }
       metaStmt.free()
     } catch {
@@ -281,6 +287,7 @@ async function loadOneMatchInfo(
       isMissingDemo,
       createdAtIso: createdAtIso || null,
       source: matchResult.source,
+      buildNum,
     }
   } catch (err) {
     console.error(`Failed to read match ${matchId}:`, err)
