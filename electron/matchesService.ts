@@ -16,7 +16,7 @@ export interface MatchInfo {
   isMissingDemo?: boolean
   createdAtIso?: string | null
   source?: string | null
-  buildNum: number | null
+  buildNum?: number | null
 }
 
 export interface TableInfo {
