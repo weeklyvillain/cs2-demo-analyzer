@@ -36,6 +36,7 @@ type MatchData struct {
 	TickRate         float64
 	StartedAt        *time.Time
 	Source           string // Demo source (e.g., "faceit", "valve", "unknown")
+	BuildNum         int32  // CS2 build number from CDemoFileHeader
 	Players          []PlayerData
 	Rounds           []RoundData
 	Events           []extractors.Event
@@ -438,6 +439,7 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 	// Track map name from ServerInfo event (v5)
 	var mapName string
 	var serverName string
+	var buildNum int32
 
 	// Try to read server name from demo file header (best effort)
 	// For CS2 (Source 2), this requires protobuf parsing which is complex
@@ -593,6 +595,13 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 	p.parser.RegisterNetMessageHandler(func(m *msg.CSVCMsg_ServerInfo) {
 		if m != nil {
 			mapName = m.GetMapName()
+		}
+	})
+
+	// Capture CS2 build number from demo file header
+	p.parser.RegisterNetMessageHandler(func(h *msg.CDemoFileHeader) {
+		if h != nil {
+			buildNum = h.GetBuildNum()
 		}
 	})
 
@@ -3126,6 +3135,7 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 	// Set source (map is already set above)
 	demoFileName := filepath.Base(p.path)
 	data.Source = getDemoSource(serverName, demoFileName)
+	data.BuildNum = buildNum
 
 	return data, nil
 }
