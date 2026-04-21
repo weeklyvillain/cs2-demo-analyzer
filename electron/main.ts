@@ -120,6 +120,9 @@ let currentIncident: {
 // Store timeout IDs for pause timers so we can cancel them
 let pauseTimerTimeout: NodeJS.Timeout | null = null
 
+// Cache for latest CS2 build number fetched from Steam API
+let latestCS2Build: number | null = null
+
 // File watcher for demo folders
 let demoFolderWatchers: Map<string, fs.FSWatcher> = new Map()
 let demoFileDebounce: Map<string, NodeJS.Timeout> = new Map()
@@ -859,6 +862,29 @@ app.whenReady().then(async () => {
     }
   })
 
+  // Fetch latest CS2 build number from Steam API (fire-and-forget, silent failure)
+  ;(async () => {
+    try {
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 5000)
+      const res = await fetch(
+        'https://api.steampowered.com/ISteamApps/UpToDateCheck/v1/?appid=730&version=0',
+        { signal: controller.signal }
+      )
+      clearTimeout(timeout)
+      if (res.ok) {
+        const json = await res.json() as { response?: { required_version?: number } }
+        const ver = json?.response?.required_version
+        if (typeof ver === 'number' && ver > 0) {
+          latestCS2Build = ver
+          console.log(`[CS2Version] Latest build: ${latestCS2Build}`)
+        }
+      }
+    } catch {
+      console.log('[CS2Version] Failed to fetch latest CS2 build (offline?)')
+    }
+  })()
+
   // Cold start: check if a .dem file was passed as CLI argument
   // Dev: argv = [electron, script, ...args]. Packaged: argv = [exe, file.dem]. Search all to be safe.
   const coldArgv = process.argv.slice(1)
@@ -1437,6 +1463,11 @@ app.on('before-quit', (event) => {
   })
   
   console.log('[App] Cleanup complete')
+})
+
+// IPC handler to get latest CS2 build number
+ipcMain.handle('version:getLatestCS2Build', async () => {
+  return latestCS2Build
 })
 
 // Helper to get parser executable path
