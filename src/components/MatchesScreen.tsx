@@ -146,6 +146,7 @@ function MatchesScreen({ pendingDemos = [], onPendingDemosConsumed }: MatchesScr
 
   // Fetch latest CS2 build on mount
   useEffect(() => {
+    if (!window.electronAPI) return
     window.electronAPI.getLatestCS2Build().then((build) => {
       setLatestCS2Build(build)
     }).catch(() => {
@@ -348,6 +349,12 @@ function MatchesScreen({ pendingDemos = [], onPendingDemosConsumed }: MatchesScr
       return sortDirection === 'asc' ? comparison : -comparison
     })
   }, [filteredMatches, sortField, sortDirection, matchStats])
+
+  // Memoize selected match data lookup
+  const selectedMatchData = useMemo(
+    () => matches.find((m) => m.id === selectedMatch) ?? null,
+    [matches, selectedMatch]
+  )
 
   const getPlayerName = (steamId: string) => {
     const player = scores.find((p) => p.steamId === steamId)
@@ -729,27 +736,22 @@ function MatchesScreen({ pendingDemos = [], onPendingDemosConsumed }: MatchesScr
           <div className="flex-1 bg-secondary rounded-lg border border-border p-4 overflow-auto min-h-0 [scrollbar-gutter:stable]">
             {selectedMatch ? (
               <>
-                {(() => {
-                  const selectedMatchData = matches.find((m) => m.id === selectedMatch) ?? null
-                  return (
-                    <MatchDetailsHeader
-                      selectedMatch={selectedMatch}
-                      matchStats={matchStats}
-                      rounds={rounds}
-                      tickRate={tickRate}
-                      allPlayers={allPlayers}
-                      demoPath={demoPath}
-                      activeTab={activeTab}
-                      setActiveTab={setActiveTab}
-                      hasRadarForCurrentMap={hasRadarForCurrentMap}
-                      buildNum={selectedMatchData?.buildNum ?? null}
-                      latestCS2Build={latestCS2Build}
-                      onWatchInCS2={handleWatchInCS2}
-                      onOpenExportPanel={() => setShowExportPanel(true)}
-                      onFetchChatMessages={fetchChatMessages}
-                    />
-                  )
-                })()}
+                <MatchDetailsHeader
+                  selectedMatch={selectedMatch}
+                  matchStats={matchStats}
+                  rounds={rounds}
+                  tickRate={tickRate}
+                  allPlayers={allPlayers}
+                  demoPath={demoPath}
+                  activeTab={activeTab}
+                  setActiveTab={setActiveTab}
+                  hasRadarForCurrentMap={hasRadarForCurrentMap}
+                  buildNum={selectedMatchData?.buildNum ?? null}
+                  latestCS2Build={latestCS2Build}
+                  onWatchInCS2={handleWatchInCS2}
+                  onOpenExportPanel={() => setShowExportPanel(true)}
+                  onFetchChatMessages={fetchChatMessages}
+                />
 
                 {loading ? (
                   <div className="text-center text-gray-400 py-8">{t('matches.loading')}</div>
