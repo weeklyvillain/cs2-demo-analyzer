@@ -36,7 +36,7 @@ type MatchData struct {
 	TickRate         float64
 	StartedAt        *time.Time
 	Source           string // Demo source (e.g., "faceit", "valve", "unknown")
-	BuildNum         int32  // CS2 build number from CDemoFileHeader
+	BuildNum         int32  // CS2 network protocol version from CDemoFileHeader.patch_version
 	Players          []PlayerData
 	Rounds           []RoundData
 	Events           []extractors.Event
@@ -598,10 +598,13 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 		}
 	})
 
-	// Capture CS2 build number from demo file header
+	// Capture CS2 network protocol version from demo file header.
+	// patch_version (field 2) is the canonical game version used by demoinfocs for event list lookup,
+	// and matches what the Steam UpToDateCheck API returns. build_num (field 13) is a different
+	// internal Valve number that does not match the Steam version.
 	p.parser.RegisterNetMessageHandler(func(h *msg.CDemoFileHeader) {
 		if h != nil {
-			buildNum = h.GetBuildNum()
+			buildNum = h.GetPatchVersion()
 		}
 	})
 

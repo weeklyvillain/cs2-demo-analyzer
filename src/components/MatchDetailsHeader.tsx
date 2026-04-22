@@ -110,13 +110,13 @@ export default function MatchDetailsHeader({
               }
               return null
             })()}
-            {/* Outdated badge */}
-            {buildNum != null && latestCS2Build != null && buildNum !== latestCS2Build && (
+            {/* Old Version badge */}
+            {buildNum != null && latestCS2Build != null && String(buildNum).slice(0, 4) !== String(latestCS2Build).slice(0, 4) && (
               <div
                 className="px-1.5 py-0.5 text-xs font-semibold rounded bg-amber-500/90 text-black cursor-default"
-                title={`Demo build: #${buildNum} · Current: #${latestCS2Build}`}
+                title={`Demo build: #${buildNum} · Current: #${latestCS2Build} · This version may no longer be playable in-game`}
               >
-                Outdated
+                Old Version
               </div>
             )}
           </div>

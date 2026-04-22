@@ -494,12 +494,12 @@ export default function MatchListPanel({
                       className="w-full h-full object-cover object-center group-hover:scale-110 transition-transform duration-300"
                     />
                     <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
-                    {match.buildNum != null && latestCS2Build != null && match.buildNum !== latestCS2Build && (
+                    {match.buildNum != null && latestCS2Build != null && String(match.buildNum).slice(0, 4) !== String(latestCS2Build).slice(0, 4) && (
                       <div
                         className="absolute top-2 right-2 z-10 px-1.5 py-0.5 text-xs font-semibold rounded bg-amber-500/90 text-black"
-                        title={`Demo build: #${match.buildNum} · Current: #${latestCS2Build}`}
+                        title={`Demo build: #${match.buildNum} · Current: #${latestCS2Build} · This version may no longer be playable in-game`}
                       >
-                        Outdated
+                        Old Version
                       </div>
                     )}
                     <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between gap-2">
