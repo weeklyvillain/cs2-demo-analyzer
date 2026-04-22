@@ -11,6 +11,19 @@ import {
 } from '../utils/matchDragSelection'
 import { Check, ArrowUp, ArrowDown, Trash2, X, Loader2, FolderOpen, Database, RefreshCw, Upload, FileText } from 'lucide-react'
 
+function findScrollContainer(el: HTMLElement | null): HTMLElement | null {
+  let current = el?.parentElement ?? null
+  while (current && current !== document.body) {
+    const style = getComputedStyle(current)
+    if (style.overflowY === 'auto' || style.overflowY === 'scroll' ||
+        style.overflow === 'auto' || style.overflow === 'scroll') {
+      return current
+    }
+    current = current.parentElement
+  }
+  return null
+}
+
 /** Lazy-loads the map thumbnail when the card enters the viewport to avoid loading many images at once. */
 function LazyMapThumbnail({
   thumbnail,
@@ -191,6 +204,7 @@ export default function MatchListPanel({
   } | null>(null)
   const [dragPreviewMatches, setDragPreviewMatches] = useState<Set<string>>(new Set())
   const panelRef = useRef<HTMLDivElement>(null)
+  const accumulatedHitIdsRef = useRef<Set<string>>(new Set())
 
   const handleContextMenu = (e: React.MouseEvent, match: Match) => {
     e.preventDefault()
@@ -214,37 +228,84 @@ export default function MatchListPanel({
     }
   }, [contextMenu])
 
+  // Esc clears selection
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClearSelection()
+      if (e.key === 'Delete' && selectedMatches.size > 0) setShowDeleteModal(true)
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [onClearSelection, selectedMatches, setShowDeleteModal])
+
+  // Document-level mousedown: allows drag to start from anywhere in the scroll container
+  // (including padding areas to the left/right of the match grid).
+  useEffect(() => {
+    const handleDocMouseDown = (e: MouseEvent) => {
+      if (!e.ctrlKey || e.button !== 0) return
+      if (!panelRef.current) return
+
+      const scrollContainer = findScrollContainer(panelRef.current)
+      const container = scrollContainer ?? panelRef.current
+      const rect = container.getBoundingClientRect()
+      if (e.clientX < rect.left || e.clientX > rect.right ||
+          e.clientY < rect.top || e.clientY > rect.bottom) return
+
+      if (e.target instanceof HTMLElement) {
+        let cur: HTMLElement | null = e.target
+        while (cur) {
+          if (isDragSelectionIgnoredTagName(cur.tagName)) return
+          cur = cur.parentElement
+        }
+      }
+
+      e.preventDefault()
+      accumulatedHitIdsRef.current = new Set()
+      setDragBox({ startX: e.clientX, startY: e.clientY, curX: e.clientX, curY: e.clientY })
+    }
+
+    document.addEventListener('mousedown', handleDocMouseDown)
+    return () => document.removeEventListener('mousedown', handleDocMouseDown)
+  }, [])
+
   useEffect(() => {
     if (!dragBox) return
 
     const getHitIds = (nextDragBox: NonNullable<typeof dragBox>) => {
-      if (!hasDragSelectionMovement(nextDragBox)) {
-        return []
-      }
+      if (!hasDragSelectionMovement(nextDragBox)) return []
 
       const selectionRect = getDragSelectionRect(nextDragBox)
       const cards = Array.from(
         (panelRef.current ?? document).querySelectorAll<HTMLElement>('[data-match-id]')
       ).map((el) => {
         const rect = el.getBoundingClientRect()
-        return {
-          matchId: el.dataset.matchId ?? '',
-          left: rect.left,
-          top: rect.top,
-          right: rect.right,
-          bottom: rect.bottom,
-        }
+        return { matchId: el.dataset.matchId ?? '', left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom }
       }).filter((card) => card.matchId)
 
       return getOverlappingMatchIds(cards, selectionRect)
     }
 
     const onMove = (e: MouseEvent) => {
+      // Auto-scroll when cursor is near top/bottom edge of scroll container
+      const scrollContainer = findScrollContainer(panelRef.current)
+      if (scrollContainer) {
+        const containerRect = scrollContainer.getBoundingClientRect()
+        const SCROLL_ZONE = 60
+        const distFromTop = e.clientY - containerRect.top
+        const distFromBottom = containerRect.bottom - e.clientY
+        if (distFromTop >= 0 && distFromTop < SCROLL_ZONE) {
+          scrollContainer.scrollTop -= Math.ceil((SCROLL_ZONE - distFromTop) / 5)
+        } else if (distFromBottom >= 0 && distFromBottom < SCROLL_ZONE) {
+          scrollContainer.scrollTop += Math.ceil((SCROLL_ZONE - distFromBottom) / 5)
+        }
+      }
+
       setDragBox((prev) => {
         if (!prev) return null
-
         const nextDragBox = { ...prev, curX: e.clientX, curY: e.clientY }
-        setDragPreviewMatches(new Set(getHitIds(nextDragBox)))
+        // Accumulate hit IDs — items stay highlighted even after scrolling off screen
+        getHitIds(nextDragBox).forEach((id) => accumulatedHitIdsRef.current.add(id))
+        setDragPreviewMatches(new Set(accumulatedHitIdsRef.current))
         return nextDragBox
       })
     }
@@ -252,13 +313,10 @@ export default function MatchListPanel({
     const onUp = () => {
       setDragBox((prev) => {
         if (!prev) return null
-
-        const hitIds = getHitIds(prev)
-        if (hitIds.length > 0) {
-          onAddToSelection(hitIds)
-        }
-
+        const hitIds = Array.from(accumulatedHitIdsRef.current)
+        if (hitIds.length > 0) onAddToSelection(hitIds)
         setDragPreviewMatches(new Set())
+        accumulatedHitIdsRef.current = new Set()
         return null
       })
     }
@@ -277,22 +335,6 @@ export default function MatchListPanel({
     <div
       ref={panelRef}
       className="relative"
-      onMouseDown={(e) => {
-        if (!e.ctrlKey || e.button !== 0) return
-
-        if (e.target instanceof HTMLElement) {
-          let current: HTMLElement | null = e.target
-          while (current) {
-            if (isDragSelectionIgnoredTagName(current.tagName)) {
-              return
-            }
-            current = current.parentElement
-          }
-        }
-
-        e.preventDefault()
-        setDragBox({ startX: e.clientX, startY: e.clientY, curX: e.clientX, curY: e.clientY })
-      }}
     >
       {/* Search and Sorting Controls */}
       {matches.length > 0 && (
