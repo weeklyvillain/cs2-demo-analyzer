@@ -1563,6 +1563,33 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 
 		// Stream chat message to database if writer is available
 		if writer != nil && matchID != "" {
+			// Skip messages from spectators or unknown players to avoid FK constraint violations.
+			// chat_messages.steamid references players(match_id, steamid), so only known match
+			// participants can be inserted.
+			sid64, parseErr := strconv.ParseUint(steamID, 10, 64)
+			if parseErr != nil || sid64 == 0 {
+				return // steamID is a name fallback or empty — not a valid player
+			}
+			if _, inMatch := playerMap[sid64]; !inMatch {
+				// Chat fired before PlayerConnect — only recover if player is in GameState
+				if player == nil {
+					return // spectator or truly unknown player
+				}
+				name := playerName
+				if name == "" {
+					name = fmt.Sprintf("Player_%d", sid64)
+				}
+				playerMap[sid64] = &PlayerData{SteamID: steamID, Name: name}
+				if err := writer.InsertPlayer(ctx, db.Player{
+					MatchID: matchID,
+					SteamID: steamID,
+					Name:    name,
+				}); err != nil {
+					fmt.Fprintf(os.Stderr, "WARN: Failed to insert early-chat player %s: %v\n", steamID, err)
+					return
+				}
+			}
+
 			var namePtr, teamPtr *string
 			if playerName != "" {
 				namePtr = &playerName
