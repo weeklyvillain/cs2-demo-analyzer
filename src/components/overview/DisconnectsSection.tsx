@@ -44,89 +44,100 @@ export default function DisconnectsSection({
           {expanded ? <ChevronDown size={18} className="text-gray-500" /> : <ChevronUp size={18} className="text-gray-500" />}
         </button>
       </div>
-      {expanded && (
-        <div className="flex flex-wrap gap-4">
-          {events
-            .sort((a, b) => a.roundIndex - b.roundIndex)
-            .map((dc, idx) => {
-              const disconnectTime = dc.meta?.disconnect_time ? formatSeconds(dc.meta.disconnect_time) : 'N/A'
-              const reconnected = dc.meta?.reconnected === true
-              const reconnectTime = dc.meta?.reconnect_time ? formatSeconds(dc.meta.reconnect_time) : null
-              const duration = dc.meta?.disconnect_duration ? `${dc.meta.disconnect_duration.toFixed(1)}s` : null
-              const reason = formatDisconnectReason(dc.meta?.reason)
-
-              return (
-                <div key={idx} className="bg-secondary border border-border rounded p-3 min-w-[300px]">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="font-medium text-white">{getPlayerName(dc.actorSteamId)}</span>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-gray-400">Round {dc.roundIndex + 1}</span>
-                      {demoPath && (
-                        <div className="flex items-center gap-1">
-                          {hasRadar && (
-                            <button
-                              onClick={() => {
-                                const previewSeconds = 5
-                                const previewTicks = previewSeconds * tickRate
-                                const targetTick = Math.max(0, dc.startTick - previewTicks)
-                                onSetViewer2D({ roundIndex: dc.roundIndex, tick: targetTick })
-                              }}
-                              className="p-1 hover:bg-accent/20 rounded transition-colors"
-                              title="View in 2D"
-                            >
-                              <MapIcon size={14} className="text-gray-400 hover:text-accent" />
-                            </button>
+      {expanded && (() => {
+        const grouped = new Map<number, typeof events>()
+        for (const e of [...events].sort((a, b) => a.roundIndex - b.roundIndex)) {
+          if (!grouped.has(e.roundIndex)) grouped.set(e.roundIndex, [])
+          grouped.get(e.roundIndex)!.push(e)
+        }
+        return (
+          <div className="space-y-4">
+            {Array.from(grouped.entries()).map(([roundIndex, roundEvents]) => (
+              <div key={roundIndex}>
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Round {roundIndex + 1}</span>
+                  <div className="flex-1 h-px bg-border/60" />
+                </div>
+                <div className="flex flex-wrap gap-3">
+                  {roundEvents.map((dc, idx) => {
+                    const disconnectTime = dc.meta?.disconnect_time ? formatSeconds(dc.meta.disconnect_time) : 'N/A'
+                    const reconnected = dc.meta?.reconnected === true
+                    const reconnectTime = dc.meta?.reconnect_time ? formatSeconds(dc.meta.reconnect_time) : null
+                    const duration = dc.meta?.disconnect_duration ? `${dc.meta.disconnect_duration.toFixed(1)}s` : null
+                    const reason = formatDisconnectReason(dc.meta?.reason)
+                    return (
+                      <div key={idx} className="bg-secondary border border-border rounded p-3 min-w-[260px]">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="font-medium text-white">{getPlayerName(dc.actorSteamId)}</span>
+                          {demoPath && (
+                            <div className="flex items-center gap-1">
+                              {hasRadar && (
+                                <button
+                                  onClick={() => {
+                                    const previewSeconds = 5
+                                    const previewTicks = previewSeconds * tickRate
+                                    const targetTick = Math.max(0, dc.startTick - previewTicks)
+                                    onSetViewer2D({ roundIndex: dc.roundIndex, tick: targetTick })
+                                  }}
+                                  className="p-1 hover:bg-accent/20 rounded transition-colors"
+                                  title="View in 2D"
+                                >
+                                  <MapIcon size={14} className="text-gray-400 hover:text-accent" />
+                                </button>
+                              )}
+                              <button
+                                onClick={() => onWatchAtTick(dc.startTick, getPlayerName(dc.actorSteamId) as string, dc.roundIndex)}
+                                className="p-1 hover:bg-accent/20 rounded transition-colors"
+                                title="Watch this event in CS2"
+                              >
+                                <Play size={14} className="text-gray-400 hover:text-accent" />
+                              </button>
+                            </div>
                           )}
-                          <button
-                            onClick={() => onWatchAtTick(dc.startTick, getPlayerName(dc.actorSteamId) as string, dc.roundIndex)}
-                            className="p-1 hover:bg-accent/20 rounded transition-colors"
-                            title="Watch this event in CS2"
-                          >
-                            <Play size={14} className="text-gray-400 hover:text-accent" />
-                          </button>
                         </div>
-                      )}
-                    </div>
-                  </div>
-                  <div className="text-xs text-gray-400 mt-1">
-                    <div className="flex items-center gap-1">
-                      <span className="font-medium">Reason:</span>
-                      <span>{reason}</span>
-                    </div>
-                  </div>
-                  <div className="text-xs text-gray-400 mt-1">
-                    <div className="flex items-center gap-1">
-                      <span className="font-medium">Disconnected:</span>
-                      <span>{disconnectTime}</span>
-                    </div>
-                  </div>
-                  {reconnected ? (
-                    <>
-                      <div className="text-xs text-green-400 mt-1">
-                        <div className="flex items-center gap-1">
-                          <span className="font-medium">Reconnected:</span>
-                          <span>{reconnectTime}</span>
-                        </div>
-                      </div>
-                      {duration && (
                         <div className="text-xs text-gray-400 mt-1">
                           <div className="flex items-center gap-1">
-                            <span className="font-medium">Duration:</span>
-                            <span>{duration}</span>
+                            <span className="font-medium">Reason:</span>
+                            <span>{reason}</span>
                           </div>
                         </div>
-                      )}
-                    </>
-                  ) : (
-                    <div className="text-xs text-red-400 mt-1">
-                      Did not reconnect
-                    </div>
-                  )}
+                        <div className="text-xs text-gray-400 mt-1">
+                          <div className="flex items-center gap-1">
+                            <span className="font-medium">Disconnected:</span>
+                            <span>{disconnectTime}</span>
+                          </div>
+                        </div>
+                        {reconnected ? (
+                          <>
+                            <div className="text-xs text-green-400 mt-1">
+                              <div className="flex items-center gap-1">
+                                <span className="font-medium">Reconnected:</span>
+                                <span>{reconnectTime}</span>
+                              </div>
+                            </div>
+                            {duration && (
+                              <div className="text-xs text-gray-400 mt-1">
+                                <div className="flex items-center gap-1">
+                                  <span className="font-medium">Duration:</span>
+                                  <span>{duration}</span>
+                                </div>
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <div className="text-xs text-red-400 mt-1">
+                            Did not reconnect
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
                 </div>
-              )
-            })}
-        </div>
-      )}
+              </div>
+            ))}
+          </div>
+        )
+      })()}
     </div>
   )
 }

@@ -233,10 +233,11 @@ export default function MatchListPanel({
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClearSelection()
       if (e.key === 'Delete' && selectedMatches.size > 0) setShowDeleteModal(true)
+      if (e.key === 'Enter' && showDeleteModal && !deleting) onDeleteSelected()
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [onClearSelection, selectedMatches, setShowDeleteModal])
+  }, [onClearSelection, selectedMatches, setShowDeleteModal, showDeleteModal, deleting, onDeleteSelected])
 
   // Document-level mousedown: allows drag to start from anywhere in the scroll container
   // (including padding areas to the left/right of the match grid).
@@ -536,7 +537,7 @@ export default function MatchListPanel({
                       className="w-full h-full object-cover object-center group-hover:scale-110 transition-transform duration-300"
                     />
                     <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
-                    {match.buildNum != null && latestCS2Build != null && String(match.buildNum).slice(0, 4) !== String(latestCS2Build).slice(0, 4) && (
+                    {match.buildNum != null && latestCS2Build != null && String(match.buildNum).slice(0, 3) !== String(latestCS2Build).slice(0, 3) && (
                       <div
                         className="absolute top-2 right-2 z-10 px-1.5 py-0.5 text-xs font-semibold rounded bg-amber-500/90 text-black"
                         title={`Demo build: #${match.buildNum} · Current: #${latestCS2Build} · This version may no longer be playable in-game`}

@@ -42,55 +42,67 @@ export default function TeamKillsSection({
           {expanded ? <ChevronDown size={18} className="text-gray-500" /> : <ChevronUp size={18} className="text-gray-500" />}
         </button>
       </div>
-      {expanded && (
-        <div className="flex flex-wrap gap-4">
-          {events
-            .sort((a, b) => a.roundIndex - b.roundIndex)
-            .map((kill, idx) => (
-              <div key={idx} className="bg-secondary border border-border rounded p-3 min-w-[300px]">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="font-medium text-white">{getPlayerName(kill.actorSteamId)}</span>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-gray-400">Round {kill.roundIndex + 1}</span>
-                    {demoPath && (
-                      <div className="flex items-center gap-1">
-                        {hasRadar && (
-                          <button
-                            onClick={() => {
-                              const previewSeconds = 5
-                              const previewTicks = previewSeconds * tickRate
-                              const targetTick = Math.max(0, kill.startTick - previewTicks)
-                              onSetViewer2D({ roundIndex: kill.roundIndex, tick: targetTick })
-                            }}
-                            className="p-1 hover:bg-accent/20 rounded transition-colors"
-                            title={t('matches.viewIn2D')}
-                          >
-                            <MapIcon size={14} className="text-gray-400 hover:text-accent" />
-                          </button>
+      {expanded && (() => {
+        const grouped = new Map<number, typeof events>()
+        for (const e of [...events].sort((a, b) => a.roundIndex - b.roundIndex)) {
+          if (!grouped.has(e.roundIndex)) grouped.set(e.roundIndex, [])
+          grouped.get(e.roundIndex)!.push(e)
+        }
+        return (
+          <div className="space-y-4">
+            {Array.from(grouped.entries()).map(([roundIndex, roundEvents]) => (
+              <div key={roundIndex}>
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Round {roundIndex + 1}</span>
+                  <div className="flex-1 h-px bg-border/60" />
+                </div>
+                <div className="flex flex-wrap gap-3">
+                  {roundEvents.map((kill, idx) => (
+                    <div key={idx} className="bg-secondary border border-border rounded p-3 min-w-[260px]">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="font-medium text-white">{getPlayerName(kill.actorSteamId)}</span>
+                        {demoPath && (
+                          <div className="flex items-center gap-1">
+                            {hasRadar && (
+                              <button
+                                onClick={() => {
+                                  const previewSeconds = 5
+                                  const previewTicks = previewSeconds * tickRate
+                                  const targetTick = Math.max(0, kill.startTick - previewTicks)
+                                  onSetViewer2D({ roundIndex: kill.roundIndex, tick: targetTick })
+                                }}
+                                className="p-1 hover:bg-accent/20 rounded transition-colors"
+                                title={t('matches.viewIn2D')}
+                              >
+                                <MapIcon size={14} className="text-gray-400 hover:text-accent" />
+                              </button>
+                            )}
+                            <button
+                              onClick={() => onWatchAtTick(kill.startTick, getPlayerName(kill.actorSteamId) as string, kill.roundIndex)}
+                              className="p-1 hover:bg-accent/20 rounded transition-colors"
+                              title="Watch this event in CS2"
+                            >
+                              <Play size={14} className="text-gray-400 hover:text-accent" />
+                            </button>
+                          </div>
                         )}
-                        <button
-                          onClick={() => onWatchAtTick(kill.startTick, getPlayerName(kill.actorSteamId) as string, kill.roundIndex)}
-                          className="p-1 hover:bg-accent/20 rounded transition-colors"
-                          title="Watch this event in CS2"
-                        >
-                          <Play size={14} className="text-gray-400 hover:text-accent" />
-                        </button>
                       </div>
-                    )}
-                  </div>
+                      <div className="text-sm text-gray-300">
+                        → {getPlayerName(kill.victimSteamId || '')}
+                      </div>
+                      {kill.meta?.weapon && (
+                        <div className="text-xs text-gray-400 mt-1">
+                          {kill.meta.weapon}
+                        </div>
+                      )}
+                    </div>
+                  ))}
                 </div>
-                <div className="text-sm text-gray-300">
-                  → {getPlayerName(kill.victimSteamId || '')}
-                </div>
-                {kill.meta?.weapon && (
-                  <div className="text-xs text-gray-400 mt-1">
-                    {kill.meta.weapon}
-                  </div>
-                )}
               </div>
             ))}
-        </div>
-      )}
+          </div>
+        )
+      })()}
     </div>
   )
 }

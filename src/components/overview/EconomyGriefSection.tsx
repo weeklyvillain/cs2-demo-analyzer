@@ -62,93 +62,90 @@ export default function EconomyGriefSection({
             {expanded ? <ChevronDown size={18} className="text-gray-500" /> : <ChevronUp size={18} className="text-gray-500" />}
           </button>
         </div>
-        {expanded && (
-          <div className="flex flex-wrap gap-4">
-            {events
-              .sort((a, b) => a.roundIndex - b.roundIndex)
-              .map((econ, idx) => {
-                const griefType = econ.meta?.grief_type || 'unknown'
-                const startMoney = econ.meta?.start_money || 0
-                const moneySpent = econ.meta?.money_spent || 0
-                const spendPct = econ.meta?.spend_pct || 0
-                const teamAvgSpend = econ.meta?.team_avg_spend || 0
-                const teamAvgMoney = econ.meta?.team_avg_money || 0
-                const teamSpendPct = econ.meta?.team_spend_pct || 0
-
-                return (
-                  <div key={idx} className="bg-secondary border border-border rounded p-3 min-w-[320px]">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="font-medium text-white">{getPlayerName(econ.actorSteamId)}</span>
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => setSelectedEvent(econ)}
-                          className="p-1 hover:bg-accent/20 rounded transition-colors"
-                          title="View details"
-                        >
-                          <Info size={14} className="text-gray-400 hover:text-accent" />
-                        </button>
-                        <span className="text-xs text-gray-400">Round {econ.roundIndex + 1}</span>
-                        {demoPath && (
-                          <div className="flex items-center gap-1">
-                            {hasRadar && (
-                              <button
-                                onClick={() => {
-                                  const previewSeconds = 5
-                                  const previewTicks = previewSeconds * tickRate
-                                  const targetTick = Math.max(0, econ.startTick - previewTicks)
-                                  onSetViewer2D({ roundIndex: econ.roundIndex, tick: targetTick })
-                                }}
-                                className="p-1 hover:bg-accent/20 rounded transition-colors"
-                                title={t('matches.viewIn2D')}
-                              >
-                                <MapIcon size={14} className="text-gray-400 hover:text-accent" />
-                              </button>
-                            )}
-                            <button
-                              onClick={() => onWatchAtTick(econ.startTick, getPlayerName(econ.actorSteamId) as string, econ.roundIndex)}
-                              className="p-1 hover:bg-accent/20 rounded transition-colors"
-                              title="Watch this event in CS2"
-                            >
-                              <Play size={14} className="text-gray-400 hover:text-accent" />
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                    <div className="text-xs text-yellow-400 font-medium mb-2">
-                      {griefTypeLabels[griefType] || griefType}
-                    </div>
-                    <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
-                      <div className="text-gray-400">
-                        <span className="font-medium">Start money:</span>
-                      </div>
-                      <div className="text-white">
-                        ${startMoney.toLocaleString()}
-                      </div>
-                      <div className="text-gray-400">
-                        <span className="font-medium">Spent:</span>
-                      </div>
-                      <div className="text-white">
-                        ${moneySpent.toLocaleString()} ({spendPct.toFixed(1)}%)
-                      </div>
-                      <div className="text-gray-400">
-                        <span className="font-medium">Team avg money:</span>
-                      </div>
-                      <div className="text-gray-300">
-                        ${Math.round(teamAvgMoney).toLocaleString()}
-                      </div>
-                      <div className="text-gray-400">
-                        <span className="font-medium">Team avg spent:</span>
-                      </div>
-                      <div className="text-gray-300">
-                        ${Math.round(teamAvgSpend).toLocaleString()} ({teamSpendPct.toFixed(1)}%)
-                      </div>
-                    </div>
+        {expanded && (() => {
+          const grouped = new Map<number, typeof events>()
+          for (const e of [...events].sort((a, b) => a.roundIndex - b.roundIndex)) {
+            if (!grouped.has(e.roundIndex)) grouped.set(e.roundIndex, [])
+            grouped.get(e.roundIndex)!.push(e)
+          }
+          return (
+            <div className="space-y-4">
+              {Array.from(grouped.entries()).map(([roundIndex, roundEvents]) => (
+                <div key={roundIndex}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Round {roundIndex + 1}</span>
+                    <div className="flex-1 h-px bg-border/60" />
                   </div>
-                )
-              })}
-          </div>
-        )}
+                  <div className="flex flex-wrap gap-3">
+                    {roundEvents.map((econ, idx) => {
+                      const griefType = econ.meta?.grief_type || 'unknown'
+                      const startMoney = econ.meta?.start_money || 0
+                      const moneySpent = econ.meta?.money_spent || 0
+                      const spendPct = econ.meta?.spend_pct || 0
+                      const teamAvgSpend = econ.meta?.team_avg_spend || 0
+                      const teamAvgMoney = econ.meta?.team_avg_money || 0
+                      const teamSpendPct = econ.meta?.team_spend_pct || 0
+                      return (
+                        <div key={idx} className="bg-secondary border border-border rounded p-3 min-w-[280px]">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="font-medium text-white">{getPlayerName(econ.actorSteamId)}</span>
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={() => setSelectedEvent(econ)}
+                                className="p-1 hover:bg-accent/20 rounded transition-colors"
+                                title="View details"
+                              >
+                                <Info size={14} className="text-gray-400 hover:text-accent" />
+                              </button>
+                              {demoPath && (
+                                <>
+                                  {hasRadar && (
+                                    <button
+                                      onClick={() => {
+                                        const previewSeconds = 5
+                                        const previewTicks = previewSeconds * tickRate
+                                        const targetTick = Math.max(0, econ.startTick - previewTicks)
+                                        onSetViewer2D({ roundIndex: econ.roundIndex, tick: targetTick })
+                                      }}
+                                      className="p-1 hover:bg-accent/20 rounded transition-colors"
+                                      title={t('matches.viewIn2D')}
+                                    >
+                                      <MapIcon size={14} className="text-gray-400 hover:text-accent" />
+                                    </button>
+                                  )}
+                                  <button
+                                    onClick={() => onWatchAtTick(econ.startTick, getPlayerName(econ.actorSteamId) as string, econ.roundIndex)}
+                                    className="p-1 hover:bg-accent/20 rounded transition-colors"
+                                    title="Watch this event in CS2"
+                                  >
+                                    <Play size={14} className="text-gray-400 hover:text-accent" />
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                          <div className="text-xs text-yellow-400 font-medium mb-2">
+                            {griefTypeLabels[griefType] || griefType}
+                          </div>
+                          <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+                            <div className="text-gray-400"><span className="font-medium">Start money:</span></div>
+                            <div className="text-white">${startMoney.toLocaleString()}</div>
+                            <div className="text-gray-400"><span className="font-medium">Spent:</span></div>
+                            <div className="text-white">${moneySpent.toLocaleString()} ({spendPct.toFixed(1)}%)</div>
+                            <div className="text-gray-400"><span className="font-medium">Team avg money:</span></div>
+                            <div className="text-gray-300">${Math.round(teamAvgMoney).toLocaleString()}</div>
+                            <div className="text-gray-400"><span className="font-medium">Team avg spent:</span></div>
+                            <div className="text-gray-300">${Math.round(teamAvgSpend).toLocaleString()} ({teamSpendPct.toFixed(1)}%)</div>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )
+        })()}
       </div>
 
       {selectedEvent && (
