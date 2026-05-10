@@ -81,6 +81,7 @@ export interface Player {
   steamId: string
   name: string
   team: string | null
+  color?: string | null
   connectedMidgame?: boolean
   permanentDisconnect?: boolean
   firstConnectRound?: number | null

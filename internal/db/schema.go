@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS players (
 	steamid TEXT NOT NULL,
 	name TEXT NOT NULL,
 	team TEXT,
+	color TEXT,
 	connected_midgame INTEGER DEFAULT 0,
 	permanent_disconnect INTEGER DEFAULT 0,
 	first_connect_round INTEGER,

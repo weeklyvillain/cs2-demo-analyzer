@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go build *)",
+      "Bash(npx tsc *)",
+      "Bash(go env *)"
+    ]
+  }
+}

@@ -2446,10 +2446,17 @@ ipcMain.handle('matches:players', async (_, matchId: string) => {
         console.warn('Failed to add disconnect_round column (might already exist):', err)
       }
     }
-    
+    try {
+      db.run(`ALTER TABLE players ADD COLUMN color TEXT`)
+    } catch (err: any) {
+      if (!err.message?.includes('duplicate column')) {
+        console.warn('Failed to add color column (might already exist):', err)
+      }
+    }
+
     // Get all players (not just those with scores)
     const stmt = db.prepare(`
-      SELECT steamid, name, team, 
+      SELECT steamid, name, team, color,
              COALESCE(connected_midgame, 0) as connected_midgame,
              COALESCE(permanent_disconnect, 0) as permanent_disconnect,
              first_connect_round, disconnect_round
@@ -2459,10 +2466,11 @@ ipcMain.handle('matches:players', async (_, matchId: string) => {
     `)
     stmt.bind([matchId])
     
-    const players: Array<{ 
+    const players: Array<{
       steamId: string
       name: string
       team: string | null
+      color: string | null
       connectedMidgame: boolean
       permanentDisconnect: boolean
       firstConnectRound: number | null
@@ -2470,16 +2478,17 @@ ipcMain.handle('matches:players', async (_, matchId: string) => {
     }> = []
     while (stmt.step()) {
       const row = stmt.getAsObject()
-      const firstConnectRound = row.first_connect_round !== null && row.first_connect_round !== undefined 
-        ? (row.first_connect_round as number) 
+      const firstConnectRound = row.first_connect_round !== null && row.first_connect_round !== undefined
+        ? (row.first_connect_round as number)
         : null
-      const disconnectRound = row.disconnect_round !== null && row.disconnect_round !== undefined 
-        ? (row.disconnect_round as number) 
+      const disconnectRound = row.disconnect_round !== null && row.disconnect_round !== undefined
+        ? (row.disconnect_round as number)
         : null
       players.push({
         steamId: row.steamid as string,
         name: (row.name as string) || (row.steamid as string),
         team: (row.team as string) || null,
+        color: (row.color as string) || null,
         connectedMidgame: (row.connected_midgame as number) === 1,
         permanentDisconnect: (row.permanent_disconnect as number) === 1,
         firstConnectRound: firstConnectRound,

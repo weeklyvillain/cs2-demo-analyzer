@@ -79,10 +79,28 @@ type PlayerData struct {
 	SteamID             string
 	Name                string
 	Team                string // "A" or "B" (Team A/Team B)
+	Color               string // CS2 player color name (yellow, purple, green, blue, orange)
 	ConnectedMidgame    bool   // True if player connected after round 1
 	PermanentDisconnect bool   // True if player disconnected and never returned
 	FirstConnectRound   *int   // Round index when player first connected (nil if round 0)
 	DisconnectRound     *int   // Round index when player disconnected (nil if never disconnected)
+}
+
+func csColorName(c common.Color) string {
+	switch int(c) {
+	case 0:
+		return "yellow"
+	case 1:
+		return "purple"
+	case 2:
+		return "green"
+	case 3:
+		return "blue"
+	case 4:
+		return "orange"
+	default:
+		return ""
+	}
 }
 
 // RoundData contains round information.
@@ -731,6 +749,15 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 							needsUpdate = true
 						}
 
+						// Capture color from game state
+						if color, err := p.ColorOrErr(); err == nil {
+							if newColor := csColorName(color); newColor != "" && playerData.Color != newColor {
+								fmt.Fprintf(os.Stderr, "[Color] %s (%s): %s -> %s\n", playerData.SteamID, playerData.Name, playerData.Color, newColor)
+								playerData.Color = newColor
+								needsUpdate = true
+							}
+						}
+
 						// Insert or update player in database immediately
 						if writer != nil && matchID != "" && needsUpdate {
 							dbPlayer := db.Player{
@@ -738,6 +765,7 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 								SteamID:             playerData.SteamID,
 								Name:                playerData.Name,
 								Team:                playerData.Team,
+								Color:               playerData.Color,
 								ConnectedMidgame:    playerData.ConnectedMidgame,
 								PermanentDisconnect: playerData.PermanentDisconnect,
 								FirstConnectRound:   playerData.FirstConnectRound,
@@ -1111,12 +1139,24 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 
 		// Insert or update player in database immediately if writer is available
 		// This ensures players exist before positions are inserted (foreign key constraint)
+		// Capture color if not yet set
+		if playerData.Color == "" {
+			if color, err := player.ColorOrErr(); err == nil {
+				if newColor := csColorName(color); newColor != "" {
+					fmt.Fprintf(os.Stderr, "[Color] %s (%s): %s\n", playerData.SteamID, playerData.Name, newColor)
+					playerData.Color = newColor
+					teamUpdated = true
+				}
+			}
+		}
+
 		if writer != nil && matchID != "" && (isNewPlayer || teamUpdated) {
 			dbPlayer := db.Player{
 				MatchID:             matchID,
 				SteamID:             playerData.SteamID,
 				Name:                playerData.Name,
 				Team:                playerData.Team, // May be empty initially, will be updated later
+				Color:               playerData.Color,
 				ConnectedMidgame:    playerData.ConnectedMidgame,
 				PermanentDisconnect: playerData.PermanentDisconnect,
 				FirstConnectRound:   playerData.FirstConnectRound,
@@ -1579,11 +1619,17 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 				if name == "" {
 					name = fmt.Sprintf("Player_%d", sid64)
 				}
-				playerMap[sid64] = &PlayerData{SteamID: steamID, Name: name}
+				colorStr := ""
+				if color, err := player.ColorOrErr(); err == nil {
+					colorStr = csColorName(color)
+				}
+				fmt.Fprintf(os.Stderr, "[Color] %s (%s): %s (early-chat)\n", steamID, name, colorStr)
+				playerMap[sid64] = &PlayerData{SteamID: steamID, Name: name, Color: colorStr}
 				if err := writer.InsertPlayer(ctx, db.Player{
 					MatchID: matchID,
 					SteamID: steamID,
 					Name:    name,
+					Color:   colorStr,
 				}); err != nil {
 					fmt.Fprintf(os.Stderr, "WARN: Failed to insert early-chat player %s: %v\n", steamID, err)
 					return
@@ -1799,11 +1845,18 @@ func (p *Parser) ParseWithDB(ctx context.Context, callback ParseCallback, dbConn
 
 			// Insert player into database if needed
 			if needsInsert && writer != nil && matchID != "" {
+				if playerData.Color == "" {
+					if color, err := player.ColorOrErr(); err == nil {
+						playerData.Color = csColorName(color)
+						fmt.Fprintf(os.Stderr, "[Color] %s (%s): %s\n", playerData.SteamID, playerData.Name, playerData.Color)
+					}
+				}
 				dbPlayer := db.Player{
 					MatchID:             matchID,
 					SteamID:             playerData.SteamID,
 					Name:                playerData.Name,
 					Team:                playerData.Team, // May be empty initially
+					Color:               playerData.Color,
 					ConnectedMidgame:    playerData.ConnectedMidgame,
 					PermanentDisconnect: playerData.PermanentDisconnect,
 					FirstConnectRound:   playerData.FirstConnectRound,

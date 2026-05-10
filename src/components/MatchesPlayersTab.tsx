@@ -7,10 +7,19 @@ type PlayerSortField = 'name' | 'teamKills' | 'teamDamage' | 'teamFlashSeconds' 
 
 type ScoredPlayer = PlayerScore & {
   team: string | null
+  color?: string | null
   connectedMidgame?: boolean
   permanentDisconnect?: boolean
   firstConnectRound?: number | null
   disconnectRound?: number | null
+}
+
+const CS_COLORS: Record<string, string> = {
+  yellow: '#FFD700',
+  purple: '#9B59B6',
+  green: '#2ECC71',
+  blue: '#3498DB',
+  orange: '#E67E22',
 }
 
 interface Props {
@@ -46,6 +55,7 @@ export default function MatchesPlayersTab({
         return {
           ...score,
           team: player.team,
+          color: player.color,
           connectedMidgame: player.connectedMidgame,
           permanentDisconnect: player.permanentDisconnect,
           firstConnectRound: player.firstConnectRound,
@@ -57,6 +67,7 @@ export default function MatchesPlayersTab({
         steamId: player.steamId,
         name: player.name || player.steamId,
         team: player.team,
+        color: player.color,
         teamKills: 0,
         teamDamage: 0,
         teamFlashSeconds: 0,
@@ -128,6 +139,13 @@ export default function MatchesPlayersTab({
           className="font-medium text-white truncate flex-1 flex items-center gap-1.5"
           title={score.name || score.steamId}
         >
+          {score.color && CS_COLORS[score.color] && (
+            <span
+              className="flex-shrink-0 rounded-full inline-block"
+              style={{ width: 10, height: 10, backgroundColor: CS_COLORS[score.color] }}
+              title={score.color}
+            />
+          )}
           {score.connectedMidgame && (
             <span
               className="text-blue-400 flex-shrink-0 cursor-help"
