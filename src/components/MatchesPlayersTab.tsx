@@ -15,11 +15,11 @@ type ScoredPlayer = PlayerScore & {
 }
 
 const CS_COLORS: Record<string, string> = {
-  yellow: '#FFD700',
-  purple: '#9B59B6',
-  green: '#2ECC71',
-  blue: '#3498DB',
-  orange: '#E67E22',
+  yellow: '#4DB8FF',
+  purple: '#4CAF50',
+  green: '#F5D30F',
+  blue: '#FF6B26',
+  orange: '#8847FF',
 }
 
 interface Props {
