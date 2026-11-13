@@ -136,6 +136,14 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
+      # electron-builder creates the GitHub release as a draft. Publish it once
+      # the installer and latest.yml are uploaded, so the auto-updater never
+      # sees a release with missing files.
+      - name: Publish release
+        run: gh release edit "${{ steps.version.outputs.tag_name }}" --repo "${{ github.repository }}" --draft=false --latest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   release-mac:
     runs-on: macos-latest
     needs: release-windows
