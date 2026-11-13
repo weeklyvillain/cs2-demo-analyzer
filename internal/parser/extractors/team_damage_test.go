@@ -62,8 +62,9 @@ func TestTeamDamageMerge(t *testing.T) {
 		t.Errorf("expected type TEAM_DAMAGE, got %s", event.Type)
 	}
 
-	// Check severity calculation (total damage = 60, should be 0.6)
-	expectedSeverity := 0.6
+	// Check severity calculation: total damage is health (60) + armor (15) = 75,
+	// and 100 damage = 1.0 severity, so it should be 0.75
+	expectedSeverity := 0.75
 	if event.Severity < expectedSeverity-0.01 || event.Severity > expectedSeverity+0.01 {
 		t.Errorf("expected severity ~%.2f, got %.2f", expectedSeverity, event.Severity)
 	}

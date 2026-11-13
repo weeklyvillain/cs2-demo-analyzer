@@ -1,0 +1,55 @@
+name: PR Check
+
+# Builds the app and parser on every pull request. Renovate only auto-merges
+# dependency updates once this check passes, and a merge to master triggers
+# the Release workflow.
+
+on:
+  pull_request:
+    branches:
+      - master
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # Windows matches the primary release target and builds the native addon.
+    # Pinned to windows-2022 (Visual Studio 2022): windows-latest now ships
+    # Visual Studio 18, which node-gyp 10 cannot detect, so native modules
+    # such as extract-file-icon fail to build during npm ci.
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Setup Visual Studio Build Tools
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Go parser
+        run: go build -o bin/win/parser.exe ./cmd/parser
+
+      - name: Run Go tests
+        run: go test ./...
+
+      - name: Build app
+        run: npm run build
