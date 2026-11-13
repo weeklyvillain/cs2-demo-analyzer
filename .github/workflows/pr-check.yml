@@ -49,10 +49,7 @@ jobs:
         run: go build -o bin/win/parser.exe ./cmd/parser
 
       - name: Run Go tests
-        # TestTeamDamageMerge already fails on master: it expects severity 0.60
-        # (health damage only) but team_damage.go counts health + armor (0.75).
-        # Skipped so it does not block every PR; drop -skip once that is resolved.
-        run: go test ./... -skip '^TestTeamDamageMerge$'
+        run: go test ./...
 
       - name: Build app
         run: npm run build
