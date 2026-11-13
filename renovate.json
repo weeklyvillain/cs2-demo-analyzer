@@ -17,12 +17,18 @@
       "minimumReleaseAge": "3 days"
     },
     {
-      "description": "Batch stable minor/patch updates into one weekly PR (one release per week) and auto-merge it.",
-      "matchUpdateTypes": ["minor", "patch"],
-      "matchCurrentVersion": ">=1.0.0",
+      "description": "One weekly PR with every non-major update (minor, patch, digest, including 0.x packages), auto-merged when the build check passes.",
+      "matchUpdateTypes": ["minor", "patch", "digest"],
       "groupName": "non-major dependencies",
       "groupSlug": "non-major",
       "automerge": true
+    },
+    {
+      "description": "One weekly PR with every major update. Never auto-merged: majors usually need code changes.",
+      "matchUpdateTypes": ["major"],
+      "groupName": "major dependencies",
+      "groupSlug": "major",
+      "automerge": false
     },
     {
       "description": "The demo parser library has to follow CS2 game updates: update as soon as a release appears, in its own PR.",
@@ -31,6 +37,11 @@
       "groupName": null,
       "schedule": ["at any time"],
       "automerge": true
+    },
+    {
+      "description": "Leave runner images alone: the Windows jobs are pinned to windows-2022 on purpose (newer images ship a Visual Studio that node-gyp 10 cannot detect).",
+      "matchDatasources": ["github-runners"],
+      "enabled": false
     }
   ]
 }
