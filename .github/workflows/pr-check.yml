@@ -19,7 +19,10 @@ permissions:
 jobs:
   build:
     # Windows matches the primary release target and builds the native addon.
-    runs-on: windows-latest
+    # Pinned to windows-2022 (Visual Studio 2022): windows-latest now ships
+    # Visual Studio 18, which node-gyp 10 cannot detect, so native modules
+    # such as extract-file-icon fail to build during npm ci.
+    runs-on: windows-2022
 
     steps:
       - name: Checkout repository
