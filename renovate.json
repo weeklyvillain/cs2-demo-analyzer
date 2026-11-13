@@ -1,0 +1,36 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "description": [
+    "Dependency updates are merged automatically once the PR Check workflow passes.",
+    "Every merge to master triggers the Release workflow, which ships a new patch release."
+  ],
+  "schedule": ["before 6am on monday"],
+  "postUpdateOptions": ["gomodTidy"],
+  "platformAutomerge": false,
+  "automergeType": "pr",
+  "automergeStrategy": "squash",
+  "packageRules": [
+    {
+      "description": "Wait a few days before taking new npm releases, to avoid bad or compromised publishes.",
+      "matchDatasources": ["npm"],
+      "minimumReleaseAge": "3 days"
+    },
+    {
+      "description": "Batch stable minor/patch updates into one weekly PR (one release per week) and auto-merge it.",
+      "matchUpdateTypes": ["minor", "patch"],
+      "matchCurrentVersion": ">=1.0.0",
+      "groupName": "non-major dependencies",
+      "groupSlug": "non-major",
+      "automerge": true
+    },
+    {
+      "description": "The demo parser library has to follow CS2 game updates: update as soon as a release appears, in its own PR.",
+      "matchPackageNames": ["github.com/markus-wa/demoinfocs-golang/v5"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": null,
+      "schedule": ["at any time"],
+      "automerge": true
+    }
+  ]
+}
