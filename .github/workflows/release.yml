@@ -16,7 +16,7 @@ jobs:
   release-windows:
     # Pinned to windows-2022 (Visual Studio 2022): windows-latest now ships
     # Visual Studio 18, which node-gyp 10 cannot detect, so npm ci fails.
-    runs-on: windows-2022
+    runs-on: windows-2025
     permissions:
       contents: write
     
