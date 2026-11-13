@@ -40,7 +40,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Setup Visual Studio Build Tools
-        uses: microsoft/setup-msbuild@v2
+        uses: microsoft/setup-msbuild@v3
 
       - name: Install dependencies
         run: npm ci
