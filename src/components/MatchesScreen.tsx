@@ -733,7 +733,15 @@ function MatchesScreen({ pendingDemos = [], onPendingDemosConsumed }: MatchesScr
           </div>
 
           {/* Match Details */}
-          <div className="flex-1 bg-secondary rounded-lg border border-border p-4 overflow-auto min-h-0 [scrollbar-gutter:stable]">
+          {/* The 2D viewer fills the remaining height (its controls stay pinned at the bottom);
+              other tabs scroll inside this panel. */}
+          <div
+            className={`flex-1 bg-secondary rounded-lg border border-border p-4 min-h-0 ${
+              activeTab === '2d-viewer' && hasRadarForCurrentMap
+                ? 'flex flex-col overflow-hidden'
+                : 'overflow-auto [scrollbar-gutter:stable]'
+            }`}
+          >
             {selectedMatch ? (
               <>
                 <MatchDetailsHeader
@@ -799,7 +807,7 @@ function MatchesScreen({ pendingDemos = [], onPendingDemosConsumed }: MatchesScr
                   />
                 ) : activeTab === '2d-viewer' && hasRadarForCurrentMap ? (
                   selectedMatch ? (
-                    <div className="flex-1 min-h-0">
+                    <div className="flex flex-1 flex-col min-h-0">
                       <MatchesViewer2DTab
                         matchId={selectedMatch}
                         roundIndex={-1}

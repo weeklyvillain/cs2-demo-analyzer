@@ -202,12 +202,7 @@ export default function MatchDetailsHeader({
                 : 'text-gray-400 hover:text-white'
             }`}
           >
-            <span className="flex items-center gap-2">
-              {t('matches.tabs.viewer2d')}
-              <span className="px-1.5 py-0.5 text-xs bg-yellow-900/30 text-yellow-400 rounded border border-yellow-500/30">
-                WIP
-              </span>
-            </span>
+            {t('matches.tabs.viewer2d')}
           </button>
         )}
       </div>

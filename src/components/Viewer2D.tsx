@@ -251,7 +251,7 @@ function Viewer2D({
   const streaming = replay.loadingRounds.size > 0
 
   const body = (
-    <div className={`relative flex flex-col overflow-hidden bg-[#141619] text-gray-200 ${isModal ? 'h-[92vh] w-[94vw] rounded-xl border border-white/10 shadow-2xl' : 'h-full'}`}>
+    <div className={`relative flex flex-col overflow-hidden bg-[#141619] text-gray-200 ${isModal ? 'h-[92vh] w-[94vw] rounded-xl border border-white/10 shadow-2xl' : 'min-h-0 flex-1'}`}>
       {/* top bar */}
       <div className="flex h-12 flex-shrink-0 items-center gap-3 border-b border-white/[0.06] bg-[#1b1d21] px-4">
         <div className="flex items-baseline gap-2">

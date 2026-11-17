@@ -47,7 +47,7 @@ export function Roster({ team, players, score, selected, hovered, following, sid
         </div>
       </header>
 
-      <ul className="flex-1 space-y-1 overflow-y-auto px-2 pb-2">
+      <ul className="min-h-0 flex-1 space-y-1 overflow-y-auto px-2 pb-2">
         {sorted.map((p) => {
           const hp = Math.max(0, p.alive ? p.health ?? 100 : 0)
           const isSel = selected === p.steamid
