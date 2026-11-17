@@ -41,31 +41,31 @@ Architecture:
 
 - Frontend: React 18, TypeScript, Tailwind CSS, Lucide icons
 - Desktop: Electron 28
-- Backend: Go CLI parser + SQLite
+- Backend: Rust CLI demo extractor + SQLite
 - Build: Vite + tsc + node-gyp
 
 ---
 
 ## Critical Architecture Rules
 
-### 1. Go Parser = External Executable
+### 1. Demo Extractor = External Executable
 
 The parser is NOT embedded.
 
 Location:
-- `cmd/parser/main.go`
-- Built to `bin/parser.exe`
+- `extractor/` (Rust, see `extractor/README.md`)
+- Built to `bin/<platform>/parser[.exe]` with `npm run build:parser`
 - Spawned from `electron/main.ts`
 
 Parser modes:
 
-- `database` (primary, streaming to SQLite)
-- `json` (NDJSON chunked, memory safe)
+- `database` (primary, writes the SQLite match database)
+- `json` (events only, as a JSON array)
 
 Rules:
 
-- Always stream data
-- Never load full demos or full event sets into memory
+- The database schema in `extractor/src/db.rs` is the contract with the app: readers in `electron/` depend on it
+- Bulky rows (positions, grenade paths) are streamed to the writer thread while parsing
 
 ---
 

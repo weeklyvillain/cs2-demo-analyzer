@@ -1825,7 +1825,7 @@ ipcMain.handle('parser:parse', async (_, { demoPath }: { demoPath: string }) => 
     }
   }
   
-  // Note: demo_path and created_at_iso will be stored in meta table by the Go parser
+  // Note: demo_path and created_at_iso will be stored in meta table by the parser
   
   // Debug: log the path being used (only in dev)
   if (isDev) {

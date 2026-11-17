@@ -8,7 +8,7 @@ Electron desktop application for parsing CS2 demo files and detecting griefing b
 - **Vite + React + TypeScript** - Renderer UI
 - **TypeScript** - Main process
 - **Tailwind CSS** - Styling
-- **Go Parser** - Backend parser service (separate executable)
+- **Rust demo extractor** - Parses demos into a SQLite match database (separate executable, see `extractor/`)
 
 ## Project Structure
 
@@ -30,8 +30,7 @@ Electron desktop application for parsing CS2 demo files and detecting griefing b
 ### Prerequisites
 
 - Node.js 18+ and npm
-- Go 1.21+ (for building the parser)
-- Go parser binary built (see below)
+- Rust toolchain (https://rustup.rs), only needed to rebuild the demo extractor
 
 ### Install Dependencies
 
@@ -39,30 +38,27 @@ Electron desktop application for parsing CS2 demo files and detecting griefing b
 npm install
 ```
 
-### Build Go Parser
+### Build the Demo Extractor
 
-The Go parser must be built separately. For development:
+Demos are parsed by a separate executable written in Rust (`extractor/`). A
+Windows build is checked in at `bin/win/parser.exe`, so this step is only
+needed after changing the extractor or on another platform:
 
-1. **First, ensure Go dependencies are downloaded:**
-   ```bash
-   cd .  # Stay in project root
-   go mod tidy  # This will download dependencies and create go.sum
-   ```
+```bash
+npm run build:parser
+```
 
-2. Build the parser:
-   ```bash
-   # From project root
-   go build -o bin/parser.exe ./cmd/parser  # Windows
-   # or
-   go build -o bin/parser ./cmd/parser      # Linux/Mac
-   ```
+This runs `cargo build --release` and copies the binary to
+`bin/<platform>/parser` (`bin/win/parser.exe` on Windows), which is where the
+app looks for it in development. To use a binary somewhere else, set the
+`PARSER_PATH` environment variable:
 
-   The binary will be placed in the `bin/` directory at the project root.
+```bash
+export PARSER_PATH=/path/to/parser
+```
 
-   Or set `PARSER_PATH` environment variable to custom path:
-   ```bash
-   export PARSER_PATH=/path/to/parser
-   ```
+See `extractor/README.md` for how the extractor is organised and how to check
+its output against the previous Go parser.
 
 ### Run Development Server
 
@@ -110,28 +106,12 @@ npm run package:linux
    - Setting up proper code signing certificates
    - Or setting environment variables for signing credentials
 
-## Packaging Go Parser
+## Packaging the Demo Extractor
 
-For production builds, the Go parser binary must be included in the packaged app:
-
-1. Build parser binaries for each platform:
-   ```bash
-   # Windows
-   GOOS=windows GOARCH=amd64 go build -o resources/parser.exe ./cmd/parser
-   
-   # macOS
-   GOOS=darwin GOARCH=amd64 go build -o resources/parser-mac ./cmd/parser
-   
-   # Linux
-   GOOS=linux GOARCH=amd64 go build -o resources/parser-linux ./cmd/parser
-   ```
-
-2. The binaries will be automatically included in the packaged app via `electron-builder` configuration.
-
-3. The app will automatically select the correct binary based on the platform:
-   - Windows: `parser.exe`
-   - macOS: `parser-mac`
-   - Linux: `parser-linux`
+`electron-builder` copies the `bin/` directory into the packaged app, so the
+extractor binary for the target platform has to be in `bin/<platform>/` before
+packaging. The release workflow does this with `npm run build:parser` on each
+platform's runner.
 
 ## Features
 
@@ -258,8 +238,8 @@ The app uses a dark theme with the following colors:
 If you see "Parser not found" error:
 
 1. Check that the parser binary exists at the expected path
-2. For dev: Ensure binary is at `bin/parser` (or `bin/parser.exe` on Windows), or set `PARSER_PATH`)
-3. For prod: Ensure binaries are in `resources/` directory before packaging
+2. For dev: Ensure the binary is at `bin/<platform>/parser` (`bin/win/parser.exe` on Windows); `npm run build:parser` puts it there. Or set `PARSER_PATH`
+3. For prod: Ensure the binary is in `bin/<platform>/` before packaging
 
 ### Parser Crashes / Panic Errors
 

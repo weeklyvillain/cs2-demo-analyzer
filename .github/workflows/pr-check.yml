@@ -34,10 +34,13 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
         with:
-          go-version-file: go.mod
+          workspaces: extractor
 
       - name: Setup Visual Studio Build Tools
         uses: microsoft/setup-msbuild@v2
@@ -45,11 +48,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build Go parser
-        run: go build -o bin/win/parser.exe ./cmd/parser
+      - name: Build demo extractor
+        run: npm run build:parser
 
-      - name: Run Go tests
-        run: go test ./...
+      - name: Run demo extractor tests
+        run: cargo test --locked --manifest-path extractor/Cargo.toml
 
       - name: Build app
         run: npm run build
