@@ -40,8 +40,6 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.limitMatches': 'Limit number of saved matches',
     'settings.limitMatchesDesc': 'Keep only the N most recent matches',
     'settings.maxMatches': 'Max number of matches',
-    'settings.voiceCacheSizeLimit': 'Voice Cache Size Limit (MB)',
-    'settings.voiceCacheSizeLimitDesc': 'Maximum size for voice extraction cache (default: 50MB). Oldest files are deleted when limit is exceeded.',
     'settings.displaySettings': 'Display Settings',
     'settings.defaultAfkThreshold': 'Default AFK Threshold (seconds)',
     'settings.defaultAfkThresholdDesc': 'Default minimum AFK duration to show in overview (default: 10s)',
@@ -104,7 +102,6 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.matches': 'Matches',
     'settings.files': 'files',
     'settings.settings': 'Settings',
-    'settings.voiceCache': 'Voice Cache',
     'settings.total': 'Total',
     'settings.whatsNew': "What's New",
     // Matches screen
@@ -390,8 +387,6 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.limitMatches': 'Begränsa antal sparade matcher',
     'settings.limitMatchesDesc': 'Behåll endast de N senaste matcherna',
     'settings.maxMatches': 'Max antal matcher',
-    'settings.voiceCacheSizeLimit': 'Röstcache-storleksgräns (MB)',
-    'settings.voiceCacheSizeLimitDesc': 'Maximal storlek för röstextraktionscache (standard: 50MB). Äldsta filer raderas när gränsen överskrids.',
     'settings.displaySettings': 'Visningsinställningar',
     'settings.defaultAfkThreshold': 'Standard AFK-tröskel (sekunder)',
     'settings.defaultAfkThresholdDesc': 'Standard minsta AFK-varaktighet att visa i översikten (standard: 10s)',
@@ -454,7 +449,6 @@ export const translations: Record<Language, Record<string, string>> = {
     'settings.matches': 'Matcher',
     'settings.files': 'filer',
     'settings.settings': 'Inställningar',
-    'settings.voiceCache': 'Röstcache',
     'settings.total': 'Totalt',
     'settings.whatsNew': 'Vad är nytt',
     // Matches screen

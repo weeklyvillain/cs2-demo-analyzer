@@ -3512,27 +3512,6 @@ ipcMain.handle('demos:getDemoFolders', async () => {
 })
 
 
-// Voice cache management
-ipcMain.handle('voice:getCacheInfo', async () => {
-  const currentSize = calculateCacheSize()
-  const limit = getCacheSizeLimit()
-  return {
-    currentSize,
-    limit,
-    currentSizeMB: (currentSize / 1024 / 1024).toFixed(2),
-    limitMB: (limit / 1024 / 1024).toFixed(2),
-  }
-})
-
-ipcMain.handle('voice:cleanupCache', async () => {
-  cleanupCacheIfNeeded()
-  const currentSize = calculateCacheSize()
-  return {
-    currentSize,
-    currentSizeMB: (currentSize / 1024 / 1024).toFixed(2),
-  }
-})
-
 // Helper function to parse release notes from GitHub release body
 function parseReleaseNotes(body: string): string[] {
   if (!body) return ['Bug fixes and improvements']
@@ -3965,7 +3944,6 @@ ipcMain.handle('app:getInfo', async () => {
   
   let matchesStorageBytes = 0
   let settingsStorageBytes = 0
-  let voiceCacheStorageBytes = 0
   let matchCount = 0
   
   // Calculate matches storage
@@ -3995,10 +3973,7 @@ ipcMain.handle('app:getInfo', async () => {
     }
   }
   
-  // Calculate voice cache storage
-  voiceCacheStorageBytes = calculateCacheSize()
-  
-  const totalStorageBytes = matchesStorageBytes + settingsStorageBytes + voiceCacheStorageBytes
+  const totalStorageBytes = matchesStorageBytes + settingsStorageBytes
   
   // Format bytes to human readable
   const formatBytes = (bytes: number): string => {
@@ -4026,10 +4001,6 @@ ipcMain.handle('app:getInfo', async () => {
       settings: {
         bytes: settingsStorageBytes,
         formatted: formatBytes(settingsStorageBytes),
-      },
-      voiceCache: {
-        bytes: voiceCacheStorageBytes,
-        formatted: formatBytes(voiceCacheStorageBytes),
       },
       total: {
         bytes: totalStorageBytes,
@@ -5809,235 +5780,12 @@ ipcMain.handle('cs2:copyCommands', async (_, demoPath: string, startTick?: numbe
   return { success: true, commands: commandsToCopy }
 })
 
-// Voice extraction cache helpers
-function getVoiceCacheDir(): string {
-  // Use temp directory so cache resets between restarts
-  const tempDir = app.getPath('temp')
-  const cacheDir = path.join(tempDir, 'cs2-voice-cache')
-  if (!fs.existsSync(cacheDir)) {
-    fs.mkdirSync(cacheDir, { recursive: true })
-  }
-  return cacheDir
-}
-
-function generateCacheKey(demoPath: string, steamId: string, mode: string): string {
-  // Create a hash from demo path, steam ID, and mode
-  // Use full demo path to ensure uniqueness even if files have the same name
-  const normalizedDemoPath = path.resolve(demoPath).toLowerCase()
-  const keyString = `${normalizedDemoPath}-${steamId}-${mode}`
-  // Create a safe filename from the key using MD5 hash
-  const hash = crypto.createHash('md5').update(keyString).digest('hex')
-  return hash
-}
-
-function getCachedVoiceFiles(cacheKey: string): { files: string[]; filePaths: string[]; cachePath: string } | null {
-  const cacheDir = getVoiceCacheDir()
-  const cacheEntryDir = path.join(cacheDir, cacheKey)
-  
-  if (!fs.existsSync(cacheEntryDir)) {
-    return null
-  }
-  
-  // Check if cache directory has audio files (.ogg from cs2-voice-extractor, .wav from older versions)
-  const files = fs.readdirSync(cacheEntryDir)
-    .filter(file => /\.(ogg|opus|wav)$/i.test(file))
-    .map(file => ({
-      name: file,
-      path: path.join(cacheEntryDir, file),
-    }))
-  
-  if (files.length === 0) {
-    return null
-  }
-  
-  // Verify all files exist and are readable
-  const validFiles = files.filter(f => {
-    try {
-      return fs.existsSync(f.path) && fs.statSync(f.path).size > 0
-    } catch {
-      return false
-    }
-  })
-  
-  if (validFiles.length === 0) {
-    return null
-  }
-  
-  return {
-    files: validFiles.map(f => f.name),
-    filePaths: validFiles.map(f => f.path),
-    cachePath: cacheEntryDir,
-  }
-}
-
-// Get cache size limit from settings (default 50MB)
-function getCacheSizeLimit(): number {
-  const limitMB = parseInt(getSetting('voiceCacheSizeLimitMB', '50'), 10)
-  return limitMB * 1024 * 1024 // Convert to bytes
-}
-
-// Calculate total cache size
-function calculateCacheSize(): number {
-  const cacheDir = getVoiceCacheDir()
-  if (!fs.existsSync(cacheDir)) {
-    return 0
-  }
-  
-  let totalSize = 0
-  
-  function calculateDirSize(dirPath: string): void {
-    try {
-      const entries = fs.readdirSync(dirPath, { withFileTypes: true })
-      for (const entry of entries) {
-        const fullPath = path.join(dirPath, entry.name)
-        try {
-          if (entry.isDirectory()) {
-            calculateDirSize(fullPath)
-          } else if (entry.isFile()) {
-            const stats = fs.statSync(fullPath)
-            totalSize += stats.size
-          }
-        } catch (err) {
-          // Skip files/dirs that can't be accessed
-          console.warn(`[Voice Cache] Could not access: ${fullPath}`, err)
-        }
-      }
-    } catch (err) {
-      console.warn(`[Voice Cache] Could not read directory: ${dirPath}`, err)
-    }
-  }
-  
-  calculateDirSize(cacheDir)
-  return totalSize
-}
-
-// Get all cache files with their sizes and modification times
-interface CacheFile {
-  path: string
-  size: number
-  mtime: number
-}
-
-function getAllCacheFiles(): CacheFile[] {
-  const cacheDir = getVoiceCacheDir()
-  if (!fs.existsSync(cacheDir)) {
-    return []
-  }
-  
-  const files: CacheFile[] = []
-  
-  function collectFiles(dirPath: string): void {
-    try {
-      const entries = fs.readdirSync(dirPath, { withFileTypes: true })
-      for (const entry of entries) {
-        const fullPath = path.join(dirPath, entry.name)
-        try {
-          if (entry.isDirectory()) {
-            collectFiles(fullPath)
-          } else if (entry.isFile()) {
-            const stats = fs.statSync(fullPath)
-            files.push({
-              path: fullPath,
-              size: stats.size,
-              mtime: stats.mtime.getTime(),
-            })
-          }
-        } catch (err) {
-          // Skip files/dirs that can't be accessed
-          console.warn(`[Voice Cache] Could not access: ${fullPath}`, err)
-        }
-      }
-    } catch (err) {
-      console.warn(`[Voice Cache] Could not read directory: ${dirPath}`, err)
-    }
-  }
-  
-  collectFiles(cacheDir)
-  return files
-}
-
-// Clean up old cache files when limit is exceeded
-function cleanupCacheIfNeeded(): void {
-  const limit = getCacheSizeLimit()
-  let currentSize = calculateCacheSize()
-  
-  if (currentSize <= limit) {
-    return // No cleanup needed
-  }
-  
-  console.log(`[Voice Cache] Cache size (${(currentSize / 1024 / 1024).toFixed(2)}MB) exceeds limit (${(limit / 1024 / 1024).toFixed(2)}MB), cleaning up...`)
-  
-  // Get all files sorted by modification time (oldest first)
-  const files = getAllCacheFiles().sort((a, b) => a.mtime - b.mtime)
-  
-  let deletedSize = 0
-  let deletedCount = 0
-  
-  // Delete oldest files until we're under the limit
-  for (const file of files) {
-    if (currentSize - deletedSize <= limit) {
-      break // We're under the limit now
-    }
-    
-    try {
-      fs.unlinkSync(file.path)
-      deletedSize += file.size
-      deletedCount++
-    } catch (err) {
-      console.warn(`[Voice Cache] Could not delete file: ${file.path}`, err)
-    }
-  }
-  
-  // Try to remove empty directories
-  const cacheDir = getVoiceCacheDir()
-  try {
-    const entries = fs.readdirSync(cacheDir, { withFileTypes: true })
-    for (const entry of entries) {
-      if (entry.isDirectory()) {
-        const dirPath = path.join(cacheDir, entry.name)
-        try {
-          const dirEntries = fs.readdirSync(dirPath)
-          if (dirEntries.length === 0) {
-            fs.rmdirSync(dirPath)
-          }
-        } catch (err) {
-          // Directory might not be empty or might have subdirectories, skip
-        }
-      }
-    }
-  } catch (err) {
-    // Ignore errors when cleaning up directories
-  }
-  
-  console.log(`[Voice Cache] Cleaned up ${deletedCount} file(s), freed ${(deletedSize / 1024 / 1024).toFixed(2)}MB`)
-}
-
-function saveToCache(cacheKey: string, sourceFiles: string[]): void {
-  const cacheDir = getVoiceCacheDir()
-  const cacheEntryDir = path.join(cacheDir, cacheKey)
-  
-  // Create cache entry directory
-  if (!fs.existsSync(cacheEntryDir)) {
-    fs.mkdirSync(cacheEntryDir, { recursive: true })
-  }
-  
-  // Copy files to cache
-  for (const sourceFile of sourceFiles) {
-    if (fs.existsSync(sourceFile)) {
-      const fileName = path.basename(sourceFile)
-      const destPath = path.join(cacheEntryDir, fileName)
-      
-      // Only copy if it doesn't already exist (avoid unnecessary I/O)
-      if (!fs.existsSync(destPath)) {
-        fs.copyFileSync(sourceFile, destPath)
-      }
-    }
-  }
-  
-  console.log(`[Voice Cache] Saved ${sourceFiles.length} file(s) to cache: ${cacheKey}`)
-  
-  // Clean up cache if it exceeds the size limit
-  cleanupCacheIfNeeded()
+// Scratch space for derived voice files (waveform PNGs, Whisper WAVs). Lives in temp
+// under a cs2-voice-* name, so leftovers are removed on the next startup.
+function getVoiceScratchDir(sub: string): string {
+  const dir = path.join(app.getPath('temp'), 'cs2-voice-scratch', sub)
+  fs.mkdirSync(dir, { recursive: true })
+  return dir
 }
 
 // Voice extraction IPC handler
@@ -6047,30 +5795,6 @@ ipcMain.handle('voice:extract', async (_, options: { demoPath: string; outputPat
   // Validate demo file exists
   if (!fs.existsSync(demoPath)) {
     throw new Error(`Demo file not found: ${demoPath}`)
-  }
-  
-  // Check cache if extracting for a single player
-  if (steamIds.length === 1) {
-    const cacheKey = generateCacheKey(demoPath, steamIds[0], mode)
-    const cached = getCachedVoiceFiles(cacheKey)
-    
-    if (cached && cached.files.length > 0) {
-      console.log(`[Voice Cache] Cache hit for ${steamIds[0]} in ${path.basename(demoPath)} (mode: ${mode})`)
-      
-      // Notify renderer process that we're using cache
-      if (mainWindow) {
-        mainWindow.webContents.send('voice:extractionLog', `[Cache] Using cached voice files (${cached.files.length} file(s))`)
-      }
-      
-      return {
-        success: true,
-        outputPath: null, // Don't expose cache dir - cleanup handler would delete it
-        files: cached.files,
-        filePaths: cached.filePaths,
-      }
-    } else {
-      console.log(`[Voice Cache] Cache miss for ${steamIds[0]} in ${path.basename(demoPath)} (mode: ${mode})`)
-    }
   }
   
   // Use provided outputPath or create temp directory
@@ -6102,16 +5826,6 @@ ipcMain.handle('voice:extract', async (_, options: { demoPath: string; outputPat
   ))
   const files = filePaths.map(f => ({ name: path.basename(f), path: f }))
   console.log(`[Voice Extraction] Completed. ${files.length} file(s) in ${outputPath}`)
-
-  // Save to cache if extracting for a single player
-  if (steamIds.length === 1 && files.length > 0) {
-    try {
-      saveToCache(generateCacheKey(demoPath, steamIds[0], mode), filePaths)
-      mainWindow?.webContents.send('voice:extractionLog', `[Cache] Saved to cache for future use`)
-    } catch (cacheError) {
-      console.error(`[Voice Cache] Failed to save to cache:`, cacheError)
-    }
-  }
 
   const voiceMs = players.reduce((sum, p) => sum + p.voice_seconds * 1000, 0)
   trackVoiceExtracted(voiceMs, files.length)
@@ -6151,12 +5865,7 @@ ipcMain.handle('voice:generateWaveform', async (_, filePath: string, audioDurati
       return { success: false, error: `audiowaveform not found at: ${audiowaveformPath}` }
     }
 
-    // Use temp directory for waveform cache (same as voice cache)
-    const cacheDir = getVoiceCacheDir()
-    const waveformDir = path.join(cacheDir, 'waveforms')
-    if (!fs.existsSync(waveformDir)) {
-      fs.mkdirSync(waveformDir, { recursive: true })
-    }
+    const waveformDir = getVoiceScratchDir('waveforms')
 
     const audioDurationNumber = typeof audioDuration === 'string' ? parseFloat(audioDuration) : audioDuration
     if (audioDurationNumber === undefined || !Number.isFinite(audioDurationNumber) || audioDurationNumber <= 0) {
@@ -6451,8 +6160,7 @@ ipcMain.handle('transcription:deleteModel', async (_, model: string) => {
 // (Chromium has a built-in Opus decoder) to 16 kHz mono WAV and hands the bytes here.
 ipcMain.handle('voice:writeTranscriptionWav', async (_, sourcePath: string, wavBytes: Uint8Array) => {
   try {
-    const dir = path.join(getVoiceCacheDir(), 'whisper')
-    fs.mkdirSync(dir, { recursive: true })
+    const dir = getVoiceScratchDir('whisper')
     const name = crypto.createHash('md5').update(path.resolve(sourcePath)).digest('hex')
     const wavPath = path.join(dir, `${name}.wav`)
     await fs.promises.writeFile(wavPath, Buffer.from(wavBytes))

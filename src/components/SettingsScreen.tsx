@@ -29,7 +29,6 @@ interface Settings {
   ram_only_parsing: string
   parallel_parsing_enabled: string
   parallel_parsing_count: string
-  voiceCacheSizeLimitMB: string
   autoUpdateEnabled: string
   manualVersion: string
   debugMode: string
@@ -66,7 +65,6 @@ function SettingsScreen() {
     ram_only_parsing: 'false',
     parallel_parsing_enabled: 'false',
     parallel_parsing_count: '2',
-    voiceCacheSizeLimitMB: '50',
     autoUpdateEnabled: 'true',
     manualVersion: '',
     debugMode: 'false',
@@ -109,7 +107,6 @@ function SettingsScreen() {
     storage: {
       matches: { bytes: number; formatted: string; count: number }
       settings: { bytes: number; formatted: string }
-      voiceCache?: { bytes: number; formatted: string }
       total: { bytes: number; formatted: string }
     }
     updateAvailable: boolean
@@ -240,7 +237,6 @@ function SettingsScreen() {
         ram_only_parsing: allSettings.ram_only_parsing || 'false',
         parallel_parsing_enabled: allSettings.parallel_parsing_enabled || 'false',
         parallel_parsing_count: allSettings.parallel_parsing_count || '2',
-        voiceCacheSizeLimitMB: allSettings.voiceCacheSizeLimitMB || '50',
         autoUpdateEnabled: allSettings.autoUpdateEnabled || 'true',
         manualVersion: allSettings.manualVersion || '',
         debugMode: allSettings.debugMode || 'false',
@@ -1098,26 +1094,6 @@ function SettingsScreen() {
                 </div>
               )}
               
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  {t('settings.voiceCacheSizeLimit')}
-                </label>
-                <input
-                  type="number"
-                  value={settings.voiceCacheSizeLimitMB}
-                  onChange={async (e) => {
-                    const value = e.target.value
-                    setSettings((prev) => ({ ...prev, voiceCacheSizeLimitMB: value }))
-                    await handleSaveSingleSetting('voiceCacheSizeLimitMB', value)
-                  }}
-                  className="w-full px-3 py-2 bg-surface border border-border rounded text-white text-sm"
-                  min="1"
-                  max="10000"
-                />
-                <p className="text-xs text-gray-500 mt-1">
-                  {t('settings.voiceCacheSizeLimitDesc')}
-                </p>
-              </div>
             </div>
           </div>
 
@@ -1598,11 +1574,6 @@ function SettingsScreen() {
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-gray-400">{t('settings.settings')}</span>
                       <span className="text-sm font-medium text-white">{appInfo.storage.settings.formatted}</span>
-                    </div>
-                    
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-gray-400">{t('settings.voiceCache')}</span>
-                      <span className="text-sm font-medium text-white">{appInfo.storage.voiceCache?.formatted || '0 B'}</span>
                     </div>
                     
                     <div className="flex items-center justify-between pt-2 border-t border-border/50">

@@ -81,7 +81,6 @@ export interface ElectronAPI {
     storage: {
       matches: { bytes: number; formatted: string; count: number }
       settings: { bytes: number; formatted: string }
-      voiceCache: { bytes: number; formatted: string }
       total: { bytes: number; formatted: string }
     }
     updateAvailable: boolean
