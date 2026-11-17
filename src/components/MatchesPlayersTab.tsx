@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { Mic, Play, UserPlus, UserMinus } from 'lucide-react'
 import { t } from '../utils/translations'
 import type { Match, PlayerScore, Player } from '../types/matches'
@@ -45,6 +45,45 @@ export default function MatchesPlayersTab({
 }: Props) {
   const [playerSortField, setPlayerSortField] = useState<PlayerSortField>('teamKills')
   const [playerSortDirection, setPlayerSortDirection] = useState<'asc' | 'desc'>('desc')
+
+  // Who talked in this demo (SteamID64 → seconds of voice), from `cs2-voice-extractor --list`.
+  // null while loading or if the scan failed; buttons stay enabled in that case.
+  const [voiceSpeakers, setVoiceSpeakers] = useState<Record<string, number> | null>(null)
+
+  useEffect(() => {
+    setVoiceSpeakers(null)
+    if (!demoPath || !window.electronAPI?.listVoiceSpeakers) return
+    let cancelled = false
+    window.electronAPI.listVoiceSpeakers(demoPath)
+      .then((result) => {
+        if (!cancelled && result.success && result.speakers) setVoiceSpeakers(result.speakers)
+      })
+      .catch((err) => console.warn('[MatchesPlayersTab] Voice speaker scan failed:', err))
+    return () => {
+      cancelled = true
+    }
+  }, [demoPath])
+
+  const playerHasVoice = (steamId: string) => voiceSpeakers === null || (voiceSpeakers[steamId] ?? 0) > 0
+  const teamHasVoice = (teamPlayers: PlayerScore[]) =>
+    teamPlayers.length > 0 && teamPlayers.some(p => playerHasVoice(p.steamId))
+
+  const formatVoiceSeconds = (seconds: number) =>
+    seconds >= 60 ? `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s` : `${Math.max(1, Math.round(seconds))}s`
+
+  const voiceButtonTitle = (score: PlayerScore) => {
+    if (!demoPath) return t('matches.demoFileRequired')
+    if (!playerHasVoice(score.steamId)) return t('matches.noVoiceFor').replace('{name}', score.name)
+    const seconds = voiceSpeakers?.[score.steamId]
+    const base = t('matches.extractVoiceFor').replace('{name}', score.name)
+    return seconds ? `${base} (${formatVoiceSeconds(seconds)})` : base
+  }
+
+  const teamVoiceTitle = (teamPlayers: PlayerScore[]) => {
+    if (!demoPath) return t('matches.demoFileRequired')
+    if (!teamHasVoice(teamPlayers)) return t('matches.noTeamVoice')
+    return 'Extract team voice'
+  }
 
   const allPlayersWithScores = useMemo(() => {
     const scoresMap = new Map(scores.map(score => [score.steamId, score]))
@@ -200,9 +239,9 @@ export default function MatchesPlayersTab({
               e.stopPropagation()
               onExtractVoice(score, e)
             }}
-            disabled={!demoPath}
+            disabled={!demoPath || !playerHasVoice(score.steamId)}
             className="px-2.5 py-1.5 bg-accent hover:bg-accent/90 disabled:bg-gray-600 disabled:cursor-not-allowed text-white text-sm rounded transition-colors flex items-center gap-1.5 whitespace-nowrap"
-            title={!demoPath ? t('matches.demoFileRequired') : t('matches.extractVoiceFor').replace('{name}', score.name)}
+            title={voiceButtonTitle(score)}
           >
             <Mic size={14} />
             <span>{t('matches.extractVoice')}</span>
@@ -235,9 +274,9 @@ export default function MatchesPlayersTab({
             <h3 className="text-lg font-semibold text-accent">Team A</h3>
             <button
               onClick={(e) => onExtractTeamVoice('Team A', groupedAndSortedScores.teamA, e)}
-              disabled={!demoPath || groupedAndSortedScores.teamA.length === 0}
+              disabled={!demoPath || !teamHasVoice(groupedAndSortedScores.teamA)}
               className="px-2.5 py-1.5 bg-accent hover:bg-accent/90 disabled:bg-gray-600 disabled:cursor-not-allowed text-white text-xs rounded transition-colors flex items-center gap-1.5"
-              title={!demoPath ? t('matches.demoFileRequired') : 'Extract team voice'}
+              title={teamVoiceTitle(groupedAndSortedScores.teamA)}
             >
               <Mic size={12} />
               <span>Team Voice</span>
@@ -258,9 +297,9 @@ export default function MatchesPlayersTab({
             <h3 className="text-lg font-semibold text-accent">Team B</h3>
             <button
               onClick={(e) => onExtractTeamVoice('Team B', groupedAndSortedScores.teamB, e)}
-              disabled={!demoPath || groupedAndSortedScores.teamB.length === 0}
+              disabled={!demoPath || !teamHasVoice(groupedAndSortedScores.teamB)}
               className="px-2.5 py-1.5 bg-accent hover:bg-accent/90 disabled:bg-gray-600 disabled:cursor-not-allowed text-white text-xs rounded transition-colors flex items-center gap-1.5"
-              title={!demoPath ? t('matches.demoFileRequired') : 'Extract team voice'}
+              title={teamVoiceTitle(groupedAndSortedScores.teamB)}
             >
               <Mic size={12} />
               <span>Team Voice</span>
@@ -342,9 +381,9 @@ export default function MatchesPlayersTab({
                         e.stopPropagation()
                         onExtractVoice(score, e)
                       }}
-                      disabled={!demoPath}
+                      disabled={!demoPath || !playerHasVoice(score.steamId)}
                       className="px-2.5 py-1.5 bg-accent hover:bg-accent/90 disabled:bg-gray-600 disabled:cursor-not-allowed text-white text-sm rounded transition-colors flex items-center gap-1.5 whitespace-nowrap"
-                      title={!demoPath ? t('matches.demoFileRequired') : t('matches.extractVoiceFor').replace('{name}', score.name)}
+                      title={voiceButtonTitle(score)}
                     >
                       <Mic size={14} />
                       <span>{t('matches.extractVoice')}</span>

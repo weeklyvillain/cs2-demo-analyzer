@@ -191,7 +191,7 @@ jobs:
 
       # EXPECTATION:
       # A separate tools repo publishes a macOS archive containing:
-      #   resources/bin/csgove-mac-amd64, csgove-mac-arm64,
+      #   resources/bin/mac/cs2-voice-extractor-mac-amd64, cs2-voice-extractor-mac-arm64,
       #   resources/bin/audiowaveform-mac-amd64, audiowaveform-mac-arm64,
       #   and any other required binaries.
       # This step should download and extract that archive into ./bin or ./resources/bin.

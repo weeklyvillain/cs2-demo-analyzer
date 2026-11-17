@@ -95,6 +95,9 @@ export interface ElectronAPI {
   addDemoFolder: () => Promise<{ success: boolean; folder?: string }>
   getDemoFolders: () => Promise<string[]>
   extractVoice: (options: { demoPath: string; outputPath?: string; mode?: 'split-compact' | 'split-full' | 'single-full'; steamIds?: string[] }) => Promise<{ success: boolean; outputPath: string | null; files: string[]; filePaths?: string[] }>
+  /** SteamID64 → seconds of voice, for players who talked in the demo. */
+  listVoiceSpeakers: (demoPath: string) => Promise<{ success: boolean; speakers?: Record<string, number>; error?: string }>
+  writeTranscriptionWav: (sourcePath: string, wavBytes: Uint8Array) => Promise<{ success: boolean; path?: string; error?: string }>
   getVoiceAudio: (filePath: string) => Promise<{ success: boolean; data?: string; error?: string }>
   computeWaveformFromFile: (filePath: string, numBars: number) => Promise<{ success: boolean; amplitudes?: number[]; duration?: number; error?: string }>
   generateWaveform: (

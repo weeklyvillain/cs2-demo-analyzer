@@ -11,11 +11,12 @@ All paths below are relative to `resources/bin` in the packaged app:
   - macOS: `mac/parser` (single binary; can be universal or built for the primary target arch)
   - Linux: `linux/parser`
 
-- Voice extractor (`csgove` / csgo-voice-extractor wrapper):
-  - Windows: `win/csgove.exe`
-  - macOS (Intel): `mac/csgove-mac-amd64`
-  - macOS (Apple Silicon): `mac/csgove-mac-arm64`
-  - Linux: `linux/csgove-linux`
+- Voice extractor (`cs2-voice-extractor`, a single static binary with no sidecar libraries):
+  - Windows: `win/cs2-voice-extractor.exe`
+  - macOS (Intel): `mac/cs2-voice-extractor-mac-amd64`
+  - macOS (Apple Silicon): `mac/cs2-voice-extractor-mac-arm64`
+  - Linux: `linux/cs2-voice-extractor`
+  - Any platform: `VOICE_EXTRACTOR_PATH` env var overrides the lookup.
 
 - Waveform generator (`audiowaveform`):
   - Windows: `win/audiowaveform.exe`
@@ -30,6 +31,6 @@ These names/paths are resolved by helper functions in `electron/main.ts` (`getPa
 The separate tools repository that builds these binaries should, for each release:
 
 1. Produce archives containing the above files under a `bin/` folder (so they can be unpacked at the project root in this repo and end up under `resources/bin` after packaging).
-2. For macOS, build **both** `amd64` and `arm64` variants for `csgove` and `audiowaveform`, named as listed above, and at least one `parser` binary under `bin/mac/parser`.
+2. For macOS, build **both** `amd64` and `arm64` variants for `cs2-voice-extractor` and `audiowaveform`, named as listed above, and at least one `parser` binary under `bin/mac/parser`.
 3. Publish these archives (for example as GitHub Release assets or artifacts) so that this repo’s GitHub Actions workflow can download and extract them into `./bin` before running `electron-builder`.
 
