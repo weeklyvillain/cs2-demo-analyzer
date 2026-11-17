@@ -2,7 +2,7 @@
 description: "Implement a feature end-to-end (Cursor-style): small diffs, safe IPC, streaming-first, test plan"
 ---
 
-You are implementing a feature in **CS2 Demo Analyzer** (Electron + React + external Go parser + SQLite).
+You are implementing a feature in **CS2 Demo Analyzer** (Electron + React + external Rust demo extractor + SQLite).
 
 ## Hard constraints (must follow)
 - Keep diffs small and reviewable. Prefer incremental edits over rewrites.

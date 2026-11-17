@@ -12,6 +12,9 @@ dist
 dist-electron
 release
 
+# Rust build output of the demo extractor
+extractor/target
+
 # Git worktrees
 .worktrees
 

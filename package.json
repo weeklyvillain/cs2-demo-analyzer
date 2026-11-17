@@ -11,6 +11,7 @@
     "build:vite": "vite build",
     "build:electron": "tsc -p electron/tsconfig.json",
     "build:addon": "node electron/native-addon/build-addon.js",
+    "build:parser": "node scripts/build-parser.js",
     "package": "npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder",
     "package:win": "npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win",
     "package:mac": "npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac",

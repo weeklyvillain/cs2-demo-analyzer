@@ -35,10 +35,13 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
         with:
-          go-version: '1.27'
+          workspaces: extractor
 
       - name: Setup Visual Studio Build Tools
         uses: microsoft/setup-msbuild@v2
@@ -136,11 +139,8 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit 1 }
           }
 
-      - name: Build Go parser (Windows)
-        run: |
-          cd cmd/parser
-          go build -o ../../bin/win/parser.exe .
-          cd ../..
+      - name: Build demo extractor (Windows)
+        run: npm run build:parser
       
       - name: Package Windows installer and publish
         run: |
@@ -181,10 +181,13 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
         with:
-          go-version: '1.27'
+          workspaces: extractor
 
       - name: Install dependencies
         run: npm ci
@@ -199,12 +202,8 @@ jobs:
         run: |
           echo "TODO: replace this placeholder with a curl/actions/download-artifact step that fetches macOS binaries into the bin/ directory."
 
-      - name: Build Go parser (macOS)
-        run: |
-          mkdir -p bin/mac
-          cd cmd/parser
-          go build -o ../../bin/mac/parser .
-          cd ../..
+      - name: Build demo extractor (macOS)
+        run: npm run build:parser
 
       - name: Get version from package.json
         id: version
