@@ -887,6 +887,7 @@ function MatchesScreen({ pendingDemos = [], onPendingDemosConsumed }: MatchesScr
             roundEndTick={rounds.find(r => r.roundIndex === viewer2D.roundIndex)?.endTick || 0}
             mapName={matches.find(m => m.id === selectedMatch)?.map || ''}
             onClose={() => setViewer2D(null)}
+            allRounds={rounds}
           />
         )}
 
