@@ -107,6 +107,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Voice Extraction
   extractVoice: (options: { demoPath: string; outputPath?: string; mode?: 'split-compact' | 'split-full' | 'single-full'; steamIds?: string[] }) => 
     ipcRenderer.invoke('voice:extract', options),
+  listVoiceSpeakers: (demoPath: string) => ipcRenderer.invoke('voice:listSpeakers', demoPath),
+  writeTranscriptionWav: (sourcePath: string, wavBytes: Uint8Array) =>
+    ipcRenderer.invoke('voice:writeTranscriptionWav', sourcePath, wavBytes),
   getVoiceAudio: (filePath: string) => ipcRenderer.invoke('voice:getAudio', filePath),
   computeWaveformFromFile: (filePath: string, numBars: number) => ipcRenderer.invoke('voice:computeWaveform', filePath, numBars),
   generateWaveform: (filePath: string, audioDuration?: number, options?: { mode?: 'fixed' | 'wide'; pixelsPerSecond?: number; maxWidth?: number }) =>

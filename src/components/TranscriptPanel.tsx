@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { Mic, Loader2, AlertCircle, ChevronDown } from 'lucide-react'
+import { prepareAudioForTranscription } from '../utils/transcriptionAudio'
 
 export interface TranscriptSegment {
   fromMs: number
@@ -137,8 +138,9 @@ export default function TranscriptPanel({
       setState('transcribing')
       setDownloadPhase('Transcribing audio...')
 
+      const whisperAudioPath = await prepareAudioForTranscription(audioFilePath)
       const result = await window.electronAPI.transcriptionRun({
-        audioFilePath,
+        audioFilePath: whisperAudioPath,
         steamId,
         audioFilename,
         matchId,

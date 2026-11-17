@@ -19,6 +19,7 @@ import { HlaeLauncher, HlaeLogger, CS2CommandSender } from './hlaeRecorder'
 import * as transcriptionService from './transcriptionService'
 import * as transcriptionDb from './transcriptionDb'
 import type { WhisperModelSize } from './transcriptionService'
+import { audioContentType, computeOggOpusAmplitudesFromFile, isOggAudioPath } from './voiceAudio'
 
 let mainWindow: BrowserWindow | null = null
 let splashWindow: BrowserWindow | null = null
@@ -844,7 +845,7 @@ app.whenReady().then(async () => {
             headers: {
               'Content-Range': `bytes ${start}-${end}/${fileSize}`,
               'Accept-Ranges': 'bytes',
-              'Content-Type': 'audio/wav',
+              'Content-Type': audioContentType(filePath),
             },
           })
         }
@@ -854,7 +855,7 @@ app.whenReady().then(async () => {
         status: 200,
         headers: {
           'Accept-Ranges': 'bytes',
-          'Content-Type': 'audio/wav',
+          'Content-Type': audioContentType(filePath),
         },
       })
     } catch {
@@ -914,13 +915,16 @@ app.whenReady().then(async () => {
     }
   })
 
-  // Compute waveform amplitudes from a WAV file in the main process.
-  // Parses PCM data directly — avoids decoding audio in the renderer which can
-  // cause OOM or native audio-subsystem crashes for large files.
+  // Compute waveform amplitudes in the main process (Ogg Opus from cs2-voice-extractor,
+  // or WAV from older cached extractions) — avoids decoding audio in the renderer
+  // which can cause OOM or native audio-subsystem crashes for large files.
   ipcMain.handle('voice:computeWaveform', async (_, filePath: string, numBars: number) => {
     try {
       if (!fs.existsSync(filePath)) return { success: false, error: 'Audio file not found' }
-      const result = await computeWavAmplitudesFromFile(filePath, Math.max(1, numBars))
+      const bars = Math.max(1, numBars)
+      const result = isOggAudioPath(filePath)
+        ? await computeOggOpusAmplitudesFromFile(filePath, bars)
+        : await computeWavAmplitudesFromFile(filePath, bars)
       return { success: true, ...result }
     } catch (error) {
       console.error('[voice:computeWaveform]', error)
@@ -1575,60 +1579,130 @@ function getAudiowaveformPath(): string {
 }
 
 // Helper to get voice extractor executable path
+// (cs2-voice-extractor: a single static binary, no sidecar libraries)
 function getVoiceExtractorPath(): string {
-  if (isDev) {
-    // Dev: support legacy and platform-specific layouts under bin/
-    const projectRoot = path.resolve(__dirname, '..')
-    const envPath = process.env.VOICE_EXTRACTOR_PATH
-    const candidates: string[] = []
+  const platform = process.platform
+  const exe = platform === 'win32' ? 'cs2-voice-extractor.exe' : 'cs2-voice-extractor'
+  const platformDir = platform === 'win32' ? 'win' : platform === 'darwin' ? 'mac' : 'linux'
+  // Dev: <project>/bin. Prod: copied via extraResources "from": "bin", "to": "bin".
+  const binRoot = isDev
+    ? path.join(path.resolve(__dirname, '..'), 'bin')
+    : path.join(process.resourcesPath || path.join(app.getAppPath(), '..', 'resources'), 'bin')
 
-    if (envPath) {
-      candidates.push(envPath)
-      if (process.platform === 'win32' && !envPath.toLowerCase().endsWith('.exe')) {
-        candidates.push(`${envPath}.exe`)
-      }
-    }
-
-    if (process.platform === 'win32') {
-      candidates.push(path.join(projectRoot, 'bin', 'win', 'csgove.exe'))
-      candidates.push(path.join(projectRoot, 'bin', 'csgove.exe'))
-    } else {
-      candidates.push(path.join(projectRoot, 'bin', 'csgove'))
-    }
-
-    const existing = candidates.find(candidate => fs.existsSync(candidate))
-    return existing || candidates[0]
-  } else {
-    // Prod: binary is copied via extraResources "from": "bin", "to": "bin"
-    // Check the same candidate structure as dev (win/ subdir first, then flat)
-    const resourcesPath = process.resourcesPath || path.join(app.getAppPath(), '..', 'resources')
-    const platform = process.platform
-    const arch = process.arch
-    let binaryName = 'csgove'
-
-    if (platform === 'win32') {
-      binaryName = 'csgove.exe'
-    } else if (platform === 'darwin') {
-      binaryName = arch === 'arm64' ? 'csgove-mac-arm64' : 'csgove-mac-amd64'
-    } else if (platform === 'linux') {
-      binaryName = 'csgove-linux'
-    }
-
-    const candidates: string[] = []
-    if (platform === 'win32') {
-      candidates.push(path.join(resourcesPath, 'bin', 'win', binaryName))
-    }
-    candidates.push(path.join(resourcesPath, 'bin', binaryName))
-
-    const existing = candidates.find(c => fs.existsSync(c))
-    if (existing) return existing
-
-    // Log all checked paths to help diagnose missing binary
-    console.error('[Voice Extractor] Binary not found. Checked:')
-    candidates.forEach(c => console.error(`  ${c}`))
-    return candidates[candidates.length - 1] // return last so error message shows expected path
+  const candidates: string[] = []
+  const envPath = process.env.VOICE_EXTRACTOR_PATH
+  if (envPath) {
+    candidates.push(envPath)
+    if (platform === 'win32' && !envPath.toLowerCase().endsWith('.exe')) candidates.push(`${envPath}.exe`)
   }
+  if (platform === 'darwin') {
+    const macArch = process.arch === 'arm64' ? 'arm64' : 'amd64'
+    candidates.push(path.join(binRoot, platformDir, `cs2-voice-extractor-mac-${macArch}`))
+  }
+  candidates.push(path.join(binRoot, platformDir, exe))
+  candidates.push(path.join(binRoot, exe))
+
+  const existing = candidates.find(c => fs.existsSync(c))
+  if (existing) return existing
+
+  console.error('[Voice Extractor] Binary not found. Checked:')
+  candidates.forEach(c => console.error(`  ${c}`))
+  return candidates[candidates.length - 1] // last, so the error message shows the expected path
 }
+
+interface VoiceExtractorPlayer {
+  steam_id: string
+  voice_seconds: number
+  file: string | null
+}
+
+interface VoiceExtractorDemoResult {
+  demo: string
+  error?: string
+  duration_seconds?: number
+  players?: VoiceExtractorPlayer[]
+}
+
+/**
+ * Runs cs2-voice-extractor with --json. Exit code 2 means "no voice in this demo",
+ * which is a normal result, not an error. Logs (stderr) are forwarded to onLog.
+ */
+function runVoiceExtractor(
+  args: string[],
+  opts: { track?: boolean; onLog?: (line: string) => void } = {},
+): Promise<VoiceExtractorDemoResult> {
+  const extractorPath = getVoiceExtractorPath()
+  if (!fs.existsSync(extractorPath)) {
+    return Promise.reject(new Error(`Voice extractor not found at: ${extractorPath}`))
+  }
+
+  return new Promise((resolve, reject) => {
+    console.log(`[Voice Extractor] ${extractorPath} ${args.join(' ')}`)
+    const child = spawn(extractorPath, [...args, '--json'], { shell: false, windowsHide: true })
+    if (opts.track) {
+      if (extractorProcess) {
+        console.log('[Voice Extraction] Killing existing extractor process')
+        extractorProcess.kill('SIGTERM')
+      }
+      extractorProcess = child
+    }
+
+    let stdout = ''
+    let stderr = ''
+    child.stdout?.on('data', (data) => { stdout += data.toString() })
+    child.stderr?.on('data', (data) => {
+      const text = data.toString()
+      stderr += text
+      console.log(`[Voice Extractor] ${text.trimEnd()}`)
+      opts.onLog?.(text)
+    })
+    child.on('error', (error) => {
+      if (extractorProcess === child) extractorProcess = null
+      reject(new Error(`Failed to start voice extractor: ${error.message}`))
+    })
+    child.on('exit', (code, signal) => {
+      if (extractorProcess === child) extractorProcess = null
+      if (code !== 0 && code !== 2) {
+        reject(new Error(`Voice extraction failed (${signal ?? `exit code ${code}`}). ${stderr.trim()}`))
+        return
+      }
+      let parsed: VoiceExtractorDemoResult | undefined
+      try {
+        parsed = (JSON.parse(stdout) as VoiceExtractorDemoResult[])[0]
+      } catch {
+        // fall through
+      }
+      if (!parsed) {
+        reject(new Error(`Voice extractor returned unexpected output. ${stderr.trim()}`))
+      } else if (parsed.error) {
+        reject(new Error(`Voice extraction failed: ${parsed.error}`))
+      } else {
+        resolve(parsed)
+      }
+    })
+  })
+}
+
+// Speakers per demo, keyed by path + size + mtime so a replaced demo is re-scanned.
+const voiceSpeakersCache = new Map<string, Record<string, number>>()
+
+ipcMain.handle('voice:listSpeakers', async (_, demoPath: string) => {
+  try {
+    const stat = fs.statSync(demoPath)
+    const key = `${path.resolve(demoPath)}|${stat.size}|${stat.mtimeMs}`
+    const cached = voiceSpeakersCache.get(key)
+    if (cached) return { success: true, speakers: cached }
+
+    const result = await runVoiceExtractor([demoPath, '--list'])
+    const speakers: Record<string, number> = {}
+    for (const player of result.players ?? []) speakers[player.steam_id] = player.voice_seconds
+    voiceSpeakersCache.set(key, speakers)
+    return { success: true, speakers }
+  } catch (error) {
+    console.error('[voice:listSpeakers]', error)
+    return { success: false, error: error instanceof Error ? error.message : String(error) }
+  }
+})
 
 // Demo folder watcher management
 function setupDemoFolderWatcher(folderPaths: string[]) {
@@ -5764,9 +5838,9 @@ function getCachedVoiceFiles(cacheKey: string): { files: string[]; filePaths: st
     return null
   }
   
-  // Check if cache directory has .wav files
+  // Check if cache directory has audio files (.ogg from cs2-voice-extractor, .wav from older versions)
   const files = fs.readdirSync(cacheEntryDir)
-    .filter(file => file.endsWith('.wav'))
+    .filter(file => /\.(ogg|opus|wav)$/i.test(file))
     .map(file => ({
       name: file,
       path: path.join(cacheEntryDir, file),
@@ -6014,139 +6088,36 @@ ipcMain.handle('voice:extract', async (_, options: { demoPath: string; outputPat
     fs.mkdirSync(outputPath, { recursive: true })
   }
   
-  // Get voice extractor path
-  const extractorPath = getVoiceExtractorPath()
-  
-  if (!fs.existsSync(extractorPath)) {
-    throw new Error(`Voice extractor not found at: ${extractorPath}. Please install csgo-voice-extractor.`)
-  }
-  
-  // Build command arguments (no quotes needed - spawn handles this automatically)
-  const args: string[] = [
-    '-exit-on-first-error',
-    `-mode=${mode}`,
-    `-output=${outputPath}`,
-  ]
-  
-  // Add Steam IDs if specified
-  if (steamIds.length > 0) {
-    args.push(`-steam-ids=${steamIds.join(',')}`)
-  }
-  
-  // Add demo path (must be last)
-  args.push(demoPath)
-  
-  // Set library path for Linux/Mac
-  const libraryPathVarName = process.platform === 'darwin' ? 'DYLD_LIBRARY_PATH' : 'LD_LIBRARY_PATH'
-  const extractorDir = path.dirname(extractorPath)
-  
-  return new Promise<{ success: boolean; outputPath: string | null; files: string[]; filePaths: string[] }>((resolve, reject) => {
-    console.log(`[Voice Extraction] Starting extractor: ${extractorPath}`)
-    console.log(`[Voice Extraction] Args: ${args.join(' ')}`)
-    
-    // Kill any existing extractor process before starting a new one
-    if (extractorProcess) {
-      console.log('[Voice Extraction] Killing existing extractor process')
-      extractorProcess.kill('SIGTERM')
-      extractorProcess = null
-    }
+  const args = [demoPath, '--mode', mode, '--out', outputPath]
+  if (steamIds.length > 0) args.push('--steam-id', steamIds.join(','))
 
-    // Use spawn (not exec) on all platforms: avoids the cmd.exe shell wrapper on Windows,
-    // eliminates the exec 1MB stdout buffer limit, and handles spaces in paths correctly
-    // by passing args as an array rather than a quoted string.
-    extractorProcess = spawn(extractorPath, args, {
-      cwd: extractorDir,
-      env: {
-        ...process.env,
-        [libraryPathVarName]: extractorDir,
-        PROCESS_NAME: 'CS2 Voice Extractor',
-      },
-      shell: false,
-      windowsHide: true,
-    })
-    
-    let stdout = ''
-    let stderr = ''
-    
-    extractorProcess.stdout?.on('data', (data) => {
-      const output = data.toString()
-      stdout += output
-      console.log(`[Voice Extraction] ${output}`)
-      
-      // Notify renderer process of progress
-      if (mainWindow) {
-        mainWindow.webContents.send('voice:extractionLog', output)
-      }
-    })
-    
-    extractorProcess.stderr?.on('data', (data) => {
-      const error = data.toString()
-      stderr += error
-      console.error(`[Voice Extraction Error] ${error}`)
-      
-      // Notify renderer process of errors
-      if (mainWindow) {
-        mainWindow.webContents.send('voice:extractionLog', error)
-      }
-    })
-    
-    extractorProcess.on('exit', (code) => {
-      // Clear the process reference
-      extractorProcess = null
-      
-      if (code === 0) {
-        // List extracted files with full paths
-        const files = fs.readdirSync(outputPath)
-          .filter(file => file.endsWith('.wav'))
-          .map(file => ({
-            name: file,
-            path: path.join(outputPath, file),
-          }))
-        console.log(`[Voice Extraction] Completed successfully. Extracted ${files.length} file(s).`)
-        if (files.length === 0) {
-          console.log(`[Voice Extraction] No WAV files in output dir: ${outputPath}`)
-          console.log(`[Voice Extraction] stdout was: ${stdout}`)
-          console.log(`[Voice Extraction] stderr was: ${stderr}`)
-        }
-
-        // Save to cache if extracting for a single player
-        if (steamIds.length === 1) {
-          try {
-            const cacheKey = generateCacheKey(demoPath, steamIds[0], mode)
-            saveToCache(cacheKey, files.map(f => f.path))
-            
-            // Notify renderer process
-            if (mainWindow) {
-              mainWindow.webContents.send('voice:extractionLog', `[Cache] Saved to cache for future use`)
-            }
-          } catch (cacheError) {
-            console.error(`[Voice Cache] Failed to save to cache:`, cacheError)
-            // Don't fail the extraction if caching fails
-          }
-        }
-        
-        // Track voice extraction stats (use file count and assume ~60 seconds per extracted file as estimate)
-        const estimatedDurationMs = files.length * 60000
-        trackVoiceExtracted(estimatedDurationMs, files.length)
-        
-        // Track voice extraction (legacy counter)
-        incrementStat('total_voices_extracted', files.length)
-        
-        resolve({ success: true, outputPath, files: files.map(f => f.name), filePaths: files.map(f => f.path) })
-      } else {
-        console.error(`[Voice Extraction] Process exited with code ${code}`)
-        console.error(`[Voice Extraction] stderr: ${stderr}`)
-        reject(new Error(`Voice extraction failed with exit code ${code}. ${stderr || stdout}`))
-      }
-    })
-    
-    extractorProcess.on('error', (error) => {
-      // Clear the process reference on error
-      extractorProcess = null
-      console.error(`[Voice Extraction] Process error:`, error)
-      reject(new Error(`Failed to start voice extractor: ${error.message}`))
-    })
+  const result = await runVoiceExtractor(args, {
+    track: true,
+    onLog: (line) => mainWindow?.webContents.send('voice:extractionLog', line),
   })
+
+  const players = result.players ?? []
+  const filePaths = Array.from(new Set(
+    players.map(p => p.file).filter((f): f is string => !!f && fs.existsSync(f)),
+  ))
+  const files = filePaths.map(f => ({ name: path.basename(f), path: f }))
+  console.log(`[Voice Extraction] Completed. ${files.length} file(s) in ${outputPath}`)
+
+  // Save to cache if extracting for a single player
+  if (steamIds.length === 1 && files.length > 0) {
+    try {
+      saveToCache(generateCacheKey(demoPath, steamIds[0], mode), filePaths)
+      mainWindow?.webContents.send('voice:extractionLog', `[Cache] Saved to cache for future use`)
+    } catch (cacheError) {
+      console.error(`[Voice Cache] Failed to save to cache:`, cacheError)
+    }
+  }
+
+  const voiceMs = players.reduce((sum, p) => sum + p.voice_seconds * 1000, 0)
+  trackVoiceExtracted(voiceMs, files.length)
+  incrementStat('total_voices_extracted', files.length)
+
+  return { success: true, outputPath, files: files.map(f => f.name), filePaths }
 })
 
 // Helper function to read PNG dimensions from buffer
@@ -6472,6 +6443,22 @@ ipcMain.handle('transcription:deleteModel', async (_, model: string) => {
     return { success: true }
   } catch (err) {
     console.error('[transcription:deleteModel]', err)
+    return { success: false, error: err instanceof Error ? err.message : String(err) }
+  }
+})
+
+// Whisper only reads WAV. For Ogg Opus voice files the renderer decodes the audio
+// (Chromium has a built-in Opus decoder) to 16 kHz mono WAV and hands the bytes here.
+ipcMain.handle('voice:writeTranscriptionWav', async (_, sourcePath: string, wavBytes: Uint8Array) => {
+  try {
+    const dir = path.join(getVoiceCacheDir(), 'whisper')
+    fs.mkdirSync(dir, { recursive: true })
+    const name = crypto.createHash('md5').update(path.resolve(sourcePath)).digest('hex')
+    const wavPath = path.join(dir, `${name}.wav`)
+    await fs.promises.writeFile(wavPath, Buffer.from(wavBytes))
+    return { success: true, path: wavPath }
+  } catch (err) {
+    console.error('[voice:writeTranscriptionWav]', err)
     return { success: false, error: err instanceof Error ? err.message : String(err) }
   }
 })
