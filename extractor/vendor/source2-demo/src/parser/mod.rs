@@ -101,6 +101,13 @@ where
     pub(crate) prologue_completed: bool,
     pub(crate) skip_deltas: bool,
 
+    /// Entity messages decoded ahead of time by worker threads (`run_to_end_parallel`).
+    pub(crate) predecoded: Option<demo::parallel::Predecoded>,
+    /// Byte offset of the demo command being processed, and how many packet-entities
+    /// messages of it have been seen: the key into `predecoded`.
+    pub(crate) outer_offset: usize,
+    pub(crate) entities_ordinal: u32,
+
     pub(crate) replay_info: CDemoFileInfo,
     pub(crate) last_tick: u32,
     pub(crate) context: Context,
@@ -172,6 +179,9 @@ impl<'a> Parser<'a, SliceReader<'a>> {
 
             prologue_completed: false,
             skip_deltas: false,
+            predecoded: None,
+            outer_offset: 0,
+            entities_ordinal: 0,
 
             context: Context::new(replay_info.clone()),
 
@@ -262,6 +272,9 @@ where
 
             prologue_completed: false,
             skip_deltas: false,
+            predecoded: None,
+            outer_offset: 0,
+            entities_ordinal: 0,
 
             context: Context::new(replay_info.clone()),
 

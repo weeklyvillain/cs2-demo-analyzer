@@ -130,7 +130,10 @@ where
                 }
             }
             SvcMessages::SvcPacketEntities if self.anyone_interested(Interests::ENTITY_STATE) => {
-                self.packet_entities(CSvcMsgPacketEntities::decode(msg)?)?
+                // Pre-decoded by a worker (parallel parse)? Then the bits aren't needed.
+                if !self.try_predecoded_entities()? {
+                    self.packet_entities(CSvcMsgPacketEntities::decode(msg)?)?
+                }
             }
             _ => {}
         }

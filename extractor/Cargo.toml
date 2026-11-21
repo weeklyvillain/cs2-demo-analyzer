@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 description = "CS2 demo extractor for CS2 Demo Analyzer"
 
+[lib]
+name = "cs2_extractor"
+path = "src/lib.rs"
+
 [[bin]]
 name = "parser"
 path = "src/main.rs"
@@ -12,7 +16,8 @@ path = "src/main.rs"
 # Vendored copy with a decoder fix (see vendor/README.md).
 source2-demo = { path = "vendor/source2-demo", features = ["cs2"] }
 anyhow = "1"
-rusqlite = { version = "0.32", features = ["bundled"] }
+# Same version as the native app, which links this crate (one bundled SQLite per binary).
+rusqlite = { version = "0.43", features = ["bundled"] }
 serde_json = "1"
 regex = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }

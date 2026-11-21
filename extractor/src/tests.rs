@@ -322,3 +322,51 @@ fn an_aborted_run_leaves_no_database_behind() {
     writer.abort();
     assert!(!path.exists());
 }
+
+/// Parallel entity decoding must produce exactly the observer callbacks of the
+/// sequential parse. Runs on a real demo when one is available
+/// (`CS2DA_TEST_DEMO`, or the aim-map demo used during development); skipped otherwise.
+#[test]
+fn parallel_decoding_matches_sequential_callbacks() {
+    use source2_demo::prelude::*;
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let path = std::env::var("CS2DA_TEST_DEMO")
+        .unwrap_or_else(|_| r"C:\Users\Weeklyvillain\Downloads\kryos_0_0.dem".into());
+    let Ok(bytes) = std::fs::read(&path) else { return };
+
+    #[derive(Default)]
+    struct Fingerprint {
+        calls: u64,
+        hash: DefaultHasher,
+    }
+    impl Observer for Fingerprint {
+        fn interests(&self) -> Interests {
+            Interests::ENTITY_STATE | Interests::ENTITY_EVENTS
+        }
+        fn on_entity(&mut self, ctx: &Context, ev: EntityEvents, e: &Entity) -> ObserverResult {
+            self.calls += 1;
+            (ev as u8, e.index(), e.serial(), e.class().id(), ctx.tick()).hash(&mut self.hash);
+            // Full state on a sample of callbacks (enumerating every field is slow).
+            if self.calls % 97 == 0 {
+                for f in e.fields() {
+                    (f.path, format!("{:?}", f.value)).hash(&mut self.hash);
+                }
+            }
+            Ok(())
+        }
+    }
+
+    let run = |threads: usize| {
+        let mut parser = Parser::new(&bytes).unwrap();
+        let fp = parser.add_observer(Fingerprint::default());
+        if threads > 1 { parser.run_to_end_parallel(threads).unwrap() } else { parser.run_to_end().unwrap() }
+        let fp = fp.borrow();
+        (fp.calls, fp.hash.finish())
+    };
+    let sequential = run(1);
+    assert!(sequential.0 > 0);
+    assert_eq!(run(3), sequential);
+    assert_eq!(run(8), sequential);
+}

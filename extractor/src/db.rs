@@ -91,6 +91,9 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 	FOREIGN KEY(match_id) REFERENCES matches(id),
 	FOREIGN KEY(match_id, steamid) REFERENCES players(match_id, steamid)
 );
+-- The two big per-tick tables are WITHOUT ROWID: the primary key is the table, so it is
+-- stored once instead of as table + separate key index, and it serves every lookup by
+-- (match_id, round_index[, tick]) that the dropped idx_*_match_round / idx_*_tick indexes did.
 CREATE TABLE IF NOT EXISTS player_positions (
 	match_id TEXT NOT NULL,
 	round_index INTEGER NOT NULL,
@@ -109,7 +112,7 @@ CREATE TABLE IF NOT EXISTS player_positions (
 	PRIMARY KEY(match_id, round_index, tick, steamid),
 	FOREIGN KEY(match_id) REFERENCES matches(id),
 	FOREIGN KEY(match_id, steamid) REFERENCES players(match_id, steamid)
-);
+) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS grenade_positions (
 	match_id TEXT NOT NULL,
 	round_index INTEGER NOT NULL,
@@ -124,7 +127,7 @@ CREATE TABLE IF NOT EXISTS grenade_positions (
 	thrower_team TEXT,
 	PRIMARY KEY(match_id, round_index, tick, projectile_id),
 	FOREIGN KEY(match_id) REFERENCES matches(id)
-);
+) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS grenade_events (
 	match_id TEXT NOT NULL,
 	round_index INTEGER NOT NULL,
@@ -184,10 +187,6 @@ CREATE INDEX IF NOT EXISTS idx_chat_messages_match ON chat_messages(match_id);
 CREATE INDEX IF NOT EXISTS idx_chat_messages_steamid ON chat_messages(match_id, steamid);
 CREATE INDEX IF NOT EXISTS idx_chat_messages_round ON chat_messages(match_id, round_index);
 CREATE INDEX IF NOT EXISTS idx_chat_messages_tick ON chat_messages(match_id, tick);
-CREATE INDEX IF NOT EXISTS idx_player_positions_match_round ON player_positions(match_id, round_index);
-CREATE INDEX IF NOT EXISTS idx_player_positions_tick ON player_positions(match_id, round_index, tick);
-CREATE INDEX IF NOT EXISTS idx_grenade_positions_match_round ON grenade_positions(match_id, round_index);
-CREATE INDEX IF NOT EXISTS idx_grenade_positions_tick ON grenade_positions(match_id, round_index, tick);
 CREATE INDEX IF NOT EXISTS idx_grenade_events_match_round ON grenade_events(match_id, round_index);
 CREATE INDEX IF NOT EXISTS idx_grenade_events_tick ON grenade_events(match_id, round_index, tick);
 CREATE INDEX IF NOT EXISTS idx_grenade_events_type ON grenade_events(event_type);

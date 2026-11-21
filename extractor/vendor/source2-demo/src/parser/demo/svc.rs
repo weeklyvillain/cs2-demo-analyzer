@@ -31,6 +31,12 @@ pub trait SvcMsg {
         -> Result<(), ParserError>;
 
     fn entity_deleted(&mut self, index: usize) -> Result<(), ParserError>;
+
+    fn apply_entity_ops(&mut self, ops: super::parallel::PacketOps) -> Result<(), ParserError>;
+
+    /// Applies this message's ops if a worker decoded them (and they target the right
+    /// classes); returns false when the caller must decode the message itself.
+    fn try_predecoded_entities(&mut self) -> Result<bool, ParserError>;
 }
 
 impl<'a, R> SvcMsg for Parser<'a, R>
@@ -258,5 +264,97 @@ where
         self.context.entities.entities_vec[index].index = u32::MAX;
 
         Ok(())
+    }
+
+    /// `packet_entities` with the bits already decoded: the same state writes and
+    /// observer calls as `entity_created` / `entity_updated` / `entity_deleted`.
+    fn apply_entity_ops(&mut self, ops: super::parallel::PacketOps) -> Result<(), ParserError> {
+        use super::parallel::EntityOp;
+        let super::parallel::PacketOps { ops, fields } = ops;
+        let mut fields = fields.into_iter();
+        for op in ops {
+            match op {
+                EntityOp::Created { index, class_id, serial, fields: (from, to) } => {
+                    let index = index as usize;
+                    let class = self.context.classes.get_by_id_rc(class_id as usize).clone();
+                    let entity_baseline = self
+                        .context
+                        .baselines
+                        .states
+                        .entry(class_id)
+                        .or_insert_with(|| {
+                            let mut state = FieldState::default();
+                            if let Some(baseline) = self.context.baselines.baselines.get(&class_id) {
+                                self.field_reader.read_fields(
+                                    &mut SliceReader::new(baseline.as_ref()),
+                                    &class.serializer,
+                                    &mut state,
+                                );
+                            }
+                            state
+                        })
+                        .clone();
+                    let entity = &mut self.context.entities.entities_vec[index];
+                    entity.index = index as u32;
+                    entity.serial = serial;
+                    entity.class = class;
+                    entity.state = entity_baseline;
+                    for (fp, value) in fields.by_ref().take((to - from) as usize) {
+                        entity.state.set(&fp, value);
+                    }
+                    try_observers!(
+                        self,
+                        ENTITY_EVENTS,
+                        on_entity(
+                            &self.context,
+                            EntityEvents::Created,
+                            &self.context.entities.entities_vec[index]
+                        )
+                    )?;
+                }
+                EntityOp::Updated { index, fields: (from, to), .. } => {
+                    let index = index as usize;
+                    let entity = &mut self.context.entities.entities_vec[index];
+                    for (fp, value) in fields.by_ref().take((to - from) as usize) {
+                        entity.state.set(&fp, value);
+                    }
+                    try_observers!(
+                        self,
+                        ENTITY_EVENTS,
+                        on_entity(
+                            &self.context,
+                            EntityEvents::Updated,
+                            &self.context.entities.entities_vec[index]
+                        )
+                    )?;
+                }
+                EntityOp::Deleted { index } => self.entity_deleted(index as usize)?,
+            }
+        }
+        Ok(())
+    }
+
+    fn try_predecoded_entities(&mut self) -> Result<bool, ParserError> {
+        let key = (self.outer_offset, self.entities_ordinal);
+        self.entities_ordinal += 1;
+        let Some(pre) = self.predecoded.as_mut() else { return Ok(false) };
+        let Some(ops) = pre.take(key) else {
+            pre.stats.misses += 1;
+            return Ok(false);
+        };
+        let entities = &self.context.entities.entities_vec;
+        if !super::parallel::classes_match(&ops, |i| entities.get(i).map_or(-1, |e| e.class.id)) {
+            pre.stats.mismatches += 1;
+            return Ok(false);
+        }
+        pre.stats.hits += 1;
+        pre.stats.fields += ops.fields.len();
+        pre.stats.creates += ops.ops.iter().filter(|o| matches!(o, super::parallel::EntityOp::Created { .. })).count();
+        let t = std::time::Instant::now();
+        self.apply_entity_ops(ops)?;
+        if let Some(pre) = self.predecoded.as_mut() {
+            pre.stats.apply += t.elapsed();
+        }
+        Ok(true)
     }
 }

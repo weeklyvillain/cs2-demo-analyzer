@@ -1,0 +1,23 @@
+[package]
+name = "cs2da-core"
+description = "Data layer for CS2 Demo Analyzer: match databases, settings, paths"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+dirs.workspace = true
+# The demo extractor, linked in-process (the Electron app runs it as bin/win/parser.exe).
+cs2-extractor = { path = "../../../extractor" }
+sysinfo = { version = "0.40", default-features = false, features = ["system"] }
+ureq = { version = "3", features = ["json"] }
+sha2 = "0.10"
+base64 = "0.22"
+opus-pure = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.55"
