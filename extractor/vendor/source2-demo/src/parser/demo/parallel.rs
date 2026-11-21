@@ -184,6 +184,9 @@ pub(crate) fn plan_chunks(full_packets: &[usize], len: usize, min_bytes: usize) 
     chunks
 }
 
+/// Stack for each decode worker.
+const WORKER_STACK: usize = 16 * 1024 * 1024;
+
 /// Start the workers; returns the receiving side for the main thread.
 pub(crate) fn spawn<'scope, 'env: 'scope>(
     scope: &'scope std::thread::Scope<'scope, 'env>,
@@ -218,7 +221,12 @@ pub(crate) fn spawn<'scope, 'env: 'scope>(
     for _ in 0..threads.min(chunks.len()) {
         let (chunks, next, senders, consumed, stop) =
             (chunks.clone(), next.clone(), senders.clone(), consumed.clone(), stop.clone());
-        scope.spawn(move || {
+        // Decoding recurses through nested field paths; the default 2 MiB thread stack
+        // overflows in unoptimised (debug) builds, so give workers room.
+        let spawned = std::thread::Builder::new()
+            .name("demo-decode".into())
+            .stack_size(WORKER_STACK)
+            .spawn_scoped(scope, move || {
             let Ok(mut worker) = Worker::new(data) else { return };
             loop {
                 let k = next.fetch_add(1, Ordering::SeqCst);
@@ -247,6 +255,7 @@ pub(crate) fn spawn<'scope, 'env: 'scope>(
                 }
             }
         });
+        spawned.expect("start demo decode worker");
     }
     Some(Predecoded { chunks: receivers, next_chunk: 0, current: VecDeque::new(), consumed, stop, stats: Stats::default() })
 }

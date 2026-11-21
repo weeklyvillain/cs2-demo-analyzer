@@ -324,17 +324,15 @@ fn an_aborted_run_leaves_no_database_behind() {
 }
 
 /// Parallel entity decoding must produce exactly the observer callbacks of the
-/// sequential parse. Runs on a real demo when one is available
-/// (`CS2DA_TEST_DEMO`, or the aim-map demo used during development); skipped otherwise.
+/// sequential parse. Runs on the demo named by `CS2DA_TEST_DEMO`; skipped without one.
 #[test]
 fn parallel_decoding_matches_sequential_callbacks() {
     use source2_demo::prelude::*;
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
 
-    let path = std::env::var("CS2DA_TEST_DEMO")
-        .unwrap_or_else(|_| r"C:\Users\Weeklyvillain\Downloads\kryos_0_0.dem".into());
-    let Ok(bytes) = std::fs::read(&path) else { return };
+    let Ok(path) = std::env::var("CS2DA_TEST_DEMO") else { return };
+    let bytes = std::fs::read(&path).expect("read CS2DA_TEST_DEMO");
 
     #[derive(Default)]
     struct Fingerprint {

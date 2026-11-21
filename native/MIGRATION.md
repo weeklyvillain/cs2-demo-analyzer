@@ -113,6 +113,12 @@ Uninstaller: remove the app folder, shortcuts, the three registry groups, restor
 
 Both Electron jobs (Windows and macOS) are replaced by one native Windows job:
 
+Status: done. `release.yml` is one Windows job: version from `native/Cargo.toml` (patch bump via
+`installer/version.py` when the tag is already used, also updating `Cargo.lock`), `cargo build --release
+--locked`, `installer/build.py`, then `gh release create` with the installer and `latest.yml`. "Run workflow"
+publishes a pre-release (default) from any branch. `pr-check.yml` runs the extractor and app tests and builds
+the installer. Not yet run on GitHub.
+
 1. `cargo build --release` in `native/` (the extractor is linked in; `bin/win/` tools copied).
 2. Build the installer with `makensis` (preinstalled on GitHub's Windows runners).
 3. Generate `latest.yml` (version, file name, base64 SHA-512, size, releaseDate) in electron-builder's format.

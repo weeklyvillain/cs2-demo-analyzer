@@ -1,8 +1,9 @@
 name: PR Check
 
-# Builds the app and parser on every pull request. Renovate only auto-merges
-# dependency updates once this check passes, and a merge to master triggers
-# the Release workflow.
+# Builds and tests the native app (native/) and the demo extractor on every pull
+# request, and builds the installer the release would publish. Renovate only
+# auto-merges dependency updates once this check passes, and a merge to master
+# triggers the Release workflow.
 
 on:
   pull_request:
@@ -18,21 +19,11 @@ permissions:
 
 jobs:
   build:
-    # Windows matches the primary release target and builds the native addon.
-    # Pinned to windows-2022 (Visual Studio 2022): windows-latest now ships
-    # Visual Studio 18, which node-gyp 10 cannot detect, so native modules
-    # such as extract-file-icon fail to build during npm ci.
     runs-on: windows-2022
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -40,19 +31,27 @@ jobs:
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: extractor
-
-      - name: Setup Visual Studio Build Tools
-        uses: microsoft/setup-msbuild@v2
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build demo extractor
-        run: npm run build:parser
+          workspaces: |
+            native
+            extractor
 
       - name: Run demo extractor tests
         run: cargo test --locked --manifest-path extractor/Cargo.toml
 
+      - name: Run app tests
+        working-directory: native
+        run: cargo test --release --locked
+
       - name: Build app
-        run: npm run build
+        working-directory: native
+        run: cargo build --release --locked
+
+      - name: Ensure NSIS
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\NSIS\makensis.exe") -and -not (Get-Command makensis -ErrorAction SilentlyContinue)) {
+            choco install nsis -y --no-progress
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+          }
+
+      - name: Build installer
+        run: python native/installer/build.py

@@ -1,5 +1,10 @@
 name: Release
 
+# Builds the native Windows app (native/), its NSIS installer and latest.yml, and
+# publishes them as a GitHub release. Electron 1.0.x installs update from this feed
+# too (see native/MIGRATION.md). Runs on every push to master; "Run workflow" can
+# publish a pre-release instead, which update checks ignore (for testing).
+
 on:
   push:
     branches:
@@ -7,20 +12,22 @@ on:
     paths-ignore:
       - 'README.md'
       - '**.md'
+  workflow_dispatch:
+    inputs:
+      prerelease:
+        description: 'Publish as a pre-release (not offered as an update)'
+        type: boolean
+        default: true
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  release-windows:
-    # Pinned to windows-2022 (Visual Studio 2022): windows-latest now ships
-    # Visual Studio 18, which node-gyp 10 cannot detect, so npm ci fails.
+  release:
     runs-on: windows-2022
     permissions:
       contents: write
-    outputs:
-      tag_name: ${{ steps.version.outputs.tag_name }}
 
     steps:
       - name: Checkout repository
@@ -29,40 +36,21 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: extractor
+          workspaces: native
 
-      - name: Setup Visual Studio Build Tools
-        uses: microsoft/setup-msbuild@v2
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Get current version
-        id: get_version
-        run: |
-          $version = (Get-Content package.json | ConvertFrom-Json).version
-          Write-Host "Current version: $version"
-          echo "current_version=$version" >> $env:GITHUB_OUTPUT
-
-      # A bump is needed when the tag for the current version already exists
-      # on a different commit (that version was released from older code).
-      # A tag pointing at this exact commit means "release this version as is".
+      # The version lives in native/Cargo.toml. A bump is needed when the tag for the
+      # current version already exists on a different commit (that version was released
+      # from older code). A tag pointing at this exact commit means "release it as is".
       - name: Check if version bump is needed
         id: check_version
         run: |
-          $currentVersion = "${{ steps.get_version.outputs.current_version }}"
+          $currentVersion = python native/installer/version.py get
           $tagSha = git rev-parse -q --verify "refs/tags/v$currentVersion^{commit}" 2>$null
           $headSha = git rev-parse HEAD
           if (-not $tagSha) {
@@ -77,60 +65,54 @@ jobs:
           }
           exit 0
 
-      # Skips any version whose tag already exists, so a tag left behind by a
-      # failed run can never block later releases.
+      # Next free patch version (skips tags left by failed runs), written to
+      # native/Cargo.toml and native/Cargo.lock.
       - name: Bump version (patch)
         if: steps.check_version.outputs.needs_bump == 'true'
         id: bump_version
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          do {
-            npm version patch --no-git-tag-version | Out-Null
-            if ($LASTEXITCODE -ne 0) { exit 1 }
-            $newVersion = (Get-Content package.json | ConvertFrom-Json).version
-          } while (git rev-parse -q --verify "refs/tags/v$newVersion" 2>$null)
-          git add package.json package-lock.json
+          $newVersion = python native/installer/version.py bump --apply
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          git add native/Cargo.toml native/Cargo.lock
           git commit -m "chore: bump version to $newVersion [skip ci]"
           if ($LASTEXITCODE -ne 0) { exit 1 }
           Write-Host "New version: $newVersion"
-          echo "new_version=$newVersion" >> $env:GITHUB_OUTPUT
           echo "tag_name=v$newVersion" >> $env:GITHUB_OUTPUT
 
-      - name: Get version from package.json
+      - name: Get version
         id: version
         run: |
-          $version = (Get-Content package.json | ConvertFrom-Json).version
-          $tagName = "v$version"
+          $version = python native/installer/version.py get
           echo "version=$version" >> $env:GITHUB_OUTPUT
-          echo "tag_name=$tagName" >> $env:GITHUB_OUTPUT
+          echo "tag_name=v$version" >> $env:GITHUB_OUTPUT
 
       # Pushes the bump commit and its tag atomically: either both land or
-      # neither does. If master moved meanwhile, rebase onto it and retry.
+      # neither does. Goes to the branch this run is for (master, or the branch
+      # picked in "Run workflow"); if it moved meanwhile, rebase onto it and retry.
       - name: Push version commit and tag
         if: steps.check_version.outputs.needs_bump == 'true'
+        env:
+          BRANCH: ${{ github.ref_name }}
         run: |
           $tagName = "${{ steps.bump_version.outputs.tag_name }}"
           for ($attempt = 1; $attempt -le 5; $attempt++) {
             git tag -f -a "$tagName" -m "chore: bump version to $tagName [skip ci]"
-            git push --atomic origin HEAD:refs/heads/master "refs/tags/${tagName}"
+            git push --atomic origin "HEAD:refs/heads/$env:BRANCH" "refs/tags/${tagName}"
             if ($LASTEXITCODE -eq 0) { exit 0 }
-            Write-Host "Push rejected (attempt $attempt), rebasing onto origin/master"
-            git fetch origin master
-            git rebase origin/master
+            Write-Host "Push rejected (attempt $attempt), rebasing onto origin/$env:BRANCH"
+            git fetch origin "$env:BRANCH"
+            git rebase "origin/$env:BRANCH"
             if ($LASTEXITCODE -ne 0) { git rebase --abort; exit 1 }
           }
           exit 1
 
       - name: Ensure tag exists for publishing
         run: |
-          $version = "${{ steps.version.outputs.version }}"
-          $tagName = "v$version"
-          Write-Host "Checking for tag: $tagName"
-          # Fetch tags to ensure we have the latest
+          $tagName = "${{ steps.version.outputs.tag_name }}"
           git fetch origin --tags
-          # Verify tag exists
-          if (git rev-parse "$tagName" >$null 2>&1) {
+          if (git rev-parse -q --verify "refs/tags/$tagName" 2>$null) {
             Write-Host "Tag $tagName exists"
           } else {
             Write-Host "Tag $tagName does not exist, creating it"
@@ -139,99 +121,39 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit 1 }
           }
 
-      - name: Build demo extractor (Windows)
-        run: npm run build:parser
-      
-      - name: Package Windows installer and publish
-        run: |
-          npm run build
-          npx electron-builder --win --publish always
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      - name: Build app
+        working-directory: native
+        run: cargo build --release --locked
 
-      # electron-builder creates the GitHub release as a draft. Publish it once
-      # the installer and latest.yml are uploaded, so the auto-updater never
-      # sees a release with missing files.
+      # NSIS ships with GitHub's Windows images; install it if an image ever drops it.
+      - name: Ensure NSIS
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\NSIS\makensis.exe") -and -not (Get-Command makensis -ErrorAction SilentlyContinue)) {
+            choco install nsis -y --no-progress
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+          }
+
+      - name: Build installer and latest.yml
+        run: python native/installer/build.py
+
+      # gh uploads the assets before the release goes public, so update checks never
+      # see a release without its installer. A re-run replaces the assets.
       - name: Publish release
-        run: gh release edit "${{ steps.version.outputs.tag_name }}" --repo "${{ github.repository }}" --draft=false --latest
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  release-mac:
-    runs-on: macos-latest
-    needs: release-windows
-    permissions:
-      contents: write
-
-    steps:
-      # Build the exact commit the Windows job released (it may have pushed a
-      # version bump commit after this workflow was triggered).
-      - name: Checkout repository
-        uses: actions/checkout@v5
-        with:
-          ref: refs/tags/${{ needs.release-windows.outputs.tag_name }}
-          fetch-depth: 0
-          fetch-tags: true
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust build
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: extractor
-
-      - name: Install dependencies
-        run: npm ci
-
-      # EXPECTATION:
-      # A separate tools repo publishes a macOS archive containing:
-      #   resources/bin/mac/cs2-voice-extractor-mac-amd64, cs2-voice-extractor-mac-arm64,
-      #   resources/bin/audiowaveform-mac-amd64, audiowaveform-mac-arm64,
-      #   and any other required binaries.
-      # This step should download and extract that archive into ./bin or ./resources/bin.
-      - name: Download macOS voice and waveform tools
+          PRERELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.prerelease }}
         run: |
-          echo "TODO: replace this placeholder with a curl/actions/download-artifact step that fetches macOS binaries into the bin/ directory."
-
-      - name: Build demo extractor (macOS)
-        run: npm run build:parser
-
-      - name: Get version from package.json
-        id: version
-        run: |
-          VERSION=$(cat package.json | node -p "require('./package.json').version")
-          TAG_NAME="v$VERSION"
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
-
-      - name: Ensure tag exists for publishing
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          TAG_NAME="v$VERSION"
-          echo "Checking for tag: $TAG_NAME"
-          git fetch origin --tags
-          if git rev-parse "$TAG_NAME" >/dev/null 2>&1; then
-            echo "Tag $TAG_NAME exists"
-          else
-            echo "Tag $TAG_NAME does not exist, creating it"
-            git tag "$TAG_NAME"
-            git push origin "$TAG_NAME"
-          fi
-
-      - name: Package macOS build and publish
-        run: |
-          export CSC_IDENTITY_AUTO_DISCOVERY=false
-          npm run build
-          npx electron-builder --mac --publish always
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          $tagName = "${{ steps.version.outputs.tag_name }}"
+          $version = "${{ steps.version.outputs.version }}"
+          $assets = @("native/target/installer/CS2-Demo-Analyzer-Setup-$version.exe", "native/target/installer/latest.yml")
+          gh release view "$tagName" --repo "${{ github.repository }}" *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Release $tagName exists, replacing its assets"
+            gh release upload "$tagName" @assets --clobber --repo "${{ github.repository }}"
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+            exit 0
+          }
+          $flags = @("--title", $version, "--generate-notes", "--verify-tag")
+          if ($env:PRERELEASE -eq 'true') { $flags += "--prerelease" } else { $flags += "--latest" }
+          gh release create "$tagName" @assets @flags --repo "${{ github.repository }}"
+          if ($LASTEXITCODE -ne 0) { exit 1 }
