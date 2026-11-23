@@ -15,9 +15,9 @@ dirs.workspace = true
 cs2-extractor = { path = "../../../extractor" }
 sysinfo = { version = "0.40", default-features = false, features = ["system"] }
 ureq = { version = "3", features = ["json"] }
-sha2 = "0.10"
-base64 = "0.22"
+sha2 = "0.11"
+base64 = "0.23"
 opus-pure = "0.2"
 
 [target.'cfg(windows)'.dependencies]
-winreg = "0.55"
+winreg = "0.56"
