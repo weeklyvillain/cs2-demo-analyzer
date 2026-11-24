@@ -1270,7 +1270,7 @@ dependencies = [
 
 [[package]]
 name = "cs2da"
-version = "2.0.1"
+version = "2.0.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1288,7 +1288,7 @@ dependencies = [
 
 [[package]]
 name = "cs2da-core"
-version = "2.0.1"
+version = "2.0.2"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
